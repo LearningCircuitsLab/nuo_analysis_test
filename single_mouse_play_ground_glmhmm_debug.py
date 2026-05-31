@@ -372,7 +372,7 @@ def _(df_test, dft, pd, plt, sns):
         hue="current_training_stage",
         units=mouse_col,
         estimator=None,
-        marker="",
+        marker="o",
         alpha=0.6,
     )
 

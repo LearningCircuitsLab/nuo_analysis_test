@@ -18,6 +18,7 @@ def _():
     import sys
     import warnings
 
+
     REPO_ROOT = Path("/home/kudongdong/code/brainCircuitsLab")
     _package_path = REPO_ROOT / "lecilab-behavior-analysis"
     if _package_path.exists() and str(_package_path) not in sys.path:
@@ -26,6 +27,7 @@ def _():
     import matplotlib.cm as cm
     import matplotlib.colors as colors
     import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
     import matplotlib as mpl
     import numpy as np
     import pandas as pd
@@ -45,9 +47,7 @@ def _():
     return (
         Path,
         behavior_utils,
-        colors,
         dft,
-        mpl,
         np,
         pd,
         plot_test,
@@ -375,7 +375,7 @@ def _(mo):
 def _(animals, mo):
     fit_mouse_select = mo.ui.multiselect(
         options=animals,
-        value=[animals[0]],
+        value=animals[:-1],
         label="Mice for fit",
     )
 
@@ -392,8 +392,10 @@ def _(mo):
 
 @app.cell
 def _():
-    hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
-    hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    # hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    # hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
+    hM3Dq_mice = ['NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    hM4Di_mice = ['NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
     return hM3Dq_mice, hM4Di_mice
 
 
@@ -623,8 +625,12 @@ def _(add_number_of_pokes, df_test_aud, dft, hM3Dq_mice, hM4Di_mice):
 
 
 @app.cell
-def _(pd, plt):
+def _(behavior_utils, injection_info_df, pd, plt):
     from scipy import stats
+
+    metric_paired_dates = behavior_utils.get_paired_injection_dates(
+        injection_info_df
+    )
 
     def observation_to_color(observation):
         observation = str(observation).lower()
@@ -795,55 +801,17 @@ def _(pd, plt):
             .reset_index()
         )
 
-        observation_summary["_date_for_pairing"] = pd.to_datetime(
-            observation_summary[date_col],
-            errors="coerce",
+        plot_subjects = plot_df[subject_col].astype(str).unique()
+        paired_dates = metric_paired_dates[
+            metric_paired_dates[subject_col].astype(str).isin(plot_subjects)
+        ].copy()
+        paired_summary = behavior_utils.add_metric_values_to_pairs(
+            observation_summary,
+            paired_dates,
+            metric_col=metric_col,
+            subject_col=subject_col,
+            date_col=date_col,
         )
-        saline_summary = observation_summary[
-            observation_summary["observation_group"] == "saline"
-        ].copy()
-        dcz_summary = observation_summary[
-            observation_summary["observation_group"] == "DCZ"
-        ].copy()
-
-        paired_rows = []
-        for _, dcz_row in dcz_summary.iterrows():
-            previous_saline = saline_summary[
-                (saline_summary[subject_col] == dcz_row[subject_col])
-                & (
-                    saline_summary["_date_for_pairing"]
-                    < dcz_row["_date_for_pairing"]
-                )
-            ].sort_values("_date_for_pairing")
-            if previous_saline.empty:
-                continue
-
-            saline_row = previous_saline.iloc[-1]
-            paired_rows.append(
-                {
-                    subject_col: dcz_row[subject_col],
-                    "saline_date": saline_row[date_col],
-                    "DCZ_date": dcz_row[date_col],
-                    "days_between": (
-                        dcz_row["_date_for_pairing"]
-                        - saline_row["_date_for_pairing"]
-                    ).days,
-                    "saline": saline_row[metric_col],
-                    "DCZ": dcz_row[metric_col],
-                }
-            )
-
-        paired_summary = pd.DataFrame(paired_rows)
-        if not paired_summary.empty:
-            paired_summary["saline"] = pd.to_numeric(
-                paired_summary["saline"],
-                errors="coerce",
-            )
-            paired_summary["DCZ"] = pd.to_numeric(
-                paired_summary["DCZ"],
-                errors="coerce",
-            )
-            paired_summary = paired_summary.dropna(subset=["saline", "DCZ"])
         observation_summary.attrs["paired_comparison"] = paired_summary
 
         groups = ["saline", "DCZ"]
@@ -965,7 +933,7 @@ def _(pd, plt):
         fig.tight_layout()
         return fig, observation_summary
 
-    return plot_metric_by_date, plot_metric_by_observation
+    return plot_metric_by_date, plot_metric_by_observation, stats
 
 
 @app.cell
@@ -1016,6 +984,64 @@ def _(
             plot_group(df_test_aud_hm3, "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation)
         ]
     )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Psychometric curve
+    """)
+    return
+
+
+@app.cell
+def _(
+    behavior_utils,
+    df_test_aud_hm3,
+    df_test_aud_hm4,
+    hM3Dq_mice,
+    hM4Di_mice,
+    injection_info_df,
+    mo,
+    plot_test,
+):
+    psychometric_hm4_paired_dates = behavior_utils.get_paired_injection_dates(
+        injection_info_df,
+        mice_selected=hM4Di_mice,
+    )
+    psychometric_hm3_paired_dates = behavior_utils.get_paired_injection_dates(
+        injection_info_df,
+        mice_selected=hM3Dq_mice,
+    )
+
+    psychometric_hm4_fig, psychometric_hm4_summary = (
+        plot_test.plot_condition_psychometric_curves(
+            df_test_aud_hm4,
+            "hM4Di",
+            paired_dates=psychometric_hm4_paired_dates,
+            x_col="total_evidence_strength",
+            y_col="first_choice_numeric",
+            valueType="continue",
+            bins=6,
+            min_trials=20,
+        )
+    )
+
+    psychometric_hm3_fig, psychometric_hm3_summary = (
+        plot_test.plot_condition_psychometric_curves(
+            df_test_aud_hm3,
+            "hM3Dq",
+            paired_dates=psychometric_hm3_paired_dates,
+            x_col="total_evidence_strength",
+            y_col="first_choice_numeric",
+            valueType="continue",
+            bins=6,
+            min_trials=20,
+        )
+    )
+
+    mo.hstack([psychometric_hm4_fig, psychometric_hm3_fig])
     return
 
 
@@ -1070,6 +1096,17 @@ def _(
         [
             plot_group(df_test_aud_hm4, "hM4Di", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_observation), 
             plot_group(df_test_aud_hm3, "hM3Dq", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_observation)
+        ]
+    )
+    return
+
+
+@app.cell
+def _(df_test_aud_hm3, df_test_aud_hm4, mo, plot_group, plot_metric_by_date):
+    mo.vstack(
+        [
+            plot_group(df_test_aud_hm4, "hM4Di", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_date), 
+            plot_group(df_test_aud_hm3, "hM3Dq", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_date)
         ]
     )
     return
@@ -1153,7 +1190,18 @@ def _(mo):
 
 
 @app.cell
-def _(Path, dlc_mice_selected, download_dlcData_button, pd, project, utils):
+def _(
+    Path,
+    behavior_utils,
+    dlc_mice_selected,
+    download_dlcData_button,
+    injection_info_df,
+    pd,
+    project,
+    utils,
+):
+    behav_df_dic = {}
+    video_df_dic = {}
 
     if download_dlcData_button.value:
         for dlc_mouse_selected in dlc_mice_selected:
@@ -1167,7 +1215,6 @@ def _(Path, dlc_mice_selected, download_dlcData_button, pd, project, utils):
             )
 
     else:
-        behav_df_dic = {}
         for dlc_mouse_selected in dlc_mice_selected:
             _local_path = Path(utils.get_outpath()) / project / "sessions" / dlc_mouse_selected / "DLC"
             for dlc_file_ in sorted(_local_path.glob("*DLC*.csv")):
@@ -1192,7 +1239,32 @@ def _(Path, dlc_mice_selected, download_dlcData_button, pd, project, utils):
             video_df = video_df[2:]
             video_df.index = range(0, len(video_df))
             video_df_dic[video_file_] = video_df
-    return behav_df_dic, video_df_dic
+
+    paired_dlc_dates = behavior_utils.get_paired_injection_dates(
+        injection_info_df,
+        mice_selected=dlc_mice_selected,
+    )
+    (
+        behav_df_dic_saline,
+        behav_df_dic_dcz,
+        behav_pair_map,
+        missing_behav_pairs,
+    ) = behavior_utils.split_paired_behavior_dicts(behav_df_dic, paired_dlc_dates)
+    (
+        video_df_dic_saline,
+        video_df_dic_dcz,
+        video_pair_map,
+        missing_video_pairs,
+    ) = behavior_utils.split_paired_behavior_dicts(video_df_dic, paired_dlc_dates)
+
+    behav_pair_map
+    return (
+        behav_df_dic_dcz,
+        behav_df_dic_saline,
+        behav_pair_map,
+        video_df_dic_dcz,
+        video_df_dic_saline,
+    )
 
 
 @app.cell
@@ -1204,192 +1276,1014 @@ def _(behavior_utils, plot_test):
 
 
 @app.cell
-def _(behav_df_dic, behavior_utils, video_df_dic):
-    dlc_df_test_dcz = behav_df_dic["NUO010_TwoAFC_20260523_114007"]
-    video_df_test_dcz = video_df_dic["NUO010_TwoAFC_20260523_114007"]
-    dlc_df_test_saline = behav_df_dic["NUO010_TwoAFC_20260522_131557"]
-    video_df_test_saline = video_df_dic["NUO010_TwoAFC_20260522_131557"]
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_utils,
+    np,
+    video_df_dic_dcz,
+    video_df_dic_saline,
+):
+    def add_timestamp_from_end(behav_df, video_df):
+        behav_df[("timestamp", "")] = np.nan
 
-    dlc_df_test_dcz['timestamp'] = video_df_test_dcz['timestamp']
-    dlc_df_test_dcz = behavior_utils.preprocess_positions(dlc_df_test_dcz, likelihood_thr=0.65, distance_thr=200, max_iter=100)
-    dlc_df_test_saline['timestamp'] = video_df_test_saline['timestamp']
-    dlc_df_test_saline = behavior_utils.preprocess_positions(dlc_df_test_saline, likelihood_thr=0.65, distance_thr=200, max_iter=100)
+        n = min(len(behav_df), len(video_df))
 
-    dlc_df_test_dcz = behavior_utils.compute_distance_speed(dlc_df_test_dcz, window_size = 5)
-    dlc_df_test_saline = behavior_utils.compute_distance_speed(dlc_df_test_saline, window_size = 5)
-    return dlc_df_test_dcz, dlc_df_test_saline
+        behav_df.iloc[
+            -n:,
+            behav_df.columns.get_loc(("timestamp", "")),
+        ] = video_df["timestamp"].to_numpy()[-n:]
+
+        return behav_df
+
+
+    for pair_id in behav_pair_map["pair_id"].unique():
+        behav_df_dic_dcz[pair_id] = add_timestamp_from_end(
+            behav_df_dic_dcz[pair_id],
+            video_df_dic_dcz[pair_id],
+        )
+        behav_df_dic_dcz[pair_id].dropna(subset=[("timestamp", "")], inplace=True)
+        behav_df_dic_dcz[pair_id] = behavior_utils.preprocess_positions(
+            behav_df_dic_dcz[pair_id],
+            likelihood_thr=0.7,
+            distance_thr=200,
+            max_iter=100,
+            speed_thr=600
+        )
+
+        behav_df_dic_saline[pair_id] = add_timestamp_from_end(
+            behav_df_dic_saline[pair_id],
+            video_df_dic_saline[pair_id],
+        )
+        behav_df_dic_saline[pair_id].dropna(subset=[("timestamp", "")], inplace=True)
+        behav_df_dic_saline[pair_id] = behavior_utils.preprocess_positions(
+            behav_df_dic_saline[pair_id],
+            likelihood_thr=0.7,
+            distance_thr=200,
+            max_iter=100,
+            speed_thr=600
+        )
+
+        behav_df_dic_dcz[pair_id] = behavior_utils.compute_distance_speed(
+            behav_df_dic_dcz[pair_id],
+            window_size=5,
+        )
+        behav_df_dic_saline[pair_id] = behavior_utils.compute_distance_speed(
+            behav_df_dic_saline[pair_id],
+            window_size=5,
+        )
+    return
 
 
 @app.cell
-def _(behavior_utils, colors, dlc_df_test_dcz, dlc_df_test_saline, np, plt):
-    occupancy_map_dcz = behavior_utils.occupancy_map(
-        dlc_df_test_dcz[("Center", "x")],
-        dlc_df_test_dcz[("Center", "y")],
-        dlc_df_test_dcz[("timestamp", "")],
+def _():
+    roi_bottom = 80
+    roi_top = 190
+    roi_left = 235
+    roi_right = 400
+    return roi_bottom, roi_left, roi_right, roi_top
+
+
+@app.cell
+def _(behav_pair_map):
+    behav_pair_map
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # save tmp svg
+    """)
+    return
+
+
+@app.cell
+def _(Path):
+    save_behavior_svg = True
+    behavior_svg_dir = Path("/mnt/e/data/LeciLab/behavioral_data/tmp")
+    return behavior_svg_dir, save_behavior_svg
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+    save_behavior_svg,
+):
+    pair_figures = plot_test.plot_paired_behavior_figures(
+        pair_ids=behav_pair_map["pair_id"].unique(),
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        bodypart="Center",
     )
 
-    occupancy_map_saline = behavior_utils.occupancy_map(
-        dlc_df_test_saline[("Center", "x")],
-        dlc_df_test_saline[("Center", "y")],
-        dlc_df_test_saline[("timestamp", "")],
+    plot_test.save_figures_svg(
+        pair_figures,
+        "paired_behavior",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
     )
 
-    occ_extents = (
-        np.nanmin([
-            dlc_df_test_dcz[("Center", "x")].min(),
-            dlc_df_test_saline[("Center", "x")].min(),
-        ]),
-        np.nanmax([
-            dlc_df_test_dcz[("Center", "x")].max(),
-            dlc_df_test_saline[("Center", "x")].max(),
-        ]),
-        np.nanmin([
-            dlc_df_test_dcz[("Center", "y")].min(),
-            dlc_df_test_saline[("Center", "y")].min(),
-        ]),
-        np.nanmax([
-            dlc_df_test_dcz[("Center", "y")].max(),
-            dlc_df_test_saline[("Center", "y")].max(),
-        ]),
+    mo.vstack(pair_figures)
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_saline,
+    behavior_utils,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+):
+    behavior_utils.get_roi_time_ratio(
+        behav_df_dic_saline['NUO005_pair_01'],
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,)
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_utils,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+    video_df_dic_dcz,
+    video_df_dic_saline,
+):
+    roi_time_ratio_summary = behavior_utils.paired_roi_time_ratio_comparison(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        video_df_dic_saline=video_df_dic_saline,
+        video_df_dic_dcz=video_df_dic_dcz,
+        pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        bodypart="Center",
     )
 
-    occ_all_values = np.concatenate([
-        occupancy_map_dcz.ravel(),
-        occupancy_map_saline.ravel(),
-    ])
+    roi_time_ratio_summary
+    return (roi_time_ratio_summary,)
 
-    occ_all_values = occ_all_values[np.isfinite(occ_all_values)]
 
-    occ_vmin = np.nanquantile(occ_all_values, 0.01)
-    occ_vmax = np.nanquantile(occ_all_values, 0.99)
+@app.cell
+def _(
+    behavior_svg_dir,
+    hM3Dq_mice,
+    hM4Di_mice,
+    plot_test,
+    plt,
+    roi_time_ratio_summary,
+    save_behavior_svg,
+    stats,
+):
+    roi_group_df = roi_time_ratio_summary.copy()
 
-    occ_norm = colors.Normalize(vmin=occ_vmin, vmax=occ_vmax)
+    if "subject" not in roi_group_df.columns:
+        roi_group_df["subject"] = roi_group_df["pair_id"].str[:6]
 
-    occ_fig, occ_axes = plt.subplots(
+
+    def plot_roi_group(ax, df, mice, group_name):
+        group_df = df[
+            df["subject"].isin(mice)
+        ].dropna(subset=["saline", "DCZ"]).copy()
+
+        for _, roi_row in group_df.iterrows():
+            ax.plot(
+                [0, 1],
+                [roi_row["saline"], roi_row["DCZ"]],
+                color="gray",
+                alpha=0.4,
+            )
+
+        ax.scatter(
+            [0] * len(group_df),
+            group_df["saline"],
+            color="blue",
+            edgecolor="black",
+            label="saline",
+        )
+
+        ax.scatter(
+            [1] * len(group_df),
+            group_df["DCZ"],
+            color="red",
+            edgecolor="black",
+            label="DCZ",
+        )
+
+        if len(group_df) > 0:
+            try:
+                roi_p = stats.wilcoxon(
+                    group_df["saline"],
+                    group_df["DCZ"],
+                ).pvalue
+                p_text = f"p={roi_p:.3g}"
+            except ValueError:
+                roi_p = float("nan")
+                p_text = "p=NA"
+        else:
+            roi_p = float("nan")
+            p_text = "p=NA"
+
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["saline", "DCZ"])
+        ax.set_ylabel("fraction of time in ROI")
+        ax.set_title(f"{group_name}, n={len(group_df)}, {p_text}")
+        plot_test.add_paired_significance_label(
+            ax,
+            group_df["saline"],
+            group_df["DCZ"],
+            plot_test.p_to_star(roi_p),
+        )
+        ax.grid(axis="y", alpha=0.3)
+
+        return group_df
+
+
+    roi_group_fig, roi_group_axes = plt.subplots(
         1,
         2,
-        figsize=(10, 5),
-        sharex=True,
+        figsize=(8, 5),
         sharey=True,
     )
 
-    occ_im0 = occ_axes[0].imshow(
-        occupancy_map_saline.T,
-        origin="upper",
-        extent=occ_extents,
-        cmap="viridis",
-        norm=occ_norm,
-        interpolation="gaussian",
-    )
-    occ_axes[0].set_title("Saline", fontsize=10)
-
-    occ_im1 = occ_axes[1].imshow(
-        occupancy_map_dcz.T,
-        origin="upper",
-        extent=occ_extents,
-        cmap="viridis",
-        norm=occ_norm,
-        interpolation="gaussian",
-    )
-    occ_axes[1].set_title("DCZ", fontsize=10)
-
-    for occ_ax in occ_axes:
-        occ_ax.set_aspect("equal")
-        occ_ax.set_xticks([])
-        occ_ax.set_yticks([])
-
-    occ_fig.colorbar(
-        occ_im1,
-        ax=occ_axes,
-        label="occupancy (s/pixels)",
-        shrink=0.7,
-        fraction=0.04,
-        pad=0.02,
-        extend="both",
+    roi_hm4_df = plot_roi_group(
+        roi_group_axes[0],
+        roi_group_df,
+        hM4Di_mice,
+        "hM4Di",
     )
 
+    roi_hm3_df = plot_roi_group(
+        roi_group_axes[1],
+        roi_group_df,
+        hM3Dq_mice,
+        "hM3Dq",
+    )
+
+    roi_group_fig.tight_layout()
+    plot_test.save_figure_svg(
+        roi_group_fig,
+        "roi_time_ratio_groups",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
     plt.show()
     return
 
 
 @app.cell
-def _(dlc_df_test_dcz, dlc_df_test_saline, mpl, pd, plot_test, plt):
-    def prep_traj_speed_df(dlc_df):
-        return (
-            dlc_df["Center"][["x", "y", "mean_speed"]]
-            .apply(pd.to_numeric, errors="coerce")
-            .interpolate(limit_direction="both")
-            .dropna()
-            .copy()
+def _(behav_df_dic_dcz, behav_df_dic_saline, behav_pair_map, behavior_utils):
+    stationary_speed_threshold = 10  # pixels/s调
+
+    stationary_time_ratio_summary = behavior_utils.paired_stationary_time_ratio_comparison(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        speed_threshold=stationary_speed_threshold,
+        pair_map=behav_pair_map,
+        bodypart="Center",
+        speed_col="mean_speed",
+    )
+
+    stationary_time_ratio_summary
+    return stationary_speed_threshold, stationary_time_ratio_summary
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    plot_test,
+    save_behavior_svg,
+    stationary_speed_threshold,
+):
+    stationary_speed_figures = plot_test.plot_paired_stationary_speed_traces(
+        pair_ids=behav_pair_map["pair_id"].unique(),
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        speed_threshold=stationary_speed_threshold,
+        bodypart="Center",
+        speed_col="mean_speed",
+    )
+
+    plot_test.save_figures_svg(
+        stationary_speed_figures,
+        "stationary_speed_trace",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    stationary_speed_figures
+    return
+
+
+@app.cell
+def _(
+    behavior_svg_dir,
+    hM3Dq_mice,
+    hM4Di_mice,
+    plot_test,
+    save_behavior_svg,
+    stationary_time_ratio_summary,
+):
+    stationary_group_fig, stationary_hm4_df, stationary_hm3_df = (
+        plot_test.plot_stationary_time_ratio_groups(
+            stationary_time_ratio_summary,
+            hM4Di_mice=hM4Di_mice,
+            hM3Dq_mice=hM3Dq_mice,
+        )
+    )
+    plot_test.save_figure_svg(
+        stationary_group_fig,
+        "stationary_time_ratio_groups",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+    stationary_group_fig
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    save_behavior_svg,
+    stationary_speed_threshold,
+):
+    speed_distribution_figures = plot_test.plot_paired_speed_distributions(
+        pair_ids=behav_pair_map["pair_id"].unique(),
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        bodypart="Center",
+        speed_col="mean_speed",
+        speed_threshold=stationary_speed_threshold,  
+        bins=60,
+        kde=True,
+    )
+
+    plot_test.save_figures_svg(
+        speed_distribution_figures,
+        "speed_distribution",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(speed_distribution_figures)
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    plot_test,
+    save_behavior_svg,
+):
+    speed_acf_group_figures, hm4_acf_pair_ids, hm3_acf_pair_ids = (
+        plot_test.plot_speed_acfs_by_group(
+            pair_ids=behav_pair_map["pair_id"].unique(),
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            hM4Di_mice=hM4Di_mice,
+            hM3Dq_mice=hM3Dq_mice,
+            fps=30,
+            max_lag_sec=60,
+            bodypart="Center",
+            speed_col="mean_speed",
+        )
+    )
+
+    plot_test.save_figures_svg(
+        speed_acf_group_figures,
+        "speed_acf_group",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(speed_acf_group_figures)
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    behavior_utils,
+    hM3Dq_mice,
+    hM4Di_mice,
+    plot_test,
+    save_behavior_svg,
+):
+    speed_acf_auc_summary = behavior_utils.paired_speed_acf_auc_comparison(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        fps=30,
+        max_lag_sec=60,
+        pair_map=behav_pair_map,
+        bodypart="Center",
+        speed_col="mean_speed",
+    )
+
+    speed_acf_auc_fig, speed_acf_auc_hm4_df, speed_acf_auc_hm3_df = (
+        plot_test.plot_speed_acf_auc_groups(
+            speed_acf_auc_summary,
+            hM4Di_mice=hM4Di_mice,
+            hM3Dq_mice=hM3Dq_mice,
+        )
+    )
+
+    plot_test.save_figure_svg(
+        speed_acf_auc_fig,
+        "speed_acf_auc_groups",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+    speed_acf_auc_fig
+    return
+
+
+@app.cell
+def _():
+    noeffec_group = ['NUO005', 'NUO008']
+    effec_group = ['NUO010', 'NUO012']
+    return
+
+
+@app.cell
+def _(behav_df_dic_dcz, behav_df_dic_saline, pd):
+    behav_df_effec = pd.DataFrame([])
+    behav_df_noeffec = pd.DataFrame([])
+    for behav_df_name_ in behav_df_dic_dcz:
+        behav_df_subject = behav_df_dic_dcz[behav_df_name_]
+        behav_df_subject[("session", "")] = behav_df_name_
+        if ("NUO005" in behav_df_name_) or ("NUO008" in behav_df_name_):
+            behav_df_noeffec = pd.concat([behav_df_noeffec, behav_df_subject])
+        else:
+            behav_df_effec = pd.concat([behav_df_effec, behav_df_subject])
+    for behav_df_name_ in behav_df_dic_saline:
+        behav_df_subject = behav_df_dic_saline[behav_df_name_]
+        behav_df_subject[("session", "")] = behav_df_name_
+        behav_df_noeffec = pd.concat([behav_df_noeffec, behav_df_subject])
+    return
+
+
+@app.cell
+def _(behav_df_dic_dcz, behav_df_dic_saline, np, pd):
+    import ssm
+
+    def iter_speed_hmm_entries(model_name):
+        if model_name == "effect":
+            for pair_id, behav_df in behav_df_dic_dcz.items():
+                if ("NUO005" in pair_id) or ("NUO008" in pair_id):
+                    continue
+                yield pair_id, "DCZ", behav_df
+        else:
+            for pair_id, behav_df in behav_df_dic_dcz.items():
+                if ("NUO005" in pair_id) or ("NUO008" in pair_id):
+                    yield pair_id, "DCZ", behav_df
+            for pair_id, behav_df in behav_df_dic_saline.items():
+                yield pair_id, "saline", behav_df
+
+    def build_speed_hmm_datas_from_entries(
+        entries,
+        speed_col=("Center", "mean_speed"),
+        min_len=20,
+    ):
+        datas = []
+        data_info = []
+
+        for pair_id, condition, behav_df in entries:
+            if behav_df.empty or speed_col not in behav_df.columns:
+                continue
+
+            speed = pd.to_numeric(behav_df[speed_col], errors="coerce")
+            valid_speed = speed.replace([np.inf, -np.inf], np.nan).notna()
+            valid_positions = np.flatnonzero(valid_speed.to_numpy())
+            if len(valid_positions) < min_len:
+                continue
+
+            data = speed.iloc[valid_positions].to_numpy(dtype=float).reshape(-1, 1)
+            datas.append(data)
+            data_info.append(
+                {
+                    "pair_id": pair_id,
+                    "condition": condition,
+                    "df": behav_df,
+                    "valid_positions": valid_positions,
+                }
+            )
+
+        return datas, data_info
+
+    def state_mean_speeds(hmm, datas):
+        state_rows = []
+        for state in range(hmm.K):
+            weighted_sum = 0.0
+            weighted_count = 0.0
+            for data in datas:
+                posterior = hmm.expected_states(data)[0]
+                state_weight = posterior[:, state]
+                weighted_sum += np.sum(state_weight * data[:, 0])
+                weighted_count += np.sum(state_weight)
+
+            state_rows.append(
+                {
+                    "state": state,
+                    "mean_speed": weighted_sum / weighted_count
+                    if weighted_count > 0
+                    else np.nan,
+                    "state_weight": weighted_count,
+                }
+            )
+
+        return pd.DataFrame(state_rows)
+
+    def fit_speed_hmm(datas, num_states=2, n_iters=100):
+        hmm = ssm.HMM(num_states, 1, observations="gaussian")
+        hmm_lls = hmm.fit(
+            datas,
+            method="em",
+            num_iters=n_iters,
+            tolerance=1e-4,
         )
 
+        state_summary_before = state_mean_speeds(hmm, datas)
+        perm = [
+            int(state)
+            for state in state_summary_before.sort_values("mean_speed")[
+                "state"
+            ].to_list()
+        ]
+        hmm.permute(perm)
 
-    dcz_traj = prep_traj_speed_df(dlc_df_test_dcz)
-    saline_traj = prep_traj_speed_df(dlc_df_test_saline)
+        state_summary_after = state_mean_speeds(hmm, datas)
+        log_likelihood = sum(float(hmm.log_probability(data)) for data in datas)
 
-    all_speed = pd.concat(
-        [
-            dcz_traj["mean_speed"],
-            saline_traj["mean_speed"],
-        ],
-        ignore_index=True,
-    ).dropna()
+        return hmm, log_likelihood, hmm_lls, perm, state_summary_after
 
-    vmin = all_speed.quantile(0.01)
-    vmax = all_speed.quantile(0.99)
-    norm_ = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+    def add_hmm_states_to_dfs(hmm, datas, data_info, model_name):
+        state_rows = []
+        for data, info in zip(datas, data_info):
+            posterior = hmm.expected_states(data)[0]
+            states = np.argmax(posterior, axis=1)
+            behav_df = info["df"]
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6), sharex=True, sharey=True)
+            behav_df[("speed_hmm_state", "")] = np.nan
+            behav_df[("speed_hmm_model", "")] = None
+            state_col_loc = behav_df.columns.get_loc(("speed_hmm_state", ""))
+            model_col_loc = behav_df.columns.get_loc(("speed_hmm_model", ""))
 
-    plot_test.plot_traj_speed(saline_traj, cmap="inferno", ax=axes[0], norm=norm_)
-    axes[0].set_title("saline")
+            behav_df.iloc[info["valid_positions"], state_col_loc] = states
+            behav_df.iloc[info["valid_positions"], model_col_loc] = model_name
 
-    plot_test.plot_traj_speed(dcz_traj, cmap="inferno", ax=axes[1], norm=norm_)
-    axes[1].set_title("DCZ")
+            state_rows.append(
+                {
+                    "model": model_name,
+                    "pair_id": info["pair_id"],
+                    "condition": info["condition"],
+                    "n_valid_frames": len(states),
+                    "state0_frames": int(np.sum(states == 0)),
+                    "state1_frames": int(np.sum(states == 1)),
+                    "state1_fraction": float(np.mean(states == 1)),
+                }
+            )
 
-    for ax in axes:
-        ax.set_aspect("equal")
-        ax.autoscale()
-        # ax.set_xticks([])
-        # ax.set_yticks([])
-    axes[0].invert_yaxis()
+        return pd.DataFrame(state_rows)
 
-    sm = mpl.cm.ScalarMappable(norm=norm_, cmap="inferno")
-    fig.colorbar(sm, ax=axes, label="mean speed (pixels/s)", shrink=0.6)
+    hmm_speed_models = {}
+    hmm_speed_rows = []
+    hmm_speed_state_summaries = []
 
-    plt.show()
-    return dcz_traj, saline_traj
+    for model_name in ["effect", "noeffect"]:
+        entries = list(iter_speed_hmm_entries(model_name))
+        datas, data_info = build_speed_hmm_datas_from_entries(entries)
+        if not datas:
+            hmm_speed_rows.append(
+                {
+                    "model": model_name,
+                    "n_sequences": 0,
+                    "n_frames": 0,
+                    "log_likelihood": np.nan,
+                    "state0_mean_speed": np.nan,
+                    "state1_mean_speed": np.nan,
+                    "state_permutation": None,
+                    "status": "no valid speed data",
+                }
+            )
+            continue
+
+        hmm, ll, hmm_lls, perm, state_summary = fit_speed_hmm(datas)
+        state_summary_by_df = add_hmm_states_to_dfs(
+            hmm,
+            datas,
+            data_info,
+            model_name,
+        )
+        hmm_speed_state_summaries.append(state_summary_by_df)
+        hmm_speed_models[model_name] = {
+            "model": hmm,
+            "datas": datas,
+            "data_info": data_info,
+            "log_likelihood": ll,
+            "hmm_lls": hmm_lls,
+            "state_permutation": perm,
+            "state_summary": state_summary,
+            "state_summary_by_df": state_summary_by_df,
+        }
+
+        hmm_speed_rows.append(
+            {
+                "model": model_name,
+                "n_sequences": len(datas),
+                "n_frames": sum(len(data) for data in datas),
+                "log_likelihood": ll,
+                "state0_mean_speed": state_summary.loc[
+                    state_summary["state"] == 0,
+                    "mean_speed",
+                ].iloc[0],
+                "state1_mean_speed": state_summary.loc[
+                    state_summary["state"] == 1,
+                    "mean_speed",
+                ].iloc[0],
+                "state_permutation": perm,
+                "status": "ok",
+            }
+        )
+
+    hmm_effec = hmm_speed_models.get("effect", {}).get("model")
+    hmm_noeffec = hmm_speed_models.get("noeffect", {}).get("model")
+    hmm_speed_summary = pd.DataFrame(hmm_speed_rows)
+    hmm_speed_state_summary = (
+        pd.concat(hmm_speed_state_summaries, ignore_index=True)
+        if hmm_speed_state_summaries
+        else pd.DataFrame()
+    )
+    hmm_speed_summary
+    return hmm_effec, hmm_noeffec
 
 
 @app.cell
-def _(saline_traj):
-    saline_traj['y'].max()
+def _(
+    behavior_svg_dir,
+    hmm_effec,
+    hmm_noeffec,
+    plot_test,
+    plt,
+    save_behavior_svg,
+):
+    import utils_test
+
+    hmm_transition_fig, hmm_transition_axes = plt.subplots(
+        1,
+        2,
+        figsize=(7, 3),
+    )
+
+    if hmm_effec is not None:
+        utils_test.plot_transition_matrix(
+            hmm_effec,
+            title="effect speed HMM",
+            ax=hmm_transition_axes[0],
+            cmap="gray",
+        )
+    else:
+        hmm_transition_axes[0].set_title("effect speed HMM missing")
+        hmm_transition_axes[0].axis("off")
+
+    if hmm_noeffec is not None:
+        utils_test.plot_transition_matrix(
+            hmm_noeffec,
+            title="no-effect speed HMM",
+            ax=hmm_transition_axes[1],
+            cmap="gray",
+        )
+    else:
+        hmm_transition_axes[1].set_title("no-effect speed HMM missing")
+        hmm_transition_axes[1].axis("off")
+
+    hmm_transition_fig.tight_layout()
+    plot_test.save_figure_svg(
+        hmm_transition_fig,
+        "speed_hmm_model_transition_matrix",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+    hmm_transition_fig
     return
 
 
 @app.cell
-def _():
-    roi_botttom = 350
-    roi_top = 500
-    roi_left = 250
-    roi_right = 400
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behavior_svg_dir,
+    hmm_effec,
+    hmm_noeffec,
+    mo,
+    plot_test,
+    save_behavior_svg,
+):
+    hmm_speed_posterior_figures = (
+        plot_test.plot_speed_hmm_posteriors_for_behavior_dicts(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            hmm_effec=hmm_effec,
+            hmm_noeffec=hmm_noeffec,
+            speed_col=("Center", "mean_speed"),
+            speed_quantiles=(0.01, 0.99),
+        )
+    )
+
+    plot_test.save_figures_svg(
+        hmm_speed_posterior_figures,
+        "speed_hmm_posterior",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(hmm_speed_posterior_figures)
     return
 
 
 @app.cell
-def _():
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    save_behavior_svg,
+    stationary_speed_threshold,
+):
+    state_speed_distribution_figures = plot_test.plot_paired_state_speed_distributions(
+        pair_ids=behav_pair_map["pair_id"].unique(),
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        bodypart="Center",
+        speed_col="mean_speed",
+        state_col=("speed_hmm_state", ""),
+        states=(0, 1),
+        speed_threshold=stationary_speed_threshold,
+        bins=60,
+        kde=True,
+    )
+
+    plot_test.save_figures_svg(
+        state_speed_distribution_figures,
+        "state_speed_distribution",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(state_speed_distribution_figures)
     return
 
 
 @app.cell
-def _(dcz_traj, plt):
-    plt.plot(dcz_traj["mean_speed"])
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    plot_test,
+    save_behavior_svg,
+):
+    (
+        speed_hmm_state_fraction_fig,
+        speed_hmm_state_fraction_summary,
+        noeffec_group_state_fraction_df,
+        effec_group_state_fraction_df,
+    ) = plot_test.plot_speed_hmm_state_fraction_comparison(
+        pair_ids=behav_pair_map["pair_id"].unique(),
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        state_col=("speed_hmm_state", ""),
+        K=2,
+        states=(0, 1),
+        figsize=(8, 7),
+    )
+
+    plot_test.save_figure_svg(
+        speed_hmm_state_fraction_fig,
+        "speed_hmm_state_fraction_groups",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+        subfolder="speed_hmm_state_fraction_groups",
+    )
+
+    speed_hmm_state_fraction_fig
     return
 
 
 @app.cell
-def _(plt, saline_traj):
-    plt.plot(saline_traj["mean_speed"])
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    save_behavior_svg,
+):
+    hmm_speed_transition_fig_dic = (
+        plot_test.plot_paired_speed_hmm_transition_matrices(
+            pair_ids=behav_pair_map["pair_id"].unique(),
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            state_col=("speed_hmm_state", ""),
+            K=2,
+        )
+    )
+
+    plot_test.save_figures_svg(
+        hmm_speed_transition_fig_dic,
+        "speed_hmm_pair_transition_matrix",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(list(hmm_speed_transition_fig_dic.values()))
+    return (hmm_speed_transition_fig_dic,)
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    hmm_speed_transition_fig_dic,
+    plot_test,
+    save_behavior_svg,
+):
+    (
+        speed_hmm_switch_probability_fig,
+        speed_hmm_switch_probability_summary,
+        noeffec_group_switch_df,
+        effec_group_switch_df,
+    ) = plot_test.plot_speed_hmm_switch_probability_comparison(
+        pair_ids=behav_pair_map["pair_id"].unique(),
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        transition_fig_dic=hmm_speed_transition_fig_dic,
+        K=2,
+        figsize=(8, 7),
+    )
+
+    plot_test.save_figure_svg(
+        speed_hmm_switch_probability_fig,
+        "speed_hmm_switch_probability_groups",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+        subfolder="speed_hmm_switch_probability_groups",
+    )
+
+    speed_hmm_switch_probability_fig
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    plot_test,
+    save_behavior_svg,
+):
+    speed_hmm_switch_rate_summary_df = plot_test.speed_hmm_switch_rate_summary(
+        pair_ids=behav_pair_map["pair_id"].unique(),
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        fps=30,
+        state_col=("speed_hmm_state", ""),
+        K=2,
+    )
+
+    (
+        speed_hmm_switch_rate_distribution_fig,
+        _speed_hmm_switch_rate_distribution_df,
+    ) = plot_test.plot_speed_hmm_switch_rate_distribution(
+        speed_hmm_switch_rate_summary_df,
+        states=(0, 1),
+    )
+
+    plot_test.save_figure_svg(
+        speed_hmm_switch_rate_distribution_fig,
+        "speed_hmm_switch_rate_by_session",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+        subfolder="speed_hmm_switch_rate_by_session",
+    )
+
+    speed_hmm_switch_rate_distribution_fig
+    return (speed_hmm_switch_rate_summary_df,)
+
+
+@app.cell
+def _(
+    behavior_svg_dir,
+    plot_test,
+    save_behavior_svg,
+    speed_hmm_switch_rate_summary_df,
+):
+    (
+        speed_hmm_state_switch_rate_fig,
+        _speed_hmm_state_switch_rate_plot_df,
+    ) = plot_test.plot_speed_hmm_state_switch_rate_groups(
+        speed_hmm_switch_rate_summary_df,
+        states=(0, 1),
+    )
+
+    plot_test.save_figure_svg(
+        speed_hmm_state_switch_rate_fig,
+        "speed_hmm_state_switch_rate_groups",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+        subfolder="speed_hmm_state_switch_rate",
+    )
+    speed_hmm_state_switch_rate_fig
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    save_behavior_svg,
+):
+    hmm_state_xy_heatmap_fig_dic = (
+        plot_test.plot_paired_speed_hmm_state_xy_heatmaps(
+            pair_ids=behav_pair_map["pair_id"].unique(),
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            bodypart="Center",
+            state_col=("speed_hmm_state", ""),
+            states=(0, 1),
+            xbins=40,
+            ybins=40,
+            extent=(0, 640, 0, 480),
+            normalize=True,
+        )
+    )
+
+    plot_test.save_figures_svg(
+        hmm_state_xy_heatmap_fig_dic,
+        "speed_hmm_state_xy_heatmap",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(list(hmm_state_xy_heatmap_fig_dic.values()))
+    return
+
+
+@app.cell
+def _(behav_df_dic_dcz):
+    behav_df_dic_dcz['NUO005_pair_01'][("speed_hmm_state", "")]
     return
 
 
