@@ -333,7 +333,7 @@ def _(dft, plots, plt, utils):
         fig.tight_layout()
         return fig
 
-    return (compact_session_summary_figure,)
+    return
 
 
 @app.cell
@@ -342,24 +342,6 @@ def _(date_select, df_day, session_summary_figure):
     sdf = df_day[df_day["year_month_day"].astype(str) == date].copy()
     fig_session_summary = session_summary_figure(sdf, perf_window=50)
     fig_session_summary
-    return
-
-
-@app.cell
-def _(available_dates, compact_session_summary_figure, df_day, mo):
-
-    last_three_date_outputs = []
-    for _date in available_dates[-3:]:
-        _sdf = df_day[df_day["year_month_day"].astype(str) == _date].copy()
-        _fig = compact_session_summary_figure(_sdf, perf_window=50)
-        last_three_date_outputs.append(mo.vstack([mo.md(f"## {_date}"), _fig]))
-
-    mo.vstack(
-        [
-            mo.md("# Last three days compact summaries"),
-            *last_three_date_outputs,
-        ]
-    )
     return
 
 
@@ -2014,6 +1996,38 @@ def _(
 def _(
     behav_df_dic_dcz,
     behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    save_behavior_svg,
+):
+
+    hmm_speed_transition_graph_fig_dic = (
+        plot_test.plot_paired_speed_hmm_transition_graphs(
+            pair_ids=behav_pair_map["pair_id"].unique(),
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            state_col=("speed_hmm_state", ""),
+            K=2,
+        )
+    )
+
+    plot_test.save_figures_svg(
+        hmm_speed_transition_graph_fig_dic,
+        "speed_hmm_pair_transition_graph",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(list(hmm_speed_transition_graph_fig_dic.values()))
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
     behavior_svg_dir,
     hmm_effec,
     hmm_noeffec,
@@ -2267,6 +2281,7 @@ def _(
             ybins=40,
             extent=(0, 640, 0, 480),
             normalize=True,
+            difference=True,
         )
     )
 
@@ -2282,8 +2297,78 @@ def _(
 
 
 @app.cell
-def _(behav_df_dic_dcz):
-    behav_df_dic_dcz['NUO005_pair_01'][("speed_hmm_state", "")]
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    save_behavior_svg,
+):
+    hmm_state_occupancy_diff_fig_dic = (
+        plot_test.plot_paired_speed_hmm_state_occupancy_diff_heatmaps(
+            pair_ids=behav_pair_map["pair_id"].unique(),
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            bodypart="Center",
+            state_col=("speed_hmm_state", ""),
+            timestamp_col=("timestamp", ""),
+            states=(0, 1),
+            xbins=40,
+            ybins=40,
+            extent=(0, 640, 0, 480),
+            normalize=True,
+        )
+    )
+
+    plot_test.save_figures_svg(
+        hmm_state_occupancy_diff_fig_dic,
+        "speed_hmm_state_occupancy_diff_heatmap",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(list(hmm_state_occupancy_diff_fig_dic.values()))
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    save_behavior_svg,
+):
+
+    condition_state_occupancy_diff_fig_dic = (
+        plot_test.plot_paired_speed_hmm_condition_state_occupancy_diff_heatmaps(
+            pair_ids=behav_pair_map["pair_id"].unique(),
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            bodypart="Center",
+            state_col=("speed_hmm_state", ""),
+            timestamp_col=("timestamp", ""),
+            state_a=1,
+            state_b=0,
+            xbins=40,
+            ybins=40,
+            extent=(0, 640, 0, 480),
+            normalize=True,
+        )
+    )
+
+    plot_test.save_figures_svg(
+        condition_state_occupancy_diff_fig_dic,
+        "speed_hmm_condition_state_occupancy_diff_heatmap",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(list(condition_state_occupancy_diff_fig_dic.values()))
     return
 
 

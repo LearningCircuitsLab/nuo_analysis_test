@@ -400,9 +400,78 @@ def _(mo):
 
 
 @app.cell
+def _():
+    # for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
+    #     plt.figure(figsize=(5, 5), dpi=150)
+
+    #     if "vis" in stage_name__:
+    #         # x_col = "visual_stimulus_ratio"
+    #         valueType = "discrete"
+    #     else:
+    #         # x_col = "total_evidence_strength"
+    #         valueType = "continue"
+
+    #     if "easy" in stage_name__:
+    #         bins = 2
+    #     else:
+    #         bins = 6
+
+
+    #     for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
+    #         color_palette = sns.color_palette(
+    #             "colorblind",
+    #             df_stage__['subject'].nunique()
+    #         )
+
+    #     for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
+    #         df_stage__.groupby('subject'),
+    #         sns.color_palette("colorblind", df_stage__['subject'].nunique())
+    #     ):
+    #         utils_test.psychometric_plot_easy_logistic(
+    #             df_mouse_psycurve,
+    #             x=stim_col,
+    #             y="first_choice_numeric",
+    #             valueType = valueType,
+    #             bins = bins,
+    #             point_kwargs={
+    #                 "color": color,
+    #                 "label": "",
+    #                 "alpha": 0.3,
+    #             },
+    #             line_kwargs={
+    #                 "color": color,
+    #                 "label": mouse_name_psycurve,
+    #                 "alpha": 0.3,
+    #             },
+    #         )
+
+    #     utils_test.psychometric_plot_easy_logistic(
+    #         df_stage__,
+    #         x=stim_col,
+    #         valueType = valueType,
+    #         bins = bins,
+    #         y="first_choice_numeric",
+    #         point_kwargs={
+    #             "color": "black",
+    #             "label": "",
+    #         },
+    #         line_kwargs={
+    #             "color": "black",
+    #             "label": "All mice",
+    #         },
+    #     )
+
+    #     plt.title(stage_name__)
+    #     plt.legend(frameon=False)
+    #     plt.tight_layout()
+    #     plt.show()
+    return
+
+
+@app.cell
 def _(df_test, plt, sns, stim_col, utils_test):
     for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
-        plt.figure(figsize=(8, 8), dpi=150)
+        plt.figure(figsize=(5, 5), dpi=150)
 
         if "vis" in stage_name__:
             # x_col = "visual_stimulus_ratio"
@@ -440,8 +509,8 @@ def _(df_test, plt, sns, stim_col, utils_test):
                 },
                 line_kwargs={
                     "color": color,
-                    "label": mouse_name_psycurve,
-                    "alpha": 0.3,
+                    "label": "",
+                    "alpha": 0,
                 },
             )
 
@@ -453,11 +522,12 @@ def _(df_test, plt, sns, stim_col, utils_test):
             y="first_choice_numeric",
             point_kwargs={
                 "color": "black",
-                "label": "",
+                "label": "All mice",
             },
             line_kwargs={
                 "color": "black",
-                "label": "All mice",
+                "label": "",
+                "alpha": 0,
             },
         )
 
@@ -465,11 +535,6 @@ def _(df_test, plt, sns, stim_col, utils_test):
         plt.legend(frameon=False)
         plt.tight_layout()
         plt.show()
-    return
-
-
-@app.cell
-def _():
     return
 
 
@@ -1013,6 +1078,19 @@ def _():
 
 
 @app.cell
+def _(df_test_kernel):
+    df_test_kernel['visual_stimulus_diff'].max()
+    return
+
+
+@app.cell
+def _(df_test_kernel):
+    df_test_kernel['visual_stimulus_ratio_scaled'] = df_test_kernel['visual_stimulus_ratio']/6
+    df_test_kernel['visual_stimulus_ratio_scaled'].unique()
+    return
+
+
+@app.cell
 def _(contextlib, df_test_kernel, io, mo, plots, plt, stim_col, utils_test):
 
 
@@ -1021,8 +1099,9 @@ def _(contextlib, df_test_kernel, io, mo, plots, plt, stim_col, utils_test):
     for stage_name_glm_compare, df_stage_glm_compare in df_test_kernel.groupby("selected_df_option"):
         if "vis" in stage_name_glm_compare:
             X_filter_model = [
-                stim_col,
-                "visual_ratio_diff_interact",
+                # stim_col,
+                "visual_stimulus_ratio_scaled",
+                # "visual_ratio_diff_interact",
                 # "visual_ratio_bright_interact",
                 "left_bright",
                 'visual_stimulus_diff',
@@ -1667,6 +1746,12 @@ def _(
             bbox_inches="tight"
         )
     figs
+    return
+
+
+@app.cell
+def _(hmm_model_dic):
+    hmm_model_dic['NUO001_aud_easy']['df']['glmhmm_state']
     return
 
 

@@ -3088,6 +3088,100 @@ def plot_paired_speed_hmm_transition_matrices(
     return fig_dic
 
 
+def _transition_matrix_model(transition_matrix):
+    class _Transitions:
+        pass
+
+    class _Model:
+        pass
+
+    model = _Model()
+    model.transitions = _Transitions()
+    model.transitions.transition_matrix = np.asarray(transition_matrix, dtype=float)
+    model.K = model.transitions.transition_matrix.shape[0]
+    return model
+
+
+def plot_pair_speed_hmm_transition_graphs(
+    pair_id,
+    behav_df_dic_saline,
+    behav_df_dic_dcz,
+    state_col=("speed_hmm_state", ""),
+    K=2,
+    figsize=(7, 3),
+    colors=None,
+    fontsize=8,
+):
+    import utils_test
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    transition_data = {}
+
+    for ax, condition, behav_df_dic in [
+        (axes[0], "saline", behav_df_dic_saline),
+        (axes[1], "DCZ", behav_df_dic_dcz),
+    ]:
+        if pair_id not in behav_df_dic:
+            ax.text(
+                0.5,
+                0.5,
+                f"Missing {condition}",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            continue
+
+        transition_matrix, counts = state_transition_matrix_from_df(
+            behav_df_dic[pair_id],
+            state_col=state_col,
+            K=K,
+        )
+        transition_data[condition] = {
+            "transition_matrix": transition_matrix.copy(),
+            "counts": counts.copy(),
+        }
+        transition_model = _transition_matrix_model(transition_matrix)
+        utils_test.plot_transition_graph(
+            transition_model,
+            ax=ax,
+            colors=colors,
+            fontsize=fontsize,
+        )
+        ax.set_title(f"{pair_id} {condition}", fontsize=fontsize)
+
+    fig._speed_hmm_pair_id = pair_id
+    fig._speed_hmm_transition_data = transition_data
+    fig.tight_layout()
+    return fig
+
+
+def plot_paired_speed_hmm_transition_graphs(
+    pair_ids,
+    behav_df_dic_saline,
+    behav_df_dic_dcz,
+    state_col=("speed_hmm_state", ""),
+    K=2,
+    figsize=(7, 3),
+    colors=None,
+    fontsize=8,
+):
+    fig_dic = {}
+    for pair_id in pair_ids:
+        fig_dic[pair_id] = plot_pair_speed_hmm_transition_graphs(
+            pair_id=pair_id,
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            state_col=state_col,
+            K=K,
+            figsize=figsize,
+            colors=colors,
+            fontsize=fontsize,
+        )
+    return fig_dic
+
+
 def speed_hmm_state_xy_heatmap(
     df,
     state,
@@ -3133,6 +3227,397 @@ def speed_hmm_state_xy_heatmap(
     return heatmap
 
 
+def speed_hmm_state_occupancy_map(
+    df,
+    state,
+    bodypart="Center",
+    state_col=("speed_hmm_state", ""),
+    timestamp_col=("timestamp", ""),
+    x_col="x",
+    y_col="y",
+    xbins=40,
+    ybins=40,
+    extent=(0, 640, 0, 480),
+    normalize=True,
+):
+    occupancy = np.zeros((xbins, ybins), dtype=float)
+
+    required_cols = [(bodypart, x_col), (bodypart, y_col), state_col, timestamp_col]
+    if df.empty or any(column not in df.columns for column in required_cols):
+        return occupancy
+
+    x = pd.to_numeric(df[(bodypart, x_col)], errors="coerce").to_numpy()
+    y = pd.to_numeric(df[(bodypart, y_col)], errors="coerce").to_numpy()
+    states = pd.to_numeric(_series_from_column(df, state_col), errors="coerce").to_numpy()
+    t = pd.to_numeric(_series_from_column(df, timestamp_col), errors="coerce").to_numpy()
+
+    valid = (
+        np.isfinite(x)
+        & np.isfinite(y)
+        & np.isfinite(states)
+        & np.isfinite(t)
+        & (states.astype(float) == float(state))
+    )
+    if valid.sum() < 2:
+        return occupancy
+
+    if extent is None:
+        occupancy = behavior_utils.occupancy_map(
+            x[valid],
+            y[valid],
+            t[valid],
+            xbins=xbins,
+            ybins=ybins,
+        )
+    else:
+        x_min, x_max, y_min, y_max = extent
+        t_state = t[valid]
+        t_next = np.append(t_state, t_state[-1] + np.median(np.diff(t_state)))
+        time_in_bin = np.diff(t_next)
+        occupancy, _, _ = np.histogram2d(
+            x[valid],
+            y[valid],
+            bins=[xbins, ybins],
+            range=[[x_min, x_max], [y_min, y_max]],
+            weights=time_in_bin,
+        )
+
+    if normalize and occupancy.sum() > 0:
+        occupancy = occupancy / occupancy.sum()
+
+    return occupancy
+
+
+def plot_pair_speed_hmm_state_occupancy_diff_heatmaps(
+    pair_id,
+    behav_df_dic_saline,
+    behav_df_dic_dcz,
+    bodypart="Center",
+    state_col=("speed_hmm_state", ""),
+    timestamp_col=("timestamp", ""),
+    states=(0, 1),
+    xbins=40,
+    ybins=40,
+    extent=(0, 640, 0, 480),
+    normalize=True,
+    cmap="coolwarm",
+    figsize=None,
+    interpolation="nearest",
+    diff_quantile=0.99,
+):
+    occupancy_maps = {}
+    for state in states:
+        for condition, behav_df_dic in [
+            ("saline", behav_df_dic_saline),
+            ("DCZ", behav_df_dic_dcz),
+        ]:
+            if pair_id not in behav_df_dic:
+                occupancy = np.zeros((xbins, ybins), dtype=float)
+            else:
+                occupancy = speed_hmm_state_occupancy_map(
+                    behav_df_dic[pair_id],
+                    state=state,
+                    bodypart=bodypart,
+                    state_col=state_col,
+                    timestamp_col=timestamp_col,
+                    xbins=xbins,
+                    ybins=ybins,
+                    extent=extent,
+                    normalize=normalize,
+                )
+            occupancy_maps[(state, condition)] = occupancy
+
+    diff_maps = {
+        state: occupancy_maps[(state, "DCZ")] - occupancy_maps[(state, "saline")]
+        for state in states
+    }
+    diff_values = np.concatenate([diff_maps[state].ravel() for state in states])
+    diff_values = diff_values[np.isfinite(diff_values)]
+    max_abs = (
+        np.nanquantile(np.abs(diff_values), diff_quantile)
+        if len(diff_values) > 0
+        else 1
+    )
+    if not np.isfinite(max_abs) or max_abs == 0:
+        max_abs = 1
+
+    diff_norm = mpl.colors.TwoSlopeNorm(
+        vmin=-max_abs,
+        vcenter=0,
+        vmax=max_abs,
+    )
+
+    if figsize is None:
+        figsize = (4 * len(states), 4)
+    fig, axes = plt.subplots(
+        1,
+        len(states),
+        figsize=figsize,
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+
+    if extent is None:
+        plot_extent = None
+        x_min = x_max = y_min = y_max = None
+    else:
+        plot_extent = extent
+        x_min, x_max, y_min, y_max = extent
+
+    last_im = None
+    for col_idx, state in enumerate(states):
+        ax = axes[0, col_idx]
+        imshow_kwargs = {
+            "origin": "lower",
+            "cmap": cmap,
+            "norm": diff_norm,
+            "interpolation": interpolation,
+        }
+        if plot_extent is not None:
+            imshow_kwargs["extent"] = plot_extent
+
+        last_im = ax.imshow(diff_maps[state].T, **imshow_kwargs)
+        ax.set_title(f"{pair_id} state {state} occupancy DCZ - saline")
+        ax.set_aspect("equal")
+        if plot_extent is not None:
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    axes[0, 0].invert_yaxis()
+    colorbar_label = (
+        "DCZ - saline fraction of state occupancy time / bin"
+        if normalize
+        else "DCZ - saline state occupancy time / bin"
+    )
+    fig.colorbar(
+        last_im,
+        ax=axes,
+        label=colorbar_label,
+        shrink=0.75,
+        fraction=0.04,
+        pad=0.02,
+        extend="both",
+    )
+    fig.tight_layout()
+    return fig
+
+
+def plot_paired_speed_hmm_state_occupancy_diff_heatmaps(
+    pair_ids,
+    behav_df_dic_saline,
+    behav_df_dic_dcz,
+    bodypart="Center",
+    state_col=("speed_hmm_state", ""),
+    timestamp_col=("timestamp", ""),
+    states=(0, 1),
+    xbins=40,
+    ybins=40,
+    extent=(0, 640, 0, 480),
+    normalize=True,
+    cmap="coolwarm",
+    figsize=None,
+    interpolation="nearest",
+    diff_quantile=0.99,
+):
+    fig_dic = {}
+    for pair_id in pair_ids:
+        fig_dic[pair_id] = plot_pair_speed_hmm_state_occupancy_diff_heatmaps(
+            pair_id=pair_id,
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            bodypart=bodypart,
+            state_col=state_col,
+            timestamp_col=timestamp_col,
+            states=states,
+            xbins=xbins,
+            ybins=ybins,
+            extent=extent,
+            normalize=normalize,
+            cmap=cmap,
+            figsize=figsize,
+            interpolation=interpolation,
+            diff_quantile=diff_quantile,
+        )
+    return fig_dic
+
+
+def plot_pair_speed_hmm_condition_state_occupancy_diff_heatmaps(
+    pair_id,
+    behav_df_dic_saline,
+    behav_df_dic_dcz,
+    bodypart="Center",
+    state_col=("speed_hmm_state", ""),
+    timestamp_col=("timestamp", ""),
+    state_a=1,
+    state_b=0,
+    xbins=40,
+    ybins=40,
+    extent=(0, 640, 0, 480),
+    normalize=True,
+    cmap="coolwarm",
+    figsize=None,
+    interpolation="nearest",
+    diff_quantile=0.99,
+):
+    condition_specs = [
+        ("saline", behav_df_dic_saline),
+        ("DCZ", behav_df_dic_dcz),
+    ]
+
+    diff_maps = {}
+    for condition, behav_df_dic in condition_specs:
+        if pair_id not in behav_df_dic:
+            diff_maps[condition] = np.zeros((xbins, ybins), dtype=float)
+            continue
+
+        occupancy_a = speed_hmm_state_occupancy_map(
+            behav_df_dic[pair_id],
+            state=state_a,
+            bodypart=bodypart,
+            state_col=state_col,
+            timestamp_col=timestamp_col,
+            xbins=xbins,
+            ybins=ybins,
+            extent=extent,
+            normalize=normalize,
+        )
+        occupancy_b = speed_hmm_state_occupancy_map(
+            behav_df_dic[pair_id],
+            state=state_b,
+            bodypart=bodypart,
+            state_col=state_col,
+            timestamp_col=timestamp_col,
+            xbins=xbins,
+            ybins=ybins,
+            extent=extent,
+            normalize=normalize,
+        )
+        diff_maps[condition] = occupancy_a - occupancy_b
+
+    diff_values = np.concatenate(
+        [diff_maps[condition].ravel() for condition, _ in condition_specs]
+    )
+    diff_values = diff_values[np.isfinite(diff_values)]
+    max_abs = (
+        np.nanquantile(np.abs(diff_values), diff_quantile)
+        if len(diff_values) > 0
+        else 1
+    )
+    if not np.isfinite(max_abs) or max_abs == 0:
+        max_abs = 1
+
+    diff_norm = mpl.colors.TwoSlopeNorm(
+        vmin=-max_abs,
+        vcenter=0,
+        vmax=max_abs,
+    )
+
+    if figsize is None:
+        figsize = (8, 4)
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=figsize,
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+
+    if extent is None:
+        plot_extent = None
+        x_min = x_max = y_min = y_max = None
+    else:
+        plot_extent = extent
+        x_min, x_max, y_min, y_max = extent
+
+    last_im = None
+    for col_idx, (condition, _) in enumerate(condition_specs):
+        ax = axes[0, col_idx]
+        imshow_kwargs = {
+            "origin": "lower",
+            "cmap": cmap,
+            "norm": diff_norm,
+            "interpolation": interpolation,
+        }
+        if plot_extent is not None:
+            imshow_kwargs["extent"] = plot_extent
+
+        last_im = ax.imshow(diff_maps[condition].T, **imshow_kwargs)
+        ax.set_title(
+            f"{pair_id} {condition} occupancy state {state_a} - state {state_b}"
+        )
+        ax.set_aspect("equal")
+        if plot_extent is not None:
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    axes[0, 0].invert_yaxis()
+    colorbar_label = (
+        f"state {state_a} - state {state_b} fraction of occupancy time / bin"
+        if normalize
+        else f"state {state_a} - state {state_b} occupancy time / bin"
+    )
+    fig.colorbar(
+        last_im,
+        ax=axes,
+        label=colorbar_label,
+        shrink=0.75,
+        fraction=0.04,
+        pad=0.02,
+        extend="both",
+    )
+    fig.tight_layout()
+    return fig
+
+
+def plot_paired_speed_hmm_condition_state_occupancy_diff_heatmaps(
+    pair_ids,
+    behav_df_dic_saline,
+    behav_df_dic_dcz,
+    bodypart="Center",
+    state_col=("speed_hmm_state", ""),
+    timestamp_col=("timestamp", ""),
+    state_a=1,
+    state_b=0,
+    xbins=40,
+    ybins=40,
+    extent=(0, 640, 0, 480),
+    normalize=True,
+    cmap="coolwarm",
+    figsize=None,
+    interpolation="nearest",
+    diff_quantile=0.99,
+):
+    fig_dic = {}
+    for pair_id in pair_ids:
+        fig_dic[pair_id] = (
+            plot_pair_speed_hmm_condition_state_occupancy_diff_heatmaps(
+                pair_id=pair_id,
+                behav_df_dic_saline=behav_df_dic_saline,
+                behav_df_dic_dcz=behav_df_dic_dcz,
+                bodypart=bodypart,
+                state_col=state_col,
+                timestamp_col=timestamp_col,
+                state_a=state_a,
+                state_b=state_b,
+                xbins=xbins,
+                ybins=ybins,
+                extent=extent,
+                normalize=normalize,
+                cmap=cmap,
+                figsize=figsize,
+                interpolation=interpolation,
+                diff_quantile=diff_quantile,
+            )
+        )
+    return fig_dic
+
+
 def plot_pair_speed_hmm_state_xy_heatmaps(
     pair_id,
     behav_df_dic_saline,
@@ -3144,10 +3629,14 @@ def plot_pair_speed_hmm_state_xy_heatmaps(
     ybins=40,
     extent=(0, 640, 0, 480),
     normalize=True,
-    cmap="magma",
-    figsize=(8, 7),
+    cmap=None,
+    figsize=None,
     interpolation="nearest",
+    difference=True,
+    diff_quantile=0.99,
 ):
+    cmap = cmap or ("coolwarm" if difference else "magma")
+
     conditions = [
         ("saline", behav_df_dic_saline),
         ("DCZ", behav_df_dic_dcz),
@@ -3173,6 +3662,77 @@ def plot_pair_speed_hmm_state_xy_heatmaps(
             heatmaps[(state, condition)] = heatmap
             heatmap_values.append(heatmap.ravel())
 
+    if difference:
+        diff_heatmaps = {
+            state: heatmaps[(state, "DCZ")] - heatmaps[(state, "saline")]
+            for state in states
+        }
+        diff_values = np.concatenate(
+            [diff_heatmaps[state].ravel() for state in states]
+        )
+        diff_values = diff_values[np.isfinite(diff_values)]
+        max_abs = (
+            np.nanquantile(np.abs(diff_values), diff_quantile)
+            if len(diff_values) > 0
+            else 1
+        )
+        if not np.isfinite(max_abs) or max_abs == 0:
+            max_abs = 1
+        heatmap_norm = mpl.colors.TwoSlopeNorm(
+            vmin=-max_abs,
+            vcenter=0,
+            vmax=max_abs,
+        )
+
+        if figsize is None:
+            figsize = (4 * len(states), 4)
+        fig, axes = plt.subplots(
+            1,
+            len(states),
+            figsize=figsize,
+            sharex=True,
+            sharey=True,
+            squeeze=False,
+        )
+
+        x_min, x_max, y_min, y_max = extent
+        last_im = None
+        for col_idx, state in enumerate(states):
+            ax = axes[0, col_idx]
+            last_im = ax.imshow(
+                diff_heatmaps[state].T,
+                origin="lower",
+                extent=extent,
+                cmap=cmap,
+                norm=heatmap_norm,
+                interpolation=interpolation,
+            )
+
+            ax.set_title(f"{pair_id} state {state} DCZ - saline")
+            ax.set_aspect("equal")
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+        axes[0, 0].invert_yaxis()
+        colorbar_label = (
+            "DCZ - saline fraction of state frames / bin"
+            if normalize
+            else "DCZ - saline state frame count / bin"
+        )
+        fig.colorbar(
+            last_im,
+            ax=axes,
+            label=colorbar_label,
+            shrink=0.75,
+            fraction=0.04,
+            pad=0.02,
+            extend="both",
+        )
+        fig.tight_layout()
+        return fig
+
     heatmap_values = np.concatenate(heatmap_values)
     heatmap_norm = _normalize_from_values(
         heatmap_values,
@@ -3180,6 +3740,8 @@ def plot_pair_speed_hmm_state_xy_heatmaps(
         default=(0, 1),
     )
 
+    if figsize is None:
+        figsize = (8, 7)
     fig, axes = plt.subplots(
         len(states),
         2,
@@ -3238,9 +3800,11 @@ def plot_paired_speed_hmm_state_xy_heatmaps(
     ybins=40,
     extent=(0, 640, 0, 480),
     normalize=True,
-    cmap="magma",
-    figsize=(8, 7),
+    cmap=None,
+    figsize=None,
     interpolation="nearest",
+    difference=True,
+    diff_quantile=0.99,
 ):
     fig_dic = {}
     for pair_id in pair_ids:
@@ -3258,5 +3822,7 @@ def plot_paired_speed_hmm_state_xy_heatmaps(
             cmap=cmap,
             figsize=figsize,
             interpolation=interpolation,
+            difference=difference,
+            diff_quantile=diff_quantile,
         )
     return fig_dic

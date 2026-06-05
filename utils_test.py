@@ -707,36 +707,35 @@ def plot_param_by_state(
         _, ax = plt.subplots(1, 1, figsize=(10, 6))
 
     colors = _state_colors(hmm.K, colors)
-    required_cols = list(X) + [y, state_col]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        ax.text(0.5, 0.5, f"Missing columns: {missing_cols}", ha="center")
+    weights = np.asarray(hmm.observations.params).squeeze()
+    if weights.ndim == 1:
+        weights = weights.reshape(1, -1)
+
+    if weights.ndim != 2 or weights.shape[0] != hmm.K:
+        ax.text(
+            0.5,
+            0.5,
+            f"Unexpected GLM-HMM weight shape: {weights.shape}",
+            ha="center",
+        )
         ax.set_axis_off()
         return ax
 
-    df_param_states = pd.DataFrame([])
-    for state in range(hmm.K):
-        df_session_state = df[df[state_col] == state].dropna(
-            subset=list(X) + [y]
-        )
-        df_session_state['bias'] = 1.0
-        if len(df_session_state) <= len(X) + 1:
-            continue
+    param_cols = list(X)
+    if "bias" in param_cols:
+        param_cols = [col for col in param_cols if col != "bias"] + ["bias"]
+    if weights.shape[1] == len(param_cols) + 1 and "bias" not in param_cols:
+        param_cols = param_cols + ["bias"]
+    elif weights.shape[1] != len(param_cols):
+        param_cols = [f"input_{idx}" for idx in range(weights.shape[1])]
 
-        try:
-            _, logit_model_state = behavior_utils.logi_model_fit(
-                df_session_state,
-                X=X,
-                y=y,
-            )
-        except Exception:
-            continue
-
-        df_param_states[state] = logit_model_state.params
-
-    df_param_states = df_param_states.rename(index={"const": "bias"})
+    df_param_states = pd.DataFrame(
+        weights.T,
+        index=param_cols,
+        columns=range(hmm.K),
+    )
     if df_param_states.empty:
-        ax.text(0.5, 0.5, "No valid state-wise GLM parameters", ha="center")
+        ax.text(0.5, 0.5, "No GLM-HMM observation weights", ha="center")
         ax.set_axis_off()
         return ax
 
@@ -901,5 +900,3 @@ def plot_glmhmm_pipeline_figure(
 
     fig.tight_layout()
     return fig, df_with_state, post_prob_list
-
-
