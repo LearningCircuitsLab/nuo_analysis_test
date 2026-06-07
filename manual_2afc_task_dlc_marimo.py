@@ -46,19 +46,7 @@ def _():
     from scipy.optimize import minimize
 
     warnings.filterwarnings("ignore")
-    return (
-        Path,
-        behavior_utils,
-        dft,
-        np,
-        pd,
-        plot_test,
-        plots,
-        plt,
-        session_summary_figure,
-        utils,
-        utils_test,
-    )
+    return Path, behavior_utils, dft, np, pd, plot_test, plt, utils, utils_test
 
 
 @app.cell
@@ -234,126 +222,6 @@ def _(df, dft, np):
     available_dates = sorted(
         df_day["year_month_day"].dropna().astype(str).unique().tolist()
     )
-    return available_dates, df_day
-
-
-@app.cell
-def _(available_dates, mo):
-    _default_date = available_dates[-1]
-    date_select = mo.ui.dropdown(
-        options=available_dates,
-        value=_default_date,
-        label="Date",
-    )
-
-    date_select
-    return (date_select,)
-
-
-@app.cell
-def _(dft, plots, plt, utils):
-    def compact_session_summary_figure(df, perf_window=50):
-        fig = plt.figure(figsize=(15, 12))
-        gs = fig.add_gridspec(
-            2,
-            2,
-            height_ratios=[1, 1],
-            width_ratios=[1, 1],
-        )
-        text_ax = fig.add_subplot(gs[0, 0])
-        perf_ax = fig.add_subplot(gs[0, 1])
-        visual_ax = fig.add_subplot(gs[1, 0])
-        auditory_ax = fig.add_subplot(gs[1, 1])
-
-        plots.summary_text_plot(df, kind="session", ax=text_ax)
-        if df.empty:
-            fig.tight_layout()
-            return fig
-
-        df = dft.get_performance_through_trials(df.copy(), window=perf_window)
-        session_changes = df[df.session != df.session.shift(1)].index
-        if df.current_training_stage.nunique() > 1:
-            perf_hue = "current_training_stage"
-        else:
-            perf_hue = "stimulus_modality"
-        plots.performance_vs_trials_plot(
-            df,
-            ax=perf_ax,
-            legend=True,
-            session_changes=session_changes,
-            hue=perf_hue,
-        )
-
-        if "task" in df.columns:
-            df_task = df[df["task"] != "Habituation"]
-        else:
-            df_task = df.copy()
-
-        psych_axes = {
-            "visual": visual_ax,
-            "auditory": auditory_ax,
-        }
-        for mod, ax_name in psych_axes.items():
-            if len(df_task) > 0:
-                if (
-                    "stimulus_modality" in df_task.columns
-                    and mod in df_task["stimulus_modality"].unique()
-                ):
-                    df_mod = df_task[df_task["stimulus_modality"] == mod].copy()
-                    if (
-                        df_mod["difficulty"].nunique() == 1
-                        and df_mod["difficulty"].unique()[0] == "easy"
-                    ):
-                        df_mod["side_difficulty"] = df_mod.apply(
-                            lambda row: utils.side_and_difficulty_to_numeric(row),
-                            axis=1,
-                        )
-                        df_mod = dft.add_mouse_first_choice(df_mod)
-                        df_mod["first_choice_numeric"] = df_mod[
-                            "first_choice"
-                        ].apply(utils.transform_side_choice_to_numeric)
-                        plots.choice_by_difficulty_plot(df_mod, ax=ax_name)
-                    else:
-                        if mod == "visual":
-                            xvar = "visual_stimulus_ratio"
-                            value_type = "discrete"
-                        elif mod == "auditory":
-                            xvar = "total_evidence_strength"
-                            value_type = "continue"
-                        psych_df = dft.get_performance_by_difficulty_ratio(df_mod)
-                        plots.psychometric_plot(
-                            psych_df,
-                            x=xvar,
-                            y="first_choice_numeric",
-                            ax=ax_name,
-                            valueType=value_type,
-                        )
-                    ax_name.set_title("choices on " + mod + " trials", fontsize=10)
-                    if ax_name.get_legend() is not None:
-                        ax_name.get_legend().remove()
-                else:
-                    ax_name.text(
-                        0.1,
-                        0.5,
-                        "No trials in " + mod,
-                        fontsize=10,
-                        color="k",
-                    )
-            else:
-                ax_name.text(0.1, 0.5, "Habituation phase", fontsize=10, color="k")
-
-        fig.tight_layout()
-        return fig
-
-    return
-
-
-@app.cell
-def _(date_select, df_day, session_summary_figure):
-    date = date_select.value
-    sdf = df_day[df_day["year_month_day"].astype(str) == date].copy()
-    fig_session_summary = session_summary_figure(sdf, perf_window=50)
-    fig_session_summary
     return
 
 
@@ -465,25 +333,25 @@ def _(
                     df_mouse_result["subject"] = _mouse
                 combined_results[output_name].append(df_mouse_result)
 
-    df_test_vis = (
-        pd.concat(combined_results["df_test_vis"], ignore_index=True)
-        if combined_results["df_test_vis"]
+    df_test_raw_parts = [
+        df_result
+        for output_name in stim_columns
+        for df_result in combined_results[output_name]
+    ]
+    df_test_raw = (
+        pd.concat(df_test_raw_parts, ignore_index=True)
+        if df_test_raw_parts
         else pd.DataFrame()
     )
-    df_test_aud_raw = (
-        pd.concat(combined_results["df_test_aud"], ignore_index=True)
-        if combined_results["df_test_aud"]
-        else pd.DataFrame()
-    )
-    return (df_test_aud_raw,)
+    return (df_test_raw,)
 
 
 @app.cell
 def _():
-    # df_test_aud["observations"] = pd.NA
+    # df_test["observations"] = pd.NA
 
-    # for session in df_test_aud["session"].dropna().unique():
-    #     df_session = df_test_aud[df_test_aud["session"] == session]
+    # for session in df_test["session"].dropna().unique():
+    #     df_session = df_test[df_test["session"] == session]
     #     date_values = df_session["date"].dropna().unique()
     #     if len(date_values) == 0:
     #         print(f"No date found for session {session}; skipped observation.")
@@ -509,7 +377,7 @@ def _():
     #         session_info = json.loads(session_info)
 
     #     observation = session_info.get("observations", pd.NA)
-    #     df_test_aud.loc[df_session.index, "observations"] = [
+    #     df_test.loc[df_session.index, "observations"] = [
     #         observation
     #     ] * len(df_session)
     return
@@ -524,9 +392,9 @@ def _(pd):
 
 
 @app.cell
-def _(df_test_aud_raw, injection_info_df, mouse, pd):
-    df_test_aud = df_test_aud_raw.copy()
-    df_test_aud["observations"] = pd.NA
+def _(df_test_raw, injection_info_df, mouse, pd):
+    df_test = df_test_raw.copy()
+    df_test["observations"] = pd.NA
 
     date_col = injection_info_df.columns[0]
 
@@ -551,21 +419,21 @@ def _(df_test_aud_raw, injection_info_df, mouse, pd):
     )
 
     trial_dates = pd.to_datetime(
-        df_test_aud["date"],
+        df_test["date"],
         errors="coerce",
     ).dt.strftime("%Y-%m-%d")
     trial_mice = (
-        df_test_aud["subject"].astype(str)
-        if "subject" in df_test_aud.columns
-        else pd.Series(mouse, index=df_test_aud.index)
+        df_test["subject"].astype(str)
+        if "subject" in df_test.columns
+        else pd.Series(mouse, index=df_test.index)
     )
-    df_test_aud["observations"] = [
+    df_test["observations"] = [
         injection_lookup.get((trial_date, trial_mouse), pd.NA)
         for trial_date, trial_mouse in zip(trial_dates, trial_mice)
     ]
 
-    df_test_aud['observations']
-    return (df_test_aud,)
+    df_test['observations']
+    return (df_test,)
 
 
 @app.cell
@@ -581,12 +449,12 @@ def _(pd, utils):
 
 
 @app.cell
-def _(add_number_of_pokes, df_test_aud, dft, hM3Dq_mice, hM4Di_mice):
-    session_performance = df_test_aud.groupby(
+def _(add_number_of_pokes, df_test, dft, hM3Dq_mice, hM4Di_mice, pd):
+    session_performance = df_test.groupby(
         ["subject", "session"]
     )["correct"].transform("mean")
 
-    is_saline = df_test_aud["observations"].str.contains(
+    is_saline = df_test["observations"].str.contains(
         "saline",
         case=False,
         na=False,
@@ -594,34 +462,49 @@ def _(add_number_of_pokes, df_test_aud, dft, hM3Dq_mice, hM4Di_mice):
 
     drop_mask = is_saline & (session_performance < 0.7)
 
-    df_test_aud_upd = df_test_aud[
+    df_test_upd = df_test[
         ~drop_mask
     ].copy()
 
-    df_test_aud_upd = dft.calculate_time_between_trials_and_reaction_time(dft.add_day_column_to_df(
-        add_number_of_pokes(df_test_aud_upd, port_number=2)
-    ))
 
-    # df_test_aud_upd = df_test_aud_upd[
-    #     df_test_aud_upd['year_month_day'].isin(
+    def add_trial_variables_by_subject(df):
+        if df.empty:
+            return df.copy()
+
+        subject_dfs = []
+        for _, df_subject in df.groupby("subject", sort=False):
+            df_subject = dft.add_trial_duration_column_to_df(df_subject)
+            df_subject = dft.add_engagement_column(
+                df_subject,
+                engagement_sd_criteria=2,
+            )
+            df_subject = dft.calculate_time_between_trials_and_reaction_time(dft.add_day_column_to_df(
+                add_number_of_pokes(df_subject, port_number=2)
+            ))
+            subject_dfs.append(df_subject)
+        return pd.concat(subject_dfs).sort_index()
+
+    df_test_upd = add_trial_variables_by_subject(df_test_upd)
+    # df_test_upd = df_test_upd[
+    #     df_test_upd['year_month_day'].isin(
     #         ['2026-05-22', '2026-05-20']
     #     )
     # ]
 
-    df_test_aud_hm4 = df_test_aud_upd[
-        df_test_aud_upd["subject"].isin(hM4Di_mice)
+    df_test_hm4 = df_test_upd[
+        df_test_upd["subject"].isin(hM4Di_mice)
     ].copy()
 
-    df_test_aud_hm3 = df_test_aud_upd[
-        df_test_aud_upd["subject"].isin(hM3Dq_mice)
+    df_test_hm3 = df_test_upd[
+        df_test_upd["subject"].isin(hM3Dq_mice)
     ].copy()
+    return df_test_hm3, df_test_hm4, df_test_upd
 
 
-    df_test_aud_hm3 = dft.add_trial_duration_column_to_df(df_test_aud_hm3)
-    df_test_aud_hm3 = dft.add_engagement_column(df_test_aud_hm3, engagement_sd_criteria=2)
-    df_test_aud_hm4 = dft.add_trial_duration_column_to_df(df_test_aud_hm4)
-    df_test_aud_hm4 = dft.add_engagement_column(df_test_aud_hm4, engagement_sd_criteria=2)
-    return (df_test_aud_hm3,)
+@app.cell
+def _(df_test_hm4):
+    df_test_hm4['year_month_day']
+    return
 
 
 @app.cell
@@ -775,7 +658,9 @@ def _(
     behav_df_dic_saline,
     behav_pair_map,
     behavior_utils,
+    df_test_upd,
     np,
+    pd,
     video_df_dic_dcz,
     video_df_dic_saline,
 ):
@@ -791,8 +676,66 @@ def _(
 
         return behav_df
 
+    def split_behavior_by_engagement(behav_df, trial_df):
+        empty_behav_df = behav_df.iloc[0:0].copy()
+        if behav_df.empty or trial_df.empty or "engaged" not in trial_df.columns:
+            return empty_behav_df, empty_behav_df.copy()
+
+        timestamp = pd.to_numeric(
+            behavior_utils.get_behavior_column(behav_df, ("timestamp", "")),
+            errors="coerce",
+        )
+        engage_mask = pd.Series(False, index=behav_df.index)
+        disengage_mask = pd.Series(False, index=behav_df.index)
+
+        for _, trial_row in trial_df.iterrows():
+            trial_start = float(trial_row["TRIAL_START"])
+            trial_end = float(trial_row["TRIAL_END"])
+
+            if not np.isfinite(trial_start) or not np.isfinite(trial_end):
+                continue
+
+            trial_mask = timestamp.between(
+                trial_start,
+                trial_end,
+                inclusive="both",
+            ).fillna(False)
+            if trial_row["engaged"]:
+                engage_mask = engage_mask | trial_mask
+            else:
+                disengage_mask = disengage_mask | trial_mask
+
+        return behav_df.loc[engage_mask].copy(), behav_df.loc[disengage_mask].copy()
+
+    df_test_upd_pairing = df_test_upd.copy()
+    df_test_upd_pairing["_pair_subject"] = df_test_upd_pairing["subject"].astype(str)
+    df_test_upd_pairing["_pair_date"] = pd.to_datetime(
+        df_test_upd_pairing["year_month_day"],
+        errors="coerce",
+    ).dt.strftime("%Y-%m-%d")
+
+    df_dic_dcz = {}
+    df_dic_saline = {}
+    behav_df_dic_dcz_engage = {}
+    behav_df_dic_dcz_disengage = {}
+    behav_df_dic_saline_engage = {}
+    behav_df_dic_saline_disengage = {}
 
     for pair_id in behav_pair_map["pair_id"].unique():
+        pair_row = behav_pair_map[behav_pair_map["pair_id"] == pair_id].iloc[0]
+        subject = str(pair_row["subject"])
+        saline_date = pd.to_datetime(pair_row["saline_date"]).strftime("%Y-%m-%d")
+        dcz_date = pd.to_datetime(pair_row["DCZ_date"]).strftime("%Y-%m-%d")
+
+        df_dic_dcz[pair_id] = df_test_upd_pairing[
+            (df_test_upd_pairing["_pair_subject"] == subject)
+            & (df_test_upd_pairing["_pair_date"] == dcz_date)
+        ].drop(columns=["_pair_subject", "_pair_date"]).copy()
+        df_dic_saline[pair_id] = df_test_upd_pairing[
+            (df_test_upd_pairing["_pair_subject"] == subject)
+            & (df_test_upd_pairing["_pair_date"] == saline_date)
+        ].drop(columns=["_pair_subject", "_pair_date"]).copy()
+
         behav_df_dic_dcz[pair_id] = add_timestamp_from_end(
             behav_df_dic_dcz[pair_id],
             video_df_dic_dcz[pair_id],
@@ -827,7 +770,27 @@ def _(
             behav_df_dic_saline[pair_id],
             window_size=5,
         )
-    return
+        (
+            behav_df_dic_dcz_engage[pair_id],
+            behav_df_dic_dcz_disengage[pair_id],
+        ) = split_behavior_by_engagement(
+            behav_df_dic_dcz[pair_id],
+            df_dic_dcz[pair_id],
+        )
+        (
+            behav_df_dic_saline_engage[pair_id],
+            behav_df_dic_saline_disengage[pair_id],
+        ) = split_behavior_by_engagement(
+            behav_df_dic_saline[pair_id],
+            df_dic_saline[pair_id],
+        )
+    return (
+        behav_df_dic_dcz_disengage,
+        behav_df_dic_dcz_engage,
+        behav_df_dic_saline_disengage,
+        behav_df_dic_saline_engage,
+        df_dic_saline,
+    )
 
 
 @app.cell
@@ -836,13 +799,249 @@ def _():
     roi_top = 190
     roi_left = 235
     roi_right = 400
-    return
+    return roi_bottom, roi_left, roi_right, roi_top
 
 
 @app.cell
 def _(Path):
     save_behavior_svg = True
     behavior_svg_dir = Path("/mnt/e/data/LeciLab/behavioral_data/tmp")
+    return behavior_svg_dir, save_behavior_svg
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz_engage,
+    behav_df_dic_saline_engage,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+    save_behavior_svg,
+):
+    engaged_pair_figures = plot_test.plot_paired_behavior_figures(
+        pair_ids=behav_pair_map["pair_id"].unique(),
+        behav_df_dic_saline=behav_df_dic_saline_engage,
+        behav_df_dic_dcz=behav_df_dic_dcz_engage,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        bodypart="Center",
+    )
+
+    plot_test.save_figures_svg(
+        engaged_pair_figures,
+        "paired_behavior_engaged",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(engaged_pair_figures)
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz_disengage,
+    behav_df_dic_saline_disengage,
+    behav_pair_map,
+    behavior_svg_dir,
+    mo,
+    plot_test,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+    save_behavior_svg,
+):
+    disengaged_pair_figures = plot_test.plot_paired_behavior_figures(
+        pair_ids=behav_pair_map["pair_id"].unique(),
+        behav_df_dic_saline=behav_df_dic_saline_disengage,
+        behav_df_dic_dcz=behav_df_dic_dcz_disengage,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        bodypart="Center",
+    )
+
+    plot_test.save_figures_svg(
+        disengaged_pair_figures,
+        "paired_behavior_disengaged",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack(disengaged_pair_figures)
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz_disengage,
+    behav_df_dic_dcz_engage,
+    behav_df_dic_saline_disengage,
+    behav_df_dic_saline_engage,
+    behav_pair_map,
+    behavior_utils,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+):
+    roi_time_ratio_engaged_summary = behavior_utils.paired_roi_time_ratio_comparison(
+        behav_df_dic_saline=behav_df_dic_saline_engage,
+        behav_df_dic_dcz=behav_df_dic_dcz_engage,
+        pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        bodypart="Center",
+    )
+
+    roi_time_ratio_disengaged_summary = behavior_utils.paired_roi_time_ratio_comparison(
+        behav_df_dic_saline=behav_df_dic_saline_disengage,
+        behav_df_dic_dcz=behav_df_dic_dcz_disengage,
+        pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        bodypart="Center",
+    )
+    return roi_time_ratio_disengaged_summary, roi_time_ratio_engaged_summary
+
+
+@app.cell
+def _(
+    behavior_svg_dir,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    plot_test,
+    plt,
+    roi_time_ratio_disengaged_summary,
+    roi_time_ratio_engaged_summary,
+    save_behavior_svg,
+):
+    from scipy import stats
+
+    def plot_roi_group(ax, df, mice, group_name):
+        roi_group_df = df.copy()
+        if "subject" not in roi_group_df.columns:
+            roi_group_df["subject"] = roi_group_df["pair_id"].str[:6]
+
+        group_df = roi_group_df[
+            roi_group_df["subject"].isin(mice)
+        ].dropna(subset=["saline", "DCZ"]).copy()
+
+        for _, roi_row in group_df.iterrows():
+            ax.plot(
+                [0, 1],
+                [roi_row["saline"], roi_row["DCZ"]],
+                color="gray",
+                alpha=0.4,
+            )
+
+        ax.scatter(
+            [0] * len(group_df),
+            group_df["saline"],
+            color="blue",
+            edgecolor="black",
+            label="saline",
+        )
+        ax.scatter(
+            [1] * len(group_df),
+            group_df["DCZ"],
+            color="red",
+            edgecolor="black",
+            label="DCZ",
+        )
+
+        if len(group_df) > 0:
+            try:
+                roi_p = stats.wilcoxon(
+                    group_df["saline"],
+                    group_df["DCZ"],
+                ).pvalue
+                p_text = f"p={roi_p:.3g}"
+            except ValueError:
+                roi_p = float("nan")
+                p_text = "p=NA"
+        else:
+            roi_p = float("nan")
+            p_text = "p=NA"
+
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["saline", "DCZ"])
+        ax.set_ylabel("fraction of time in ROI")
+        ax.set_title(f"{group_name}, n={len(group_df)}, {p_text}")
+        plot_test.add_paired_significance_label(
+            ax,
+            group_df["saline"],
+            group_df["DCZ"],
+            plot_test.p_to_star(roi_p),
+        )
+        ax.grid(axis="y", alpha=0.3)
+
+        return group_df
+
+    def plot_roi_ratio_groups(summary_df, title_prefix):
+        fig, axes = plt.subplots(
+            1,
+            2,
+            figsize=(8, 5),
+            sharey=True,
+        )
+
+        plot_roi_group(
+            axes[0],
+            summary_df,
+            hM4Di_mice,
+            f"{title_prefix} hM4Di",
+        )
+        plot_roi_group(
+            axes[1],
+            summary_df,
+            hM3Dq_mice,
+            f"{title_prefix} hM3Dq",
+        )
+
+        fig.tight_layout()
+        return fig
+
+    roi_time_ratio_engaged_group_fig = plot_roi_ratio_groups(
+        roi_time_ratio_engaged_summary,
+        "engaged",
+    )
+    plot_test.save_figure_svg(
+        roi_time_ratio_engaged_group_fig,
+        "roi_time_ratio_groups_engaged",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    roi_time_ratio_disengaged_group_fig = plot_roi_ratio_groups(
+        roi_time_ratio_disengaged_summary,
+        "disengaged",
+    )
+    plot_test.save_figure_svg(
+        roi_time_ratio_disengaged_group_fig,
+        "roi_time_ratio_groups_disengaged",
+        save_dir=behavior_svg_dir,
+        enabled=save_behavior_svg,
+    )
+
+    mo.vstack([
+        roi_time_ratio_engaged_group_fig,
+        roi_time_ratio_disengaged_group_fig,
+    ])
     return
 
 
@@ -855,7 +1054,7 @@ def _(mo):
 
 
 @app.cell
-def _(df_test_aud_hm3, np, pd, plt):
+def _(df_test_hm3, np, pd, plt):
     import ast
     import re
     from matplotlib.lines import Line2D
@@ -919,7 +1118,7 @@ def _(df_test_aud_hm3, np, pd, plt):
             return []
 
 
-    plot_df = df_test_aud_hm3.head(5).copy()
+    plot_df = df_test_hm3.head(5).copy()
 
     event_cols = [col for col in trial_state_cols if col in plot_df.columns]
 
@@ -980,7 +1179,26 @@ def _(df_test_aud_hm3, np, pd, plt):
 
 
 @app.cell
-def _():
+def _(behav_df_dic_saline_engage):
+    behav_df_dic_saline_engage["NUO005_pair_01"]
+    return
+
+
+@app.cell
+def _(behav_df_dic_saline_disengage):
+    behav_df_dic_saline_disengage["NUO005_pair_01"]
+    return
+
+
+@app.cell
+def _(df_dic_saline):
+    df_dic_saline['NUO005_pair_01']['TRIAL_END'][5449]
+    return
+
+
+@app.cell
+def _(behav_df_dic_saline):
+    behav_df_dic_saline['NUO005_pair_01'][('Center', 'distance')]
     return
 
 
