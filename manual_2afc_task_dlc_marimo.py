@@ -615,6 +615,12 @@ def _(add_number_of_pokes, df_test_aud, dft, hM3Dq_mice, hM4Di_mice):
     df_test_aud_hm3 = df_test_aud_upd[
         df_test_aud_upd["subject"].isin(hM3Dq_mice)
     ].copy()
+
+
+    df_test_aud_hm3 = dft.add_trial_duration_column_to_df(df_test_aud_hm3)
+    df_test_aud_hm3 = dft.add_engagement_column(df_test_aud_hm3, engagement_sd_criteria=2)
+    df_test_aud_hm4 = dft.add_trial_duration_column_to_df(df_test_aud_hm4)
+    df_test_aud_hm4 = dft.add_engagement_column(df_test_aud_hm4, engagement_sd_criteria=2)
     return (df_test_aud_hm3,)
 
 
@@ -913,7 +919,8 @@ def _(df_test_aud_hm3, np, pd, plt):
             return []
 
 
-    plot_df = df_test_aud_hm3.iloc[:,-5:].copy()
+    plot_df = df_test_aud_hm3.head(5).copy()
+
     event_cols = [col for col in trial_state_cols if col in plot_df.columns]
 
     event_color_map = {
@@ -925,6 +932,9 @@ def _(df_test_aud_hm3, np, pd, plt):
 
     for trial_idx, (_, row) in enumerate(plot_df.iterrows()):
         y = len(plot_df) - trial_idx
+
+        trial_start_times = as_event_times(row.get("TRIAL_START", np.nan))
+        t0 = trial_start_times[0]
 
         for col in event_cols:
             event_times = as_event_times(row.get(col, np.nan))
@@ -940,7 +950,7 @@ def _(df_test_aud_hm3, np, pd, plt):
 
     ax.set_yticks(range(1, len(plot_df) + 1))
     ax.set_yticklabels([f"trial {i}" for i in range(len(plot_df), 0, -1)])
-    ax.set_xlabel("raw time (s)")
+    ax.set_xlabel("time from TRIAL_START (s)")
     ax.set_ylabel("trial")
     ax.set_title("First 5 trials state event raster")
     ax.grid(axis="x", alpha=0.25)
@@ -966,59 +976,11 @@ def _(df_test_aud_hm3, np, pd, plt):
 
     plt.tight_layout()
     plt.show()
-    return plot_df, trial_state_cols
-
-
-@app.cell
-def _(plot_df):
-    plot_df
     return
 
 
 @app.cell
-def _(df_test_aud_hm3, trial_state_cols):
-    check_cols = [
-        col for col in trial_state_cols
-        if col in df_test_aud_hm3.columns and col.startswith("STATE_")
-    ]
-
-    df_test_aud_hm3.head(5)[check_cols].notna().sum().sort_values(ascending=False)
-    return
-
-
-@app.cell
-def _(behav_df_dic_saline):
-    behav_df_dic_saline['NUO005_pair_01'][("timestamp", "")]
-    return
-
-
-@app.cell
-def _(df_test_aud_hm3):
-    df_test_aud_hm3['TRIAL_START']
-    return
-
-
-@app.cell
-def _(df_test_aud_hm3):
-    df_test_aud_hm3['TRIAL_END']
-    return
-
-
-@app.cell
-def _(df_test_aud_hm3):
-    df_test_aud_hm3['STATE_iti_END']
-    return
-
-
-@app.cell
-def _(df_test_aud_hm3):
-    df_test_aud_hm3['Tup']
-    return
-
-
-@app.cell
-def _(df_test_aud_hm3):
-    df_test_aud_hm3.columns
+def _():
     return
 
 

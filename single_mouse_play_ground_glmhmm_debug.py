@@ -1362,6 +1362,16 @@ def _(
 
 
 @app.cell
+def _(mo):
+    glmhmm_fit_button = mo.ui.run_button(
+        label="Run GLM-HMM fitting"
+    )
+
+    glmhmm_fit_button
+    return (glmhmm_fit_button,)
+
+
+@app.cell
 def _():
     input_cols_noStim = ["bias", "action_trace", "stimulus_trace"]
     return (input_cols_noStim,)
@@ -1370,6 +1380,7 @@ def _():
 @app.cell
 def _(
     df_test_kernel,
+    glmhmm_fit_button,
     glmhmm_n_iters,
     glmhmm_num_states,
     input_cols_noStim,
@@ -1380,132 +1391,142 @@ def _(
     hmm_model_dic = {}
     _hmm_model_rows = []
 
-    _subject_col = None
-    if "analysis_mouse" in df_test_kernel.columns:
-        _subject_col = "analysis_mouse"
-    elif "subject" in df_test_kernel.columns:
-        _subject_col = "subject"
-
-    _input_cols = [stim_col] + input_cols_noStim
-    _real_input_cols = [_col for _col in _input_cols if _col != "bias"]
-    _required_cols = {
-        "session",
-        "selected_df_option",
-        "first_choice_numeric",
-        *_real_input_cols,
-    }
-
-    if df_test_kernel.empty:
-        _hmm_model_rows.append({"status": "df_test_kernel is empty"})
-    elif _subject_col is None:
+    if not glmhmm_fit_button.value:
         _hmm_model_rows.append(
-            {"status": "No subject or analysis_mouse column found"}
+            {"status": "Click 'Run GLM-HMM fitting' to fit models"}
         )
-    elif not _required_cols.issubset(df_test_kernel.columns):
-        _missing_cols = sorted(_required_cols - set(df_test_kernel.columns))
-        _hmm_model_rows.append({"status": f"Missing columns: {_missing_cols}"})
+
     else:
-        for (_subject, _stage), _df_subject_stage in df_test_kernel.groupby(
-            [_subject_col, "selected_df_option"],
-            sort=True,
-        ):
-            _model_key = f"{_subject}_{_stage}"
-            _df_model = _df_subject_stage.dropna(
-                subset=["first_choice_numeric"] + _real_input_cols
-            ).copy()
+        _subject_col = None
+        if "analysis_mouse" in df_test_kernel.columns:
+            _subject_col = "analysis_mouse"
+        elif "subject" in df_test_kernel.columns:
+            _subject_col = "subject"
 
-            if _df_model.empty:
-                _hmm_model_rows.append(
-                    {
-                        "model_key": _model_key,
-                        "subject": _subject,
-                        "stage": _stage,
-                        "n_trials": 0,
-                        "n_sessions": 0,
-                        "log_likelihood": pd.NA,
-                        "status": "no valid trials after dropna",
-                    }
-                )
-                continue
+        _input_cols = [stim_col] + input_cols_noStim
+        _real_input_cols = [_col for _col in _input_cols if _col != "bias"]
+        _required_cols = {
+            "session",
+            "selected_df_option",
+            "first_choice_numeric",
+            *_real_input_cols,
+        }
 
-            _datas, _inpts = utils_test.build_glmhmm_inputs_by_session(
-                _df_model,
-                y_col="first_choice_numeric",
-                stim_col=_input_cols,
+        if df_test_kernel.empty:
+            _hmm_model_rows.append({"status": "df_test_kernel is empty"})
+        elif _subject_col is None:
+            _hmm_model_rows.append(
+                {"status": "No subject or analysis_mouse column found"}
             )
-            _valid_pairs = [
-                (_data, _inpt)
-                for _data, _inpt in zip(_datas, _inpts)
-                if len(_data) > 0 and len(_inpt) > 0
-            ]
+        elif not _required_cols.issubset(df_test_kernel.columns):
+            _missing_cols = sorted(_required_cols - set(df_test_kernel.columns))
+            _hmm_model_rows.append({"status": f"Missing columns: {_missing_cols}"})
+        else:
+            for (_subject, _stage), _df_subject_stage in df_test_kernel.groupby(
+                [_subject_col, "selected_df_option"],
+                sort=True,
+            ):
+                _model_key = f"{_subject}_{_stage}"
+                _df_model = _df_subject_stage.dropna(
+                    subset=["first_choice_numeric"] + _real_input_cols
+                ).copy()
 
-            if not _valid_pairs:
-                _hmm_model_rows.append(
-                    {
-                        "model_key": _model_key,
-                        "subject": _subject,
-                        "stage": _stage,
-                        "n_trials": len(_df_model),
-                        "n_sessions": 0,
-                        "log_likelihood": pd.NA,
-                        "status": "no valid sessions",
-                    }
+                if _df_model.empty:
+                    _hmm_model_rows.append(
+                        {
+                            "model_key": _model_key,
+                            "subject": _subject,
+                            "stage": _stage,
+                            "n_trials": 0,
+                            "n_sessions": 0,
+                            "log_likelihood": pd.NA,
+                            "status": "no valid trials after dropna",
+                        }
+                    )
+                    continue
+
+                _datas, _inpts = utils_test.build_glmhmm_inputs_by_session(
+                    _df_model,
+                    y_col="first_choice_numeric",
+                    stim_col=_input_cols,
                 )
-                continue
 
-            _datas, _inpts = zip(*_valid_pairs)
-            _datas = list(_datas)
-            _inpts = list(_inpts)
-            _input_dim = _inpts[0].shape[1]
+                _valid_pairs = [
+                    (_data, _inpt)
+                    for _data, _inpt in zip(_datas, _inpts)
+                    if len(_data) > 0 and len(_inpt) > 0
+                ]
 
-            try:
-                _map_glmhmm, _ll, _hmm_lls = utils_test.fit_glmhmm(
-                    _datas,
-                    _inpts,
-                    num_states=int(glmhmm_num_states.value),
-                    obs_dim=1,
-                    input_dim=_input_dim,
-                    num_categories=2,
-                    N_iters=int(glmhmm_n_iters.value),
-                    prior_sigma=2,
-                    kappa=15,
-                )
-                hmm_model_dic[_model_key] = {
-                    "model": _map_glmhmm,
-                    "log_likelihood": _ll,
-                    "hmm_lls": _hmm_lls,
-                    "datas": _datas,
-                    "inpts": _inpts,
-                    "df": _df_model,
-                    "subject": _subject,
-                    "stage": _stage,
-                    "inputs": _input_cols,
-                }
-                _hmm_model_rows.append(
-                    {
-                        "model_key": _model_key,
-                        "subject": _subject,
-                        "stage": _stage,
-                        "n_trials": len(_df_model),
-                        "n_sessions": len(_datas),
-                        "input_dim": _input_dim,
+                if not _valid_pairs:
+                    _hmm_model_rows.append(
+                        {
+                            "model_key": _model_key,
+                            "subject": _subject,
+                            "stage": _stage,
+                            "n_trials": len(_df_model),
+                            "n_sessions": 0,
+                            "log_likelihood": pd.NA,
+                            "status": "no valid sessions",
+                        }
+                    )
+                    continue
+
+                _datas, _inpts = zip(*_valid_pairs)
+                _datas = list(_datas)
+                _inpts = list(_inpts)
+                _input_dim = _inpts[0].shape[1]
+
+                try:
+                    _map_glmhmm, _ll, _hmm_lls = utils_test.fit_glmhmm(
+                        _datas,
+                        _inpts,
+                        num_states=int(glmhmm_num_states.value),
+                        obs_dim=1,
+                        input_dim=_input_dim,
+                        num_categories=2,
+                        N_iters=int(glmhmm_n_iters.value),
+                        prior_sigma=2,
+                        kappa=15,
+                    )
+
+                    hmm_model_dic[_model_key] = {
+                        "model": _map_glmhmm,
                         "log_likelihood": _ll,
-                        "status": "ok",
-                    }
-                )
-            except Exception as _exc:
-                _hmm_model_rows.append(
-                    {
-                        "model_key": _model_key,
+                        "hmm_lls": _hmm_lls,
+                        "datas": _datas,
+                        "inpts": _inpts,
+                        "df": _df_model,
                         "subject": _subject,
                         "stage": _stage,
-                        "n_trials": len(_df_model),
-                        "n_sessions": len(_datas),
-                        "input_dim": _input_dim,
-                        "log_likelihood": pd.NA,
-                        "status": f"failed: {_exc}",
+                        "inputs": _input_cols,
                     }
-                )
+
+                    _hmm_model_rows.append(
+                        {
+                            "model_key": _model_key,
+                            "subject": _subject,
+                            "stage": _stage,
+                            "n_trials": len(_df_model),
+                            "n_sessions": len(_datas),
+                            "input_dim": _input_dim,
+                            "log_likelihood": _ll,
+                            "status": "ok",
+                        }
+                    )
+
+                except Exception as _exc:
+                    _hmm_model_rows.append(
+                        {
+                            "model_key": _model_key,
+                            "subject": _subject,
+                            "stage": _stage,
+                            "n_trials": len(_df_model),
+                            "n_sessions": len(_datas),
+                            "input_dim": _input_dim,
+                            "log_likelihood": pd.NA,
+                            "status": f"failed: {_exc}",
+                        }
+                    )
 
     hmm_model_summary = pd.DataFrame(_hmm_model_rows)
     hmm_model_summary
@@ -1604,39 +1625,187 @@ def _(hmm_model_dic, input_cols_noStim, pd, stim_col):
 
 
 @app.cell
-def _(Path, hmm_model_dic, input_cols_noStim, stim_col, utils_test):
+def _(Path, hmm_model_dic, input_cols_noStim, pd, stim_col, utils_test):
     figs_all = []
-    for model_name_ in hmm_model_dic:
-        _fig, _df_with_state, _post_prob_list = (
-            utils_test.plot_glmhmm_pipeline_figure(
-                hmm_model_dic[model_name_]["model"],
-                hmm_model_dic[model_name_]['df'],
-                hmm_model_dic[model_name_]['datas'],
-                hmm_model_dic[model_name_]['inpts'],
-                input_cols=[
-                    stim_col
-                ] + [col for col in input_cols_noStim if col != "bias"],
-                y_col="first_choice_numeric",
-                psychometric_x=stim_col,
-                title=(
-                    f"GLM-HMM summary {model_name_} "
-                ),
-                psychometric_value_type=(
-                    "continuous"
-                    if "aud" in str(model_name_)
-                    else "discrete"
-                ),
+
+    state_index = [0, 1, 2]
+    stages = ["aud_easy", "aud_hard", "vis_easy", "vis_hard"]
+
+    glmhmm_state_df_dir = Path(
+        "/mnt/e/data/LeciLab/behavioral_data/tmp/processing/glmhmm_state_df"
+    )
+    glmhmm_state_df_dir.mkdir(parents=True, exist_ok=True)
+
+    expected_paths = {
+        (stage, state): glmhmm_state_df_dir / f"{stage}_state{state}.pkl"
+        for stage in stages
+        for state in state_index
+    }
+
+    state_counts_by_stage = {}
+    glmhmm_state_df_loaded = {
+        stage: {state: [] for state in state_index}
+        for stage in stages
+    }
+
+    if hmm_model_dic:
+        for model_name_ in hmm_model_dic:
+            _fig, _df_with_state, _post_prob_list = (
+                utils_test.plot_glmhmm_pipeline_figure(
+                    hmm_model_dic[model_name_]["model"],
+                    hmm_model_dic[model_name_]["df"],
+                    hmm_model_dic[model_name_]["datas"],
+                    hmm_model_dic[model_name_]["inpts"],
+                    input_cols=[
+                        stim_col
+                    ] + [col for col in input_cols_noStim if col != "bias"],
+                    y_col="first_choice_numeric",
+                    psychometric_x=stim_col,
+                    title=(
+                        f"GLM-HMM summary {model_name_} "
+                    ),
+                    psychometric_value_type=(
+                        "continuous"
+                        if "aud" in str(model_name_)
+                        else "discrete"
+                    ),
+                )
             )
-        )
-        print(_df_with_state["glmhmm_state"].value_counts().sort_index())
-        figs_all.append(_fig)
-        _fig.savefig(
-            Path(
-                f"/mnt/e/data/LeciLab/behavioral_data/tmp/glm_hmm_model_allData/{hmm_model_dic[model_name_]['subject']}_{model_name_}.svg"
-            ),
-            format="svg",
-            bbox_inches="tight"
-        )
+
+            state_counts = (
+                _df_with_state["glmhmm_state"]
+                .value_counts()
+                .reindex(state_index, fill_value=0)
+                .sort_index()
+            )
+
+            print(model_name_)
+            print(state_counts)
+
+            stage_name_ = hmm_model_dic[model_name_].get("stage", None)
+
+            if stage_name_ is None:
+                # fallback: NUO001_vis_easy -> vis_easy
+                stage_name_ = "_".join(model_name_.split("_")[1:])
+
+            if stage_name_ not in stages:
+                print(f"[skip] {model_name_}: unknown stage {stage_name_}")
+                continue
+
+            if stage_name_ not in state_counts_by_stage:
+                state_counts_by_stage[stage_name_] = pd.Series(
+                    0,
+                    index=state_index,
+                    dtype=int,
+                )
+
+            state_counts_by_stage[stage_name_] = (
+                state_counts_by_stage[stage_name_] + state_counts
+            )
+
+            _df_with_state = _df_with_state.copy()
+            _df_with_state["model_name"] = model_name_
+            _df_with_state["selected_df_option"] = stage_name_
+
+            if "subject" not in _df_with_state.columns:
+                _df_with_state["subject"] = hmm_model_dic[model_name_].get(
+                    "subject",
+                    model_name_.split("_")[0],
+                )
+
+            for state in state_index:
+                df_state = _df_with_state[
+                    _df_with_state["glmhmm_state"] == state
+                ].copy()
+
+                glmhmm_state_df_loaded[stage_name_][state].append(df_state)
+
+            figs_all.append(_fig)
+
+            _fig.savefig(
+                Path(
+                    f"/mnt/e/data/LeciLab/behavioral_data/tmp/glm_hmm_model_allData/"
+                    f"{hmm_model_dic[model_name_]['subject']}_{model_name_}.svg"
+                ),
+                format="svg",
+                bbox_inches="tight",
+            )
+
+        for stage in stages:
+            for state in state_index:
+                df_concat = (
+                    pd.concat(
+                        glmhmm_state_df_loaded[stage][state],
+                        ignore_index=True,
+                    )
+                    if glmhmm_state_df_loaded[stage][state]
+                    else pd.DataFrame()
+                )
+
+                output_path = expected_paths[(stage, state)]
+                df_concat.to_pickle(output_path)
+                glmhmm_state_df_loaded[stage][state] = df_concat
+
+        print(f"Saved GLM-HMM state dfs to: {glmhmm_state_df_dir}")
+
+    else:
+        missing_paths = [
+            path for path in expected_paths.values()
+            if not path.exists()
+        ]
+
+        if missing_paths:
+            raise FileNotFoundError(
+                "hmm_model_dic is empty and these saved state dfs are missing: "
+                + ", ".join(str(path) for path in missing_paths)
+            )
+
+        for stage in stages:
+            state_counts_by_stage[stage] = pd.Series(
+                0,
+                index=state_index,
+                dtype=int,
+            )
+
+            for state in state_index:
+                df_state = pd.read_pickle(expected_paths[(stage, state)])
+                glmhmm_state_df_loaded[stage][state] = df_state
+                state_counts_by_stage[stage].loc[state] = len(df_state)
+
+        print(f"Loaded GLM-HMM state dfs from: {glmhmm_state_df_dir}")
+
+    state_distribution_df = pd.DataFrame(state_counts_by_stage)
+    state_distribution_df = state_distribution_df.reindex(columns=stages, fill_value=0)
+    state_distribution_df.index = [
+        f"state{s}" for s in state_distribution_df.index
+    ]
+
+    state_distribution_df
+    return (state_distribution_df,)
+
+
+@app.cell
+def _(plt, state_distribution_df):
+    ax_state_distribution = state_distribution_df.T.plot(
+        kind="bar",
+        figsize=(8, 5),
+        width=0.75,
+    )
+
+    plt.ylabel("Number of trials")
+    plt.xlabel("Stage")
+    plt.title("GLM-HMM state distribution by stage")
+    plt.xticks(rotation=30, ha="right")
+    plt.legend(title="State", frameon=False)
+    plt.tight_layout()
+
+    plt.savefig(
+        "/mnt/e/data/LeciLab/behavioral_data/tmp/glm_hmm_state_distribution_by_stage.svg",
+        format="svg",
+        bbox_inches="tight",
+    )
+
+    plt.show()
     return
 
 
@@ -1750,8 +1919,7 @@ def _(
 
 
 @app.cell
-def _(hmm_model_dic):
-    hmm_model_dic['NUO001_aud_easy']['df']['glmhmm_state']
+def _():
     return
 
 
