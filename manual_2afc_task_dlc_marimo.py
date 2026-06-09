@@ -776,6 +776,14 @@ def _(behavior_utils, mo, np, pd, plot_test, plt):
         bodypart="Center",
         true_label=None,
         false_label=None,
+        include_stationary=False,
+        include_occupancy=True,
+        include_trajectory_speed=True,
+        include_roi_time=True,
+        include_stationary_speed=True,
+        include_stationary_time=True,
+        stationary_speed_threshold=10,
+        speed_col="mean_speed",
     ):
         default_labels = {
             "engaged": ("engaged", "disengaged"),
@@ -826,6 +834,18 @@ def _(behavior_utils, mo, np, pd, plot_test, plt):
                     false_mask = false_mask | trial_mask
 
             return behav_df.loc[true_mask].copy(), behav_df.loc[false_mask].copy()
+
+        def trial_df_for_split_value(trial_df, target_value):
+            if trial_df.empty or split_column not in trial_df.columns:
+                return trial_df.iloc[0:0].copy()
+
+            split_mask = []
+            for split_value in trial_df[split_column]:
+                if pd.isna(split_value):
+                    split_mask.append(False)
+                else:
+                    split_mask.append(bool(split_value) is target_value)
+            return trial_df.loc[split_mask].copy()
 
         pair_ids = list(behav_pair_map["pair_id"].unique())
         behav_df_dic_dcz_true = {}
@@ -1065,37 +1085,28 @@ def _(behavior_utils, mo, np, pd, plot_test, plt):
             return fig
 
         four_condition_pair_figures = []
-        for pair_id in four_condition_pair_ids:
-            four_condition_pair_figures.append(plot_four_condition_occupancy(pair_id))
-            four_condition_pair_figures.append(plot_four_condition_traj_speed(pair_id))
+        if include_occupancy or include_trajectory_speed:
+            for pair_id in four_condition_pair_ids:
+                if include_occupancy:
+                    four_condition_pair_figures.append(
+                        plot_four_condition_occupancy(pair_id)
+                    )
+                if include_trajectory_speed:
+                    four_condition_pair_figures.append(
+                        plot_four_condition_traj_speed(pair_id)
+                    )
 
-        plot_test.save_figures_svg(
-            four_condition_pair_figures,
-            f"paired_behavior_{true_label}_vs_{false_label}",
-            save_dir=behavior_svg_dir,
-            enabled=save_behavior_svg,
-        )
+            plot_test.save_figures_svg(
+                four_condition_pair_figures,
+                f"paired_behavior_{true_label}_vs_{false_label}",
+                save_dir=behavior_svg_dir,
+                enabled=save_behavior_svg,
+            )
 
-        true_roi_time_ratio_summary = behavior_utils.paired_roi_time_ratio_comparison(
-            behav_df_dic_saline=behav_df_dic_saline_true,
-            behav_df_dic_dcz=behav_df_dic_dcz_true,
-            pair_map=behav_pair_map,
-            roi_left=roi_left,
-            roi_right=roi_right,
-            roi_bottom=roi_bottom,
-            roi_top=roi_top,
-            bodypart=bodypart,
-        )
-        false_roi_time_ratio_summary = behavior_utils.paired_roi_time_ratio_comparison(
-            behav_df_dic_saline=behav_df_dic_saline_false,
-            behav_df_dic_dcz=behav_df_dic_dcz_false,
-            pair_map=behav_pair_map,
-            roi_left=roi_left,
-            roi_right=roi_right,
-            roi_bottom=roi_bottom,
-            roi_top=roi_top,
-            bodypart=bodypart,
-        )
+        true_roi_time_ratio_summary = pd.DataFrame()
+        false_roi_time_ratio_summary = pd.DataFrame()
+        roi_split_summary = pd.DataFrame()
+        roi_time_ratio_four_condition_fig = None
 
         def roi_summary_for_merge(summary_df, split_label):
             if summary_df.empty:
@@ -1122,15 +1133,6 @@ def _(behavior_utils, mo, np, pd, plot_test, plt):
                     "DCZ": f"{split_label}_dcz",
                 }
             )
-
-        roi_split_summary = roi_summary_for_merge(
-            true_roi_time_ratio_summary,
-            "true",
-        ).merge(
-            roi_summary_for_merge(false_roi_time_ratio_summary, "false"),
-            on=["pair_id", "subject"],
-            how="outer",
-        )
 
         def comparison_pvalue(group_df, left_col, right_col):
             paired_df = group_df[[left_col, right_col]].dropna()
@@ -1262,254 +1264,51 @@ def _(behavior_utils, mo, np, pd, plot_test, plt):
             fig.tight_layout()
             return fig
 
-        roi_time_ratio_four_condition_fig = plot_roi_ratio_four_conditions(
-            roi_split_summary,
-        )
+        if include_roi_time:
+            true_roi_time_ratio_summary = behavior_utils.paired_roi_time_ratio_comparison(
+                behav_df_dic_saline=behav_df_dic_saline_true,
+                behav_df_dic_dcz=behav_df_dic_dcz_true,
+                pair_map=behav_pair_map,
+                roi_left=roi_left,
+                roi_right=roi_right,
+                roi_bottom=roi_bottom,
+                roi_top=roi_top,
+                bodypart=bodypart,
+            )
+            false_roi_time_ratio_summary = behavior_utils.paired_roi_time_ratio_comparison(
+                behav_df_dic_saline=behav_df_dic_saline_false,
+                behav_df_dic_dcz=behav_df_dic_dcz_false,
+                pair_map=behav_pair_map,
+                roi_left=roi_left,
+                roi_right=roi_right,
+                roi_bottom=roi_bottom,
+                roi_top=roi_top,
+                bodypart=bodypart,
+            )
+            roi_split_summary = roi_summary_for_merge(
+                true_roi_time_ratio_summary,
+                "true",
+            ).merge(
+                roi_summary_for_merge(false_roi_time_ratio_summary, "false"),
+                on=["pair_id", "subject"],
+                how="outer",
+            )
+            roi_time_ratio_four_condition_fig = plot_roi_ratio_four_conditions(
+                roi_split_summary,
+            )
 
-        plot_test.save_figure_svg(
-            roi_time_ratio_four_condition_fig,
-            f"roi_time_ratio_groups_{true_label}_vs_{false_label}",
-            save_dir=behavior_svg_dir,
-            enabled=save_behavior_svg,
-        )
-
-        return {
-            "split_column": split_column,
-            "true_label": true_label,
-            "false_label": false_label,
-            "true_pair_ids": true_pair_ids,
-            "false_pair_ids": false_pair_ids,
-            "behav_df_dic_dcz_true": behav_df_dic_dcz_true,
-            "behav_df_dic_dcz_false": behav_df_dic_dcz_false,
-            "behav_df_dic_saline_true": behav_df_dic_saline_true,
-            "behav_df_dic_saline_false": behav_df_dic_saline_false,
-            "four_condition_pair_ids": four_condition_pair_ids,
-            "four_condition_pair_figures": four_condition_pair_figures,
-            "true_roi_time_ratio_summary": true_roi_time_ratio_summary,
-            "false_roi_time_ratio_summary": false_roi_time_ratio_summary,
-            "roi_split_summary": roi_split_summary,
-            "roi_time_ratio_four_condition_fig": roi_time_ratio_four_condition_fig,
-            "view": mo.vstack([
-                mo.md(f"## {true_label} vs {false_label} paired behavior"),
-                *four_condition_pair_figures,
-                mo.md(f"## {true_label} vs {false_label} ROI time ratio groups"),
+            plot_test.save_figure_svg(
                 roi_time_ratio_four_condition_fig,
-            ]),
-        }
-
-    return analyze_paired_behavior_by_trial_column, stats
-
-
-@app.cell
-def _(
-    analyze_paired_behavior_by_trial_column,
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    df_dic_dcz,
-    df_dic_saline,
-    hM3Dq_mice,
-    hM4Di_mice,
-    roi_bottom,
-    roi_left,
-    roi_right,
-    roi_top,
-    save_behavior_svg,
-):
-    trial_split_analysis = analyze_paired_behavior_by_trial_column(
-        split_column="engaged",
-        df_dic_saline=df_dic_saline,
-        df_dic_dcz=df_dic_dcz,
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        roi_left=roi_left,
-        roi_right=roi_right,
-        roi_bottom=roi_bottom,
-        roi_top=roi_top,
-        hM4Di_mice=hM4Di_mice,
-        hM3Dq_mice=hM3Dq_mice,
-        behavior_svg_dir=behavior_svg_dir,
-        save_behavior_svg=save_behavior_svg,
-        bodypart="Center",
-    )
-
-    trial_split_analysis["view"]
-    return (trial_split_analysis,)
-
-
-@app.cell
-def _(
-    analyze_paired_behavior_by_trial_column,
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    df_dic_dcz,
-    df_dic_saline,
-    hM3Dq_mice,
-    hM4Di_mice,
-    roi_bottom,
-    roi_left,
-    roi_right,
-    roi_top,
-    save_behavior_svg,
-):
-    trial_split_analysis_correct = analyze_paired_behavior_by_trial_column(
-        split_column="correct",
-        df_dic_saline=df_dic_saline,
-        df_dic_dcz=df_dic_dcz,
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        roi_left=roi_left,
-        roi_right=roi_right,
-        roi_bottom=roi_bottom,
-        roi_top=roi_top,
-        hM4Di_mice=hM4Di_mice,
-        hM3Dq_mice=hM3Dq_mice,
-        behavior_svg_dir=behavior_svg_dir,
-        save_behavior_svg=save_behavior_svg,
-        bodypart="Center",
-    )
-
-    trial_split_analysis_correct["view"]
-    return
-
-
-@app.cell
-def _(
-    analyze_paired_behavior_by_trial_column,
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    df_dic_dcz,
-    df_dic_saline,
-    hM3Dq_mice,
-    hM4Di_mice,
-    roi_bottom,
-    roi_left,
-    roi_right,
-    roi_top,
-    save_behavior_svg,
-):
-    trial_split_analysis_precorrect = analyze_paired_behavior_by_trial_column(
-        split_column="previous_correct",
-        df_dic_saline=df_dic_saline,
-        df_dic_dcz=df_dic_dcz,
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        roi_left=roi_left,
-        roi_right=roi_right,
-        roi_bottom=roi_bottom,
-        roi_top=roi_top,
-        hM4Di_mice=hM4Di_mice,
-        hM3Dq_mice=hM3Dq_mice,
-        behavior_svg_dir=behavior_svg_dir,
-        save_behavior_svg=save_behavior_svg,
-        bodypart="Center",
-    )
-
-    trial_split_analysis_precorrect["view"]
-    return
-
-
-@app.cell
-def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
-    def analyze_paired_stationary_by_trial_column(
-        split_column,
-        df_dic_saline,
-        df_dic_dcz,
-        behav_df_dic_saline,
-        behav_df_dic_dcz,
-        behav_pair_map,
-        hM4Di_mice,
-        hM3Dq_mice,
-        behavior_svg_dir,
-        save_behavior_svg,
-        speed_threshold=10,
-        bodypart="Center",
-        speed_col="mean_speed",
-        true_label=None,
-        false_label=None,
-    ):
-        default_labels = {
-            "engaged": ("engaged", "disengaged"),
-            "correct": ("correct", "incorrect"),
-            "previous_correct": ("previous correct", "previous incorrect"),
-        }
-        default_true_label, default_false_label = default_labels.get(
-            split_column,
-            (f"{split_column}_true", f"{split_column}_false"),
-        )
-        true_label = true_label or default_true_label
-        false_label = false_label or default_false_label
-
-        def split_behavior_by_trial_column(behav_df, trial_df):
-            empty_behav_df = behav_df.iloc[0:0].copy()
-            if behav_df.empty or trial_df.empty or split_column not in trial_df.columns:
-                return empty_behav_df, empty_behav_df.copy()
-
-            timestamp = pd.to_numeric(
-                behavior_utils.get_behavior_column(behav_df, ("timestamp", "")),
-                errors="coerce",
+                f"roi_time_ratio_groups_{true_label}_vs_{false_label}",
+                save_dir=behavior_svg_dir,
+                enabled=save_behavior_svg,
             )
-            true_mask = pd.Series(False, index=behav_df.index)
-            false_mask = pd.Series(False, index=behav_df.index)
 
-            for _, trial_row in trial_df.iterrows():
-                split_value = trial_row[split_column]
-                if pd.isna(split_value):
-                    continue
-
-                try:
-                    trial_start = float(trial_row["TRIAL_START"])
-                    trial_end = float(trial_row["TRIAL_END"])
-                except (TypeError, ValueError):
-                    continue
-
-                if not np.isfinite(trial_start) or not np.isfinite(trial_end):
-                    continue
-
-                trial_mask = timestamp.between(
-                    trial_start,
-                    trial_end,
-                    inclusive="both",
-                ).fillna(False)
-                if split_value:
-                    true_mask = true_mask | trial_mask
-                else:
-                    false_mask = false_mask | trial_mask
-
-            return behav_df.loc[true_mask].copy(), behav_df.loc[false_mask].copy()
-
-        pair_ids = list(behav_pair_map["pair_id"].unique())
-        behav_df_dic_dcz_true = {}
-        behav_df_dic_dcz_false = {}
-        behav_df_dic_saline_true = {}
-        behav_df_dic_saline_false = {}
-
-        for pair_id in pair_ids:
-            if pair_id not in df_dic_dcz or pair_id not in df_dic_saline:
-                continue
-
-            (
-                behav_df_dic_dcz_true[pair_id],
-                behav_df_dic_dcz_false[pair_id],
-            ) = split_behavior_by_trial_column(
-                behav_df_dic_dcz[pair_id],
-                df_dic_dcz[pair_id],
-            )
-            (
-                behav_df_dic_saline_true[pair_id],
-                behav_df_dic_saline_false[pair_id],
-            ) = split_behavior_by_trial_column(
-                behav_df_dic_saline[pair_id],
-                df_dic_saline[pair_id],
-            )
+        stationary_speed_figures = []
+        true_stationary_time_ratio_summary = pd.DataFrame()
+        false_stationary_time_ratio_summary = pd.DataFrame()
+        stationary_split_summary = pd.DataFrame()
+        stationary_time_ratio_four_condition_fig = None
 
         def has_speed_data(behav_df):
             if behav_df.empty:
@@ -1521,19 +1320,7 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
             speed = pd.to_numeric(behav_df[(bodypart, speed_col)], errors="coerce")
             return speed.notna().any()
 
-        def trial_df_for_split_value(trial_df, target_value):
-            if trial_df.empty or split_column not in trial_df.columns:
-                return trial_df.iloc[0:0].copy()
-
-            split_mask = []
-            for split_value in trial_df[split_column]:
-                if pd.isna(split_value):
-                    split_mask.append(False)
-                else:
-                    split_mask.append(bool(split_value) is target_value)
-            return trial_df.loc[split_mask].copy()
-
-        def split_conditions_for_pair(pair_id):
+        def stationary_conditions_for_pair(pair_id):
             return [
                 (
                     f"{true_label} saline",
@@ -1561,20 +1348,7 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
                 ),
             ]
 
-        four_condition_pair_ids = [
-            pair_id
-            for pair_id in pair_ids
-            if pair_id in behav_df_dic_saline_true
-            and pair_id in behav_df_dic_dcz_true
-            and pair_id in behav_df_dic_saline_false
-            and pair_id in behav_df_dic_dcz_false
-            and any(has_speed_data(behav_df) for _, behav_df, _, _ in split_conditions_for_pair(pair_id))
-        ]
-
-        def shade_stationary_segments_in_trials(ax, behav_df, trial_df):
-            if behav_df.empty or trial_df.empty:
-                return
-
+        def frame_time_speed_df(behav_df):
             timestamp = pd.to_numeric(
                 behavior_utils.get_behavior_column(behav_df, ("timestamp", "")),
                 errors="coerce",
@@ -1589,10 +1363,9 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
                     "speed": speed.to_numpy(),
                 }
             ).replace([np.inf, -np.inf], np.nan)
-            frame_df = frame_df.dropna(subset=["timestamp"]).sort_values("timestamp")
-            if frame_df.empty:
-                return
+            return frame_df.dropna(subset=["timestamp"]).sort_values("timestamp")
 
+        def frame_intervals(frame_df):
             t = frame_df["timestamp"].to_numpy(dtype=float)
             speed_values = frame_df["speed"].to_numpy(dtype=float)
             dt = np.diff(t)
@@ -1602,7 +1375,20 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
             if len(t) > 1:
                 frame_end[:-1] = t[1:]
             frame_end[-1] = t[-1] + median_dt
-            stationary = np.isfinite(speed_values) & (speed_values <= speed_threshold)
+            return t, frame_end, speed_values
+
+        def shade_stationary_segments_in_trials(ax, behav_df, trial_df):
+            if behav_df.empty or trial_df.empty:
+                return
+
+            frame_df = frame_time_speed_df(behav_df)
+            if frame_df.empty:
+                return
+
+            t, frame_end, speed_values = frame_intervals(frame_df)
+            stationary = np.isfinite(speed_values) & (
+                speed_values <= stationary_speed_threshold
+            )
 
             for _, trial_row in trial_df.iterrows():
                 try:
@@ -1651,7 +1437,7 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
                 )
 
         def plot_four_condition_stationary_speed_trace(pair_id):
-            condition_dfs = split_conditions_for_pair(pair_id)
+            condition_dfs = stationary_conditions_for_pair(pair_id)
             fig, axes = plt.subplots(
                 1,
                 4,
@@ -1696,7 +1482,7 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
                     )
 
                 ax.axhline(
-                    speed_threshold,
+                    stationary_speed_threshold,
                     color="black",
                     linestyle="--",
                     linewidth=1,
@@ -1710,50 +1496,18 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
             fig.tight_layout()
             return fig
 
-        stationary_speed_figures = [
-            plot_four_condition_stationary_speed_trace(pair_id)
-            for pair_id in four_condition_pair_ids
-        ]
-
-        plot_test.save_figures_svg(
-            stationary_speed_figures,
-            f"stationary_speed_trace_{true_label}_vs_{false_label}",
-            save_dir=behavior_svg_dir,
-            enabled=save_behavior_svg,
-        )
-
         def stationary_time_ratio_in_trials(behav_df, trial_df):
             if behav_df.empty or trial_df.empty:
                 return np.nan, np.nan, 0.0
 
-            timestamp = pd.to_numeric(
-                behavior_utils.get_behavior_column(behav_df, ("timestamp", "")),
-                errors="coerce",
-            )
-            speed = pd.to_numeric(
-                behavior_utils.get_behavior_column(behav_df, (bodypart, speed_col)),
-                errors="coerce",
-            )
-            frame_df = pd.DataFrame(
-                {
-                    "timestamp": timestamp.to_numpy(),
-                    "speed": speed.to_numpy(),
-                }
-            ).replace([np.inf, -np.inf], np.nan)
-            frame_df = frame_df.dropna(subset=["timestamp"]).sort_values("timestamp")
+            frame_df = frame_time_speed_df(behav_df)
             if frame_df.empty:
                 return np.nan, np.nan, 0.0
 
-            t = frame_df["timestamp"].to_numpy(dtype=float)
-            speed_values = frame_df["speed"].to_numpy(dtype=float)
-            dt = np.diff(t)
-            positive_dt = dt[np.isfinite(dt) & (dt > 0)]
-            median_dt = float(np.median(positive_dt)) if len(positive_dt) else 0.0
-            frame_end = np.empty_like(t)
-            if len(t) > 1:
-                frame_end[:-1] = t[1:]
-            frame_end[-1] = t[-1] + median_dt
-
+            t, frame_end, speed_values = frame_intervals(frame_df)
+            stationary = np.isfinite(speed_values) & (
+                speed_values <= stationary_speed_threshold
+            )
             stationary_time = 0.0
             trial_time = 0.0
             for _, trial_row in trial_df.iterrows():
@@ -1774,10 +1528,7 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
                 overlap_start = np.maximum(t, trial_start)
                 overlap_end = np.minimum(frame_end, trial_end)
                 overlap = np.clip(overlap_end - overlap_start, 0, None)
-                stationary_mask = np.isfinite(speed_values) & (
-                    speed_values <= speed_threshold
-                )
-                stationary_time += float(overlap[stationary_mask].sum())
+                stationary_time += float(overlap[stationary].sum())
 
             if trial_time <= 0:
                 return np.nan, stationary_time, trial_time
@@ -1794,26 +1545,16 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
                 ):
                     continue
 
-                saline_trials = trial_df_for_split_value(
-                    df_dic_saline[pair_id],
-                    target_value,
-                )
-                dcz_trials = trial_df_for_split_value(
-                    df_dic_dcz[pair_id],
-                    target_value,
-                )
-                (
-                    saline_ratio,
-                    saline_stationary_time,
-                    saline_trial_time,
-                ) = stationary_time_ratio_in_trials(
-                    behav_df_dic_saline[pair_id],
-                    saline_trials,
+                saline_ratio, saline_stationary_time, saline_trial_time = (
+                    stationary_time_ratio_in_trials(
+                        behav_df_dic_saline[pair_id],
+                        trial_df_for_split_value(df_dic_saline[pair_id], target_value),
+                    )
                 )
                 dcz_ratio, dcz_stationary_time, dcz_trial_time = (
                     stationary_time_ratio_in_trials(
                         behav_df_dic_dcz[pair_id],
-                        dcz_trials,
+                        trial_df_for_split_value(df_dic_dcz[pair_id], target_value),
                     )
                 )
                 rows.append(
@@ -1826,7 +1567,7 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
                         "saline_trial_time": saline_trial_time,
                         "DCZ_stationary_time": dcz_stationary_time,
                         "DCZ_trial_time": dcz_trial_time,
-                        "speed_threshold": speed_threshold,
+                        "speed_threshold": stationary_speed_threshold,
                         "split_column": split_column,
                         "split_value": target_value,
                     }
@@ -1846,13 +1587,6 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
                     how="inner",
                 )
             return summary_df
-
-        true_stationary_time_ratio_summary = (
-            paired_trial_stationary_time_ratio_comparison(True)
-        )
-        false_stationary_time_ratio_summary = (
-            paired_trial_stationary_time_ratio_comparison(False)
-        )
 
         def stationary_summary_for_merge(summary_df, split_label):
             if summary_df.empty:
@@ -1878,44 +1612,6 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
                     "saline": f"{split_label}_saline",
                     "DCZ": f"{split_label}_dcz",
                 }
-            )
-
-        stationary_split_summary = stationary_summary_for_merge(
-            true_stationary_time_ratio_summary,
-            "true",
-        ).merge(
-            stationary_summary_for_merge(false_stationary_time_ratio_summary, "false"),
-            on=["pair_id", "subject"],
-            how="outer",
-        )
-
-        def comparison_pvalue(group_df, left_col, right_col):
-            paired_df = group_df[[left_col, right_col]].dropna()
-            if paired_df.empty:
-                return float("nan")
-            try:
-                return stats.wilcoxon(
-                    paired_df[left_col],
-                    paired_df[right_col],
-                ).pvalue
-            except ValueError:
-                return float("nan")
-
-        def add_sig_bar(ax, x0, x1, y, h, label):
-            ax.plot(
-                [x0, x0, x1, x1],
-                [y, y + h, y + h, y],
-                color="black",
-                linewidth=1,
-            )
-            ax.text(
-                (x0 + x1) / 2,
-                y + h,
-                label,
-                ha="center",
-                va="bottom",
-                fontsize=10,
-                color="black",
             )
 
         def plot_stationary_ratio_four_conditions(summary_df):
@@ -2017,46 +1713,129 @@ def _(behavior_utils, mo, np, pd, plot_test, plt, stats):
             fig.tight_layout()
             return fig
 
-        stationary_time_ratio_four_condition_fig = (
-            plot_stationary_ratio_four_conditions(stationary_split_summary)
-        )
+        if include_stationary and include_stationary_speed:
+            stationary_pair_ids = [
+                pair_id
+                for pair_id in pair_ids
+                if pair_id in behav_df_dic_saline_true
+                and pair_id in behav_df_dic_dcz_true
+                and pair_id in behav_df_dic_saline_false
+                and pair_id in behav_df_dic_dcz_false
+                and any(
+                    has_speed_data(behav_df)
+                    for _, behav_df, _, _ in stationary_conditions_for_pair(pair_id)
+                )
+            ]
+            stationary_speed_figures = [
+                plot_four_condition_stationary_speed_trace(pair_id)
+                for pair_id in stationary_pair_ids
+            ]
 
-        plot_test.save_figure_svg(
-            stationary_time_ratio_four_condition_fig,
-            f"stationary_time_ratio_groups_{true_label}_vs_{false_label}",
-            save_dir=behavior_svg_dir,
-            enabled=save_behavior_svg,
-        )
+            plot_test.save_figures_svg(
+                stationary_speed_figures,
+                f"stationary_speed_trace_{true_label}_vs_{false_label}",
+                save_dir=behavior_svg_dir,
+                enabled=save_behavior_svg,
+            )
+
+        if include_stationary and include_stationary_time:
+            true_stationary_time_ratio_summary = (
+                paired_trial_stationary_time_ratio_comparison(True)
+            )
+            false_stationary_time_ratio_summary = (
+                paired_trial_stationary_time_ratio_comparison(False)
+            )
+            stationary_split_summary = stationary_summary_for_merge(
+                true_stationary_time_ratio_summary,
+                "true",
+            ).merge(
+                stationary_summary_for_merge(
+                    false_stationary_time_ratio_summary,
+                    "false",
+                ),
+                on=["pair_id", "subject"],
+                how="outer",
+            )
+            stationary_time_ratio_four_condition_fig = (
+                plot_stationary_ratio_four_conditions(stationary_split_summary)
+            )
+
+            plot_test.save_figure_svg(
+                stationary_time_ratio_four_condition_fig,
+                f"stationary_time_ratio_groups_{true_label}_vs_{false_label}",
+                save_dir=behavior_svg_dir,
+                enabled=save_behavior_svg,
+            )
+
+        view_items = []
+        if four_condition_pair_figures:
+            view_items.extend(
+                [
+                    mo.md(f"## {true_label} vs {false_label} paired behavior"),
+                    *four_condition_pair_figures,
+                ]
+            )
+        if roi_time_ratio_four_condition_fig is not None:
+            view_items.extend(
+                [
+                    mo.md(f"## {true_label} vs {false_label} ROI time ratio groups"),
+                    roi_time_ratio_four_condition_fig,
+                ]
+            )
+        if stationary_speed_figures:
+            view_items.extend(
+                [
+                    mo.md(f"## {true_label} vs {false_label} stationary speed traces"),
+                    *stationary_speed_figures,
+                ]
+            )
+        if stationary_time_ratio_four_condition_fig is not None:
+            view_items.extend(
+                [
+                    mo.md(f"## {true_label} vs {false_label} stationary time ratio groups"),
+                    stationary_time_ratio_four_condition_fig,
+                ]
+            )
+        if not view_items:
+            view_items.append(mo.md(f"## {true_label} vs {false_label}: no output selected"))
 
         return {
             "split_column": split_column,
             "true_label": true_label,
             "false_label": false_label,
-            "stationary_speed_threshold": speed_threshold,
+            "true_pair_ids": true_pair_ids,
+            "false_pair_ids": false_pair_ids,
+            "include_stationary": include_stationary,
+            "include_occupancy": include_occupancy,
+            "include_trajectory_speed": include_trajectory_speed,
+            "include_roi_time": include_roi_time,
+            "include_stationary_speed": include_stationary_speed,
+            "include_stationary_time": include_stationary_time,
+            "stationary_speed_threshold": stationary_speed_threshold,
             "behav_df_dic_dcz_true": behav_df_dic_dcz_true,
             "behav_df_dic_dcz_false": behav_df_dic_dcz_false,
             "behav_df_dic_saline_true": behav_df_dic_saline_true,
             "behav_df_dic_saline_false": behav_df_dic_saline_false,
             "four_condition_pair_ids": four_condition_pair_ids,
+            "four_condition_pair_figures": four_condition_pair_figures,
+            "true_roi_time_ratio_summary": true_roi_time_ratio_summary,
+            "false_roi_time_ratio_summary": false_roi_time_ratio_summary,
+            "roi_split_summary": roi_split_summary,
+            "roi_time_ratio_four_condition_fig": roi_time_ratio_four_condition_fig,
             "stationary_speed_figures": stationary_speed_figures,
             "true_stationary_time_ratio_summary": true_stationary_time_ratio_summary,
             "false_stationary_time_ratio_summary": false_stationary_time_ratio_summary,
             "stationary_split_summary": stationary_split_summary,
             "stationary_time_ratio_four_condition_fig": stationary_time_ratio_four_condition_fig,
-            "view": mo.vstack([
-                mo.md(f"## {true_label} vs {false_label} stationary speed traces"),
-                *stationary_speed_figures,
-                mo.md(f"## {true_label} vs {false_label} stationary time ratio groups"),
-                stationary_time_ratio_four_condition_fig,
-            ]),
+            "view": mo.vstack(view_items),
         }
 
-    return (analyze_paired_stationary_by_trial_column,)
+    return (analyze_paired_behavior_by_trial_column,)
 
 
 @app.cell
 def _(
-    analyze_paired_stationary_by_trial_column,
+    analyze_paired_behavior_by_trial_column,
     behav_df_dic_dcz,
     behav_df_dic_saline,
     behav_pair_map,
@@ -2065,26 +1844,205 @@ def _(
     df_dic_saline,
     hM3Dq_mice,
     hM4Di_mice,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
     save_behavior_svg,
 ):
-    stationary_speed_threshold = 10  # pixels/s
-    stationary_split_analysis = analyze_paired_stationary_by_trial_column(
+    trial_split_analysis = analyze_paired_behavior_by_trial_column(
         split_column="engaged",
         df_dic_saline=df_dic_saline,
         df_dic_dcz=df_dic_dcz,
         behav_df_dic_saline=behav_df_dic_saline,
         behav_df_dic_dcz=behav_df_dic_dcz,
         behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
         hM4Di_mice=hM4Di_mice,
         hM3Dq_mice=hM3Dq_mice,
         behavior_svg_dir=behavior_svg_dir,
         save_behavior_svg=save_behavior_svg,
-        speed_threshold=stationary_speed_threshold,
         bodypart="Center",
+        include_stationary=True,
+        include_occupancy=False,
+        include_trajectory_speed=False,
+        include_roi_time=False,
+        include_stationary_speed=True,
+        include_stationary_time=False,
+        stationary_speed_threshold=10,
         speed_col="mean_speed",
     )
+    trial_split_analysis["view"]
+    return (trial_split_analysis,)
 
-    stationary_split_analysis["view"]
+
+@app.cell
+def _(
+    analyze_paired_behavior_by_trial_column,
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    df_dic_dcz,
+    df_dic_saline,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+    save_behavior_svg,
+):
+    analysis_by_column = {}
+    view_list = []
+
+    for column_name in ["engaged", "correct", "previous_correct"]:
+        analysis = analyze_paired_behavior_by_trial_column(
+            split_column=column_name,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            roi_left=roi_left,
+            roi_right=roi_right,
+            roi_bottom=roi_bottom,
+            roi_top=roi_top,
+            hM4Di_mice=hM4Di_mice,
+            hM3Dq_mice=hM3Dq_mice,
+            behavior_svg_dir=behavior_svg_dir,
+            save_behavior_svg=save_behavior_svg,
+            bodypart="Center",
+            include_stationary=True,
+            include_occupancy=False,
+            include_trajectory_speed=False,
+            include_roi_time=False,
+            include_stationary_speed=False,
+            include_stationary_time=True,
+            stationary_speed_threshold=10,
+            speed_col="mean_speed",
+        )
+
+        analysis_by_column[column_name] = analysis
+        view_list.append(mo.md(f"## split column: {column_name}"))
+        view_list.append(analysis["view"])
+
+    trial_split_analysis_compa_1 = analysis_by_column["engaged"]
+    trial_split_analysis_compa_2 = analysis_by_column["correct"]
+    trial_split_analysis_compa_3 = analysis_by_column["previous_correct"]
+
+    mo.vstack(view_list)
+    return
+
+
+@app.cell
+def _(
+    analyze_paired_behavior_by_trial_column,
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    df_dic_dcz,
+    df_dic_saline,
+    hM3Dq_mice,
+    hM4Di_mice,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+    save_behavior_svg,
+):
+
+    trial_split_analysis_engage_roi = analyze_paired_behavior_by_trial_column(
+        split_column="engaged",
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        hM4Di_mice=hM4Di_mice,
+        hM3Dq_mice=hM3Dq_mice,
+        behavior_svg_dir=behavior_svg_dir,
+        save_behavior_svg=save_behavior_svg,
+        bodypart="Center",
+        include_stationary=False,
+        include_occupancy=True,
+        include_trajectory_speed=True,
+        include_roi_time=False,
+        include_stationary_speed=False,
+        include_stationary_time=False,
+        stationary_speed_threshold=10,
+        speed_col="mean_speed",
+    )
+    trial_split_analysis_engage_roi["view"]
+    return
+
+
+@app.cell
+def _(
+    analyze_paired_behavior_by_trial_column,
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    behavior_svg_dir,
+    df_dic_dcz,
+    df_dic_saline,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+    save_behavior_svg,
+):
+    analysis_by_column_roi = {}
+    view_list_roi = []
+
+    for column_name_roi in ["engaged", "correct", "previous_correct"]:
+        analysis_roi = analyze_paired_behavior_by_trial_column(
+            split_column=column_name_roi,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            roi_left=roi_left,
+            roi_right=roi_right,
+            roi_bottom=roi_bottom,
+            roi_top=roi_top,
+            hM4Di_mice=hM4Di_mice,
+            hM3Dq_mice=hM3Dq_mice,
+            behavior_svg_dir=behavior_svg_dir,
+            save_behavior_svg=save_behavior_svg,
+            bodypart="Center",
+            include_stationary=False,
+            include_occupancy=True,
+            include_trajectory_speed=False,
+            include_roi_time=True,
+            include_stationary_speed=False,
+            include_stationary_time=False,
+            stationary_speed_threshold=10,
+            speed_col="mean_speed",
+        )
+
+        analysis_by_column_roi[column_name_roi] = analysis_roi
+        view_list_roi.append(mo.md(f"## split column: {column_name_roi}"))
+        view_list_roi.append(analysis_roi["view"])
+
+    trial_split_analysis_roi_compa_1 = analysis_by_column_roi["engaged"]
+    trial_split_analysis_roi_compa_2 = analysis_by_column_roi["correct"]
+    trial_split_analysis_roi_compa_3 = analysis_by_column_roi["previous_correct"]
+
+    mo.vstack(view_list_roi)
     return
 
 

@@ -2054,6 +2054,55 @@ def _(
     )
 
     mo.vstack(hmm_speed_posterior_figures)
+    return (hmm_speed_posterior_figures,)
+
+
+@app.cell
+def _(hmm_speed_posterior_figures, plt):
+    posterior_fig_idx = 0
+    frame_start = 1000
+    frame_window = 100
+    frame_end = frame_start + frame_window
+
+    source_fig = hmm_speed_posterior_figures[posterior_fig_idx]
+    source_ax = source_fig.axes[0]
+
+    posterior_30_frame_fig, posterior_30_frame_ax = plt.subplots(
+        1,
+        1,
+        figsize=(8, 2.5),
+        dpi=120,
+    )
+
+    for line in source_ax.lines:
+        x = line.get_xdata()
+        y = line.get_ydata()
+
+        mask = (x >= frame_start) & (x < frame_end)
+
+        posterior_30_frame_ax.plot(
+            x[mask],
+            y[mask],
+            color=line.get_color(),
+            linewidth=line.get_linewidth(),
+            alpha=line.get_alpha() if line.get_alpha() is not None else 1,
+            label=line.get_label(),
+        )
+
+    posterior_30_frame_ax.set_ylim(source_ax.get_ylim())
+    posterior_30_frame_ax.set_xlim(frame_start, frame_end - 1)
+    posterior_30_frame_ax.set_yticks([0, 0.5, 1])
+    posterior_30_frame_ax.set_xlabel("frame #")
+    posterior_30_frame_ax.set_ylabel("p(state)")
+    posterior_30_frame_ax.set_title(
+        source_ax.get_title()
+        + f" | frames {frame_start}-{frame_end - 1}"
+    )
+    posterior_30_frame_ax.legend(frameon=False, loc="upper right")
+    posterior_30_frame_ax.grid(alpha=0.25)
+
+    plt.tight_layout()
+    posterior_30_frame_fig
     return
 
 
