@@ -563,7 +563,7 @@ def _(mo):
 
 @app.cell
 def _():
-    dlc_mice_selected = ['NUO005', 'NUO008', 'NUO010', 'NUO012']
+    dlc_mice_selected = ['NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO012']
     return (dlc_mice_selected,)
 
 
@@ -575,60 +575,198 @@ def _(mo):
 
 
 @app.cell
+def _(behavior_utils, dlc_mice_selected, injection_info_df):
+    paired_dlc_dates = behavior_utils.get_paired_injection_dates(
+        injection_info_df,
+        mice_selected=dlc_mice_selected,
+    )
+    return (paired_dlc_dates,)
+
+
+@app.cell
+def _():
+    # read names of all the behavior data
+    import shlex
+    import subprocess
+    IDIBAPS_TV_PROJECTS = "/storage/training_village/"
+    def list_cluster_files(project_name, remote_folder, credentials):
+        remote_dir = f"{IDIBAPS_TV_PROJECTS}{project_name}/{remote_folder}".rstrip("/")
+        ssh_target = f"{credentials['username']}@{credentials['host']}"
+
+        command = f"ls -1 {shlex.quote(remote_dir)}"
+
+        result = subprocess.run(
+            ["ssh", ssh_target, command],
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            print(result.stderr)
+            return []
+
+        return [name for name in result.stdout.splitlines() if name]
+
+    return list_cluster_files, subprocess
+
+
+@app.cell
+def _(dlc_mice_selected, list_cluster_files, project, utils):
+    all_session_files = []
+    for dlc_mouse_selected_ in dlc_mice_selected:
+        session_file = list_cluster_files(
+            project_name=project,
+            remote_folder="sessions/{}".format(dlc_mouse_selected_),
+            credentials=utils.get_idibaps_cluster_credentials(),
+        )
+        all_session_files.extend(session_file)
+    return (all_session_files,)
+
+
+@app.cell
+def _(all_session_files, paired_dlc_dates, pd):
+    matched_session_files = []
+
+    for _, row_ in paired_dlc_dates.iterrows():
+        subject_ = str(row_["subject"])
+        saline_date_ = pd.to_datetime(row_["saline_date"]).strftime("%Y%m%d")
+        dcz_date_ = pd.to_datetime(row_["DCZ_date"]).strftime("%Y%m%d")
+
+        saline_files_ = [
+            file_name[:-4]
+            for file_name in all_session_files
+            if subject_ in file_name
+            and saline_date_ in file_name
+            and file_name.endswith(".csv")
+            and not file_name.endswith("_RAW.csv")
+        ]
+
+        dcz_files_ = [
+            file_name[:-4]
+            for file_name in all_session_files
+            if subject_ in file_name
+            and dcz_date_ in file_name
+            and file_name.endswith(".csv")
+            and not file_name.endswith("_RAW.csv")
+        ]
+
+        matched_session_files.extend(saline_files_)
+        matched_session_files.extend(dcz_files_)
+    return (matched_session_files,)
+
+
+@app.cell
 def _(
     Path,
     behavior_utils,
     dlc_mice_selected,
     download_dlcData_button,
-    injection_info_df,
+    matched_session_files,
+    paired_dlc_dates,
     pd,
     project,
+    subprocess,
     utils,
+    utils_test,
 ):
+    credentials = utils.get_idibaps_cluster_credentials()
+
     behav_df_dic = {}
     video_df_dic = {}
+
+    matched_session_stems = set(matched_session_files)
+
+    def is_matched_dlc_file(file_path):
+        file_name = Path(file_path).name
+        return any(session_stem in file_name for session_stem in matched_session_stems)
+
+    def remote_glob_exists(remote_pattern, credentials):
+        ssh_target = f"{credentials['username']}@{credentials['host']}"
+        command = f"ls -1 {remote_pattern}"
+
+        result = subprocess.run(
+            ["ssh", ssh_target, command],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0 and bool(result.stdout.strip())
+
+    dlc_data_path = "/home/kudongdong/data/behavior_DLC/TrainingVillage_2AFC_superanimal-LeciLab-2025-10-16/v2"
 
     if download_dlcData_button.value:
         for dlc_mouse_selected in dlc_mice_selected:
             _local_path = Path(utils.get_outpath()) / project / "sessions" / dlc_mouse_selected / "DLC"
             _local_path.mkdir(parents=True, exist_ok=True)
 
-            utils.rsync_specific_file(
-                file_path="/home/kudongdong/data/behavior_DLC/TrainingVillage_2AFC_superanimal-LeciLab-2025-10-16/v2/{}_*.csv".format(dlc_mouse_selected),
-                local_path=str(_local_path),
-                credentials=utils.get_idibaps_cluster_credentials(),
-            )
+            mouse_session_stems = [
+                session_stem
+                for session_stem in matched_session_stems
+                if session_stem.startswith(dlc_mouse_selected)
+            ]
 
-    else:
-        for dlc_mouse_selected in dlc_mice_selected:
-            _local_path = Path(utils.get_outpath()) / project / "sessions" / dlc_mouse_selected / "DLC"
-            for dlc_file_ in sorted(_local_path.glob("*DLC*.csv")):
-                random_df = pd.read_csv(dlc_file_, header=[1, 2])
-                behav_df_dic[dlc_file_.name[:29]] = random_df
+            for session_stem in mouse_session_stems:
+                remote_pattern = f"{dlc_data_path}/{session_stem}*.csv"
 
-    video_data_path = f'/storage/training_village/{project}/videos/'
+                if not remote_glob_exists(remote_pattern, credentials):
+                    print(f"Skip missing DLC: {remote_pattern}")
+                    continue
+
+                utils_test.rsync_specific_file(
+                    file_path=remote_pattern,
+                    local_path=str(_local_path),
+                    credentials=credentials,
+                )
+
+    for dlc_mouse_selected in dlc_mice_selected:
+        _local_path = Path(utils.get_outpath()) / project / "sessions" / dlc_mouse_selected / "DLC"
+
+        for dlc_file_ in sorted(_local_path.glob("*DLC*.csv")):
+            if not is_matched_dlc_file(dlc_file_):
+                continue
+
+            random_df = pd.read_csv(dlc_file_, header=[1, 2])
+            behav_df_dic[dlc_file_.name[:29]] = random_df
+
+
+    video_data_path = f"/storage/training_village/{project}/videos"
+
     if download_dlcData_button.value:
         for dlc_mouse_selected in dlc_mice_selected:
             _local_path = Path(utils.get_outpath()) / project / "sessions" / dlc_mouse_selected / "DLC"
+
             for dlc_file_ in sorted(_local_path.glob("*DLC*.csv")):
-                utils.rsync_specific_file(
-                    file_path=Path(video_data_path, dlc_mouse_selected, dlc_file_.name[:29]+".csv"),
+                if not is_matched_dlc_file(dlc_file_):
+                    continue
+
+                session_key = dlc_file_.name[:29]
+                utils_test.rsync_specific_file(
+                    file_path=Path(video_data_path, dlc_mouse_selected, session_key + ".csv"),
                     local_path=str(_local_path),
                     credentials=utils.get_idibaps_cluster_credentials(),
                 )
-    else:
-        video_df_dic = {}
+
+    video_df_dic = {}
+    missing_video_files = []
+
+    if download_dlcData_button.value:
         for video_file_ in behav_df_dic:
             _local_path = Path(utils.get_outpath()) / project / "sessions" / video_file_[:6] / "DLC"
-            video_df = pd.read_csv(Path(_local_path, video_file_+".csv"), sep=';', index_col='frame')
+            video_csv_path = Path(_local_path, video_file_ + ".csv")
+
+            if not video_csv_path.exists():
+                print(f"Skip missing local video csv: {video_csv_path}")
+                missing_video_files.append(video_file_)
+                continue
+
+            video_df = pd.read_csv(
+                video_csv_path,
+                sep=";",
+                index_col="frame",
+            )
             video_df = video_df[2:]
             video_df.index = range(0, len(video_df))
             video_df_dic[video_file_] = video_df
 
-    paired_dlc_dates = behavior_utils.get_paired_injection_dates(
-        injection_info_df,
-        mice_selected=dlc_mice_selected,
-    )
     (
         behav_df_dic_saline,
         behav_df_dic_dcz,
@@ -641,8 +779,6 @@ def _(
         video_pair_map,
         missing_video_pairs,
     ) = behavior_utils.split_paired_behavior_dicts(video_df_dic, paired_dlc_dates)
-
-    behav_pair_map
     return (
         behav_df_dic_dcz,
         behav_df_dic_saline,
@@ -2025,7 +2161,7 @@ def _(
             save_behavior_svg=save_behavior_svg,
             bodypart="Center",
             include_stationary=False,
-            include_occupancy=True,
+            include_occupancy=False,
             include_trajectory_speed=False,
             include_roi_time=True,
             include_stationary_speed=False,

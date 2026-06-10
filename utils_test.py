@@ -7,6 +7,36 @@ import matplotlib.pyplot as plt
 import lecilab_behavior_analysis.utils as behavior_utils
 
 
+def rsync_specific_file(file_path: str, credentials: dict, local_path: str) -> bool:
+    """
+    Sync one remote file or glob pattern to a local folder.
+
+    This is a safer version of lecilab_behavior_analysis.utils.rsync_specific_file:
+    it captures stderr/stdout and returns False on rsync failure instead of raising
+    an AttributeError while printing the error.
+    """
+    import os
+    import subprocess
+
+    os.makedirs(local_path, exist_ok=True)
+    remote_path = f"{credentials['username']}@{credentials['host']}:{file_path}"
+    result = subprocess.run(
+        ["rsync", "-avz", remote_path, str(local_path)],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        print(f"Error syncing data for {file_path}")
+        if result.stderr:
+            print(result.stderr.strip())
+        if result.stdout:
+            print(result.stdout.strip())
+        return False
+
+    return True
+
+
 def add_lag_features(df, source_col, n_lags=10, group_col="session"):
     df = df.copy()
     for lag in range(1, n_lags + 1):
