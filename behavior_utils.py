@@ -249,6 +249,10 @@ def split_paired_behavior_dicts(
                 "saline_date": paired_row["saline_date"],
                 "DCZ_date": paired_row["DCZ_date"],
                 "days_between": paired_row["days_between"],
+                "stimulus_modality": paired_row.get(
+                    "stimulus_modality",
+                    pd.NA,
+                ),
                 "saline_key": saline_key,
                 "DCZ_key": dcz_key,
             }

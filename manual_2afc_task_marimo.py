@@ -412,6 +412,25 @@ def _():
     return hM3Dq_mice, hM4Di_mice
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # stimulus modality select
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    stimulus_modality_select = mo.ui.dropdown(
+        options=["visual", "auditory"],
+        value="auditory",
+        label="Stimulus modality",
+    )
+    stimulus_modality_select
+    return (stimulus_modality_select,)
+
+
 @app.cell
 def _(
     Path,
@@ -421,6 +440,7 @@ def _(
     pd,
     project,
     safe_rsync_cluster_data,
+    stimulus_modality_select,
     update_processData_button,
     utils,
 ):
@@ -484,7 +504,7 @@ def _(
                     df_mouse_result["subject"] = _mouse
                 combined_results[output_name].append(df_mouse_result)
 
-    df_test_vis = (
+    df_test_vis_raw = (
         pd.concat(combined_results["df_test_vis"], ignore_index=True)
         if combined_results["df_test_vis"]
         else pd.DataFrame()
@@ -494,7 +514,12 @@ def _(
         if combined_results["df_test_aud"]
         else pd.DataFrame()
     )
-    return (df_test_aud_raw,)
+    df_test_selected_raw = (
+        df_test_vis_raw
+        if stimulus_modality_select.value == "visual"
+        else df_test_aud_raw
+    )
+    return (df_test_selected_raw,)
 
 
 @app.cell
@@ -543,9 +568,9 @@ def _(pd):
 
 
 @app.cell
-def _(df_test_aud_raw, injection_info_df, mouse, pd):
-    df_test_aud = df_test_aud_raw.copy()
-    df_test_aud["observations"] = pd.NA
+def _(df_test_selected_raw, injection_info_df, mouse, pd):
+    df_test_selected = df_test_selected_raw.copy()
+    df_test_selected["observations"] = pd.NA
 
     date_col = injection_info_df.columns[0]
 
@@ -570,21 +595,21 @@ def _(df_test_aud_raw, injection_info_df, mouse, pd):
     )
 
     trial_dates = pd.to_datetime(
-        df_test_aud["date"],
+        df_test_selected["date"],
         errors="coerce",
     ).dt.strftime("%Y-%m-%d")
     trial_mice = (
-        df_test_aud["subject"].astype(str)
-        if "subject" in df_test_aud.columns
-        else pd.Series(mouse, index=df_test_aud.index)
+        df_test_selected["subject"].astype(str)
+        if "subject" in df_test_selected.columns
+        else pd.Series(mouse, index=df_test_selected.index)
     )
-    df_test_aud["observations"] = [
+    df_test_selected["observations"] = [
         injection_lookup.get((trial_date, trial_mouse), pd.NA)
         for trial_date, trial_mouse in zip(trial_dates, trial_mice)
     ]
 
-    df_test_aud['observations']
-    return (df_test_aud,)
+    df_test_selected['observations']
+    return (df_test_selected,)
 
 
 @app.cell
@@ -600,12 +625,12 @@ def _(pd, utils):
 
 
 @app.cell
-def _(add_number_of_pokes, df_test_aud, dft, hM3Dq_mice, hM4Di_mice):
-    session_performance = df_test_aud.groupby(
+def _(add_number_of_pokes, df_test_selected, dft, hM3Dq_mice, hM4Di_mice):
+    session_performance = df_test_selected.groupby(
         ["subject", "session"]
     )["correct"].transform("mean")
 
-    is_saline = df_test_aud["observations"].str.contains(
+    is_saline = df_test_selected["observations"].str.contains(
         "saline",
         case=False,
         na=False,
@@ -613,28 +638,28 @@ def _(add_number_of_pokes, df_test_aud, dft, hM3Dq_mice, hM4Di_mice):
 
     drop_mask = is_saline & (session_performance < 0.7)
 
-    df_test_aud_upd = df_test_aud[
+    df_test_selected_upd = df_test_selected[
         ~drop_mask
     ].copy()
 
-    df_test_aud_upd = dft.calculate_time_between_trials_and_reaction_time(dft.add_day_column_to_df(
-        add_number_of_pokes(df_test_aud_upd, port_number=2)
+    df_test_selected_upd = dft.calculate_time_between_trials_and_reaction_time(dft.add_day_column_to_df(
+        add_number_of_pokes(df_test_selected_upd, port_number=2)
     ))
 
-    # df_test_aud_upd = df_test_aud_upd[
-    #     df_test_aud_upd['year_month_day'].isin(
+    # df_test_selected_upd = df_test_selected_upd[
+    #     df_test_selected_upd['year_month_day'].isin(
     #         ['2026-05-22', '2026-05-20']
     #     )
     # ]
 
-    df_test_aud_hm4 = df_test_aud_upd[
-        df_test_aud_upd["subject"].isin(hM4Di_mice)
+    df_test_selected_hm4 = df_test_selected_upd[
+        df_test_selected_upd["subject"].isin(hM4Di_mice)
     ].copy()
 
-    df_test_aud_hm3 = df_test_aud_upd[
-        df_test_aud_upd["subject"].isin(hM3Dq_mice)
+    df_test_selected_hm3 = df_test_selected_upd[
+        df_test_selected_upd["subject"].isin(hM3Dq_mice)
     ].copy()
-    return df_test_aud_hm3, df_test_aud_hm4, df_test_aud_upd
+    return df_test_selected_hm3, df_test_selected_hm4, df_test_selected_upd
 
 
 @app.cell
@@ -973,11 +998,17 @@ def _(plot_metric_by_date):
 
 
 @app.cell
-def _(df_test_aud_hm3, df_test_aud_hm4, mo, plot_group, plot_metric_by_date):
+def _(
+    df_test_selected_hm3,
+    df_test_selected_hm4,
+    mo,
+    plot_group,
+    plot_metric_by_date,
+):
     mo.vstack(
         [
-            plot_group(df_test_aud_hm4, "hM4Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date), 
-            plot_group(df_test_aud_hm3, "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date)
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date)
         ]
     )
     return
@@ -985,16 +1016,16 @@ def _(df_test_aud_hm3, df_test_aud_hm4, mo, plot_group, plot_metric_by_date):
 
 @app.cell
 def _(
-    df_test_aud_hm3,
-    df_test_aud_hm4,
+    df_test_selected_hm3,
+    df_test_selected_hm4,
     mo,
     plot_group,
     plot_metric_by_observation,
 ):
     mo.hstack(
         [
-            plot_group(df_test_aud_hm4, "hM4Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation), 
-            plot_group(df_test_aud_hm3, "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation)
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation)
         ]
     )
     return
@@ -1009,15 +1040,25 @@ def _(mo):
 
 
 @app.cell
+def _(stimulus_modality_select):
+    if stimulus_modality_select.value == 'visual':
+        stimulus_col = 'visual_stimulus_ratio'
+    else:
+        stimulus_col = 'total_evidence_strength'
+    return (stimulus_col,)
+
+
+@app.cell
 def _(
     behavior_utils,
-    df_test_aud_hm3,
-    df_test_aud_hm4,
+    df_test_selected_hm3,
+    df_test_selected_hm4,
     hM3Dq_mice,
     hM4Di_mice,
     injection_info_df,
     mo,
     plot_test,
+    stimulus_col,
 ):
     psychometric_hm4_paired_dates = behavior_utils.get_paired_injection_dates(
         injection_info_df,
@@ -1030,10 +1071,10 @@ def _(
 
     psychometric_hm4_fig, psychometric_hm4_summary = (
         plot_test.plot_condition_psychometric_curves(
-            df_test_aud_hm4,
+            df_test_selected_hm4,
             "hM4Di",
             paired_dates=psychometric_hm4_paired_dates,
-            x_col="total_evidence_strength",
+            x_col=stimulus_col,
             y_col="first_choice_numeric",
             valueType="continue",
             bins=6,
@@ -1043,10 +1084,10 @@ def _(
 
     psychometric_hm3_fig, psychometric_hm3_summary = (
         plot_test.plot_condition_psychometric_curves(
-            df_test_aud_hm3,
+            df_test_selected_hm3,
             "hM3Dq",
             paired_dates=psychometric_hm3_paired_dates,
-            x_col="total_evidence_strength",
+            x_col=stimulus_col,
             y_col="first_choice_numeric",
             valueType="continue",
             bins=6,
@@ -1059,11 +1100,17 @@ def _(
 
 
 @app.cell
-def _(df_test_aud_hm3, df_test_aud_hm4, mo, plot_group, plot_metric_by_date):
+def _(
+    df_test_selected_hm3,
+    df_test_selected_hm4,
+    mo,
+    plot_group,
+    plot_metric_by_date,
+):
     mo.vstack(
         [
-            plot_group(df_test_aud_hm4, "hM4Di", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_date), 
-            plot_group(df_test_aud_hm3, "hM3Dq", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_date)
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_date), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_date)
         ]
     )
     return
@@ -1071,27 +1118,16 @@ def _(df_test_aud_hm3, df_test_aud_hm4, mo, plot_group, plot_metric_by_date):
 
 @app.cell
 def _(
-    df_test_aud_hm3,
-    df_test_aud_hm4,
+    df_test_selected_hm3,
+    df_test_selected_hm4,
     mo,
     plot_group,
     plot_metric_by_observation,
 ):
     mo.hstack(
         [
-            plot_group(df_test_aud_hm4, "hM4Di", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_observation), 
-            plot_group(df_test_aud_hm3, "hM3Dq", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_observation)
-        ]
-    )
-    return
-
-
-@app.cell
-def _(df_test_aud_hm3, df_test_aud_hm4, mo, plot_group, plot_metric_by_date):
-    mo.vstack(
-        [
-            plot_group(df_test_aud_hm4, "hM4Di", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_date), 
-            plot_group(df_test_aud_hm3, "hM3Dq", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_date)
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_observation), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_observation)
         ]
     )
     return
@@ -1099,27 +1135,16 @@ def _(df_test_aud_hm3, df_test_aud_hm4, mo, plot_group, plot_metric_by_date):
 
 @app.cell
 def _(
-    df_test_aud_hm3,
-    df_test_aud_hm4,
+    df_test_selected_hm3,
+    df_test_selected_hm4,
     mo,
     plot_group,
-    plot_metric_by_observation,
+    plot_metric_by_date,
 ):
-    mo.hstack(
-        [
-            plot_group(df_test_aud_hm4, "hM4Di", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_observation), 
-            plot_group(df_test_aud_hm3, "hM3Dq", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_observation)
-        ]
-    )
-    return
-
-
-@app.cell
-def _(df_test_aud_hm3, df_test_aud_hm4, mo, plot_group, plot_metric_by_date):
     mo.vstack(
         [
-            plot_group(df_test_aud_hm4, "hM4Di", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_date), 
-            plot_group(df_test_aud_hm3, "hM3Dq", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_date)
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_date), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_date)
         ]
     )
     return
@@ -1127,16 +1152,50 @@ def _(df_test_aud_hm3, df_test_aud_hm4, mo, plot_group, plot_metric_by_date):
 
 @app.cell
 def _(
-    df_test_aud_hm3,
-    df_test_aud_hm4,
+    df_test_selected_hm3,
+    df_test_selected_hm4,
     mo,
     plot_group,
     plot_metric_by_observation,
 ):
     mo.hstack(
         [
-            plot_group(df_test_aud_hm4, "hM4Di", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_observation), 
-            plot_group(df_test_aud_hm3, "hM3Dq", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_observation)
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_observation), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="reaction_time", metric_name="reaction_time", agg_func="mean", plot_func=plot_metric_by_observation)
+        ]
+    )
+    return
+
+
+@app.cell
+def _(
+    df_test_selected_hm3,
+    df_test_selected_hm4,
+    mo,
+    plot_group,
+    plot_metric_by_date,
+):
+    mo.vstack(
+        [
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_date), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_date)
+        ]
+    )
+    return
+
+
+@app.cell
+def _(
+    df_test_selected_hm3,
+    df_test_selected_hm4,
+    mo,
+    plot_group,
+    plot_metric_by_observation,
+):
+    mo.hstack(
+        [
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_observation), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="time_between_trials", metric_name="time_between_trials", agg_func="mean", plot_func=plot_metric_by_observation)
         ]
     )
     return
@@ -1158,10 +1217,10 @@ def _(mo):
 
 
 @app.cell
-def _(df_test_aud_upd, effec_group, noeffec_group, pd):
+def _(df_test_selected_upd, effec_group, noeffec_group, pd):
     effec_glmhmm_stim_col = "total_evidence_strength"
 
-    df_effec_glmhmm = df_test_aud_upd.copy()
+    df_effec_glmhmm = df_test_selected_upd.copy()
     _subject = df_effec_glmhmm["subject"].astype(str)
     _observation = df_effec_glmhmm["observations"].astype(str).str.lower()
 
