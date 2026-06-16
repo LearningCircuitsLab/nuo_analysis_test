@@ -662,6 +662,1455 @@ def prep_traj_speed_df(dlc_df, bodypart="Center"):
     )
 
 
+def occupancy_for_trials(
+    behav_df,
+    trial_df,
+    bodypart="Center",
+    timestamp_col=("timestamp", ""),
+    xbins=15,
+    ybins=15,
+    x_range=(0, 640),
+    y_range=(0, 480),
+):
+    """Accumulate seconds spent in each spatial bin within trial bounds."""
+    empty_occupancy = np.zeros((xbins, ybins))
+    if behav_df.empty or trial_df.empty:
+        return empty_occupancy
+
+    try:
+        timestamp = behavior_utils.get_behavior_column(
+            behav_df,
+            timestamp_col,
+        )
+        x = behavior_utils.get_behavior_column(
+            behav_df,
+            (bodypart, "x"),
+        )
+        y = behavior_utils.get_behavior_column(
+            behav_df,
+            (bodypart, "y"),
+        )
+    except KeyError:
+        return empty_occupancy
+
+    frame_df = (
+        pd.DataFrame(
+            {
+                "timestamp": pd.to_numeric(
+                    timestamp,
+                    errors="coerce",
+                ).to_numpy(),
+                "x": pd.to_numeric(
+                    x,
+                    errors="coerce",
+                ).to_numpy(),
+                "y": pd.to_numeric(
+                    y,
+                    errors="coerce",
+                ).to_numpy(),
+            }
+        )
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["timestamp"])
+        .sort_values("timestamp")
+    )
+    if frame_df.empty:
+        return empty_occupancy
+
+    t = frame_df["timestamp"].to_numpy(dtype=float)
+    x_values = frame_df["x"].to_numpy(dtype=float)
+    y_values = frame_df["y"].to_numpy(dtype=float)
+    dt = np.diff(t)
+    positive_dt = dt[np.isfinite(dt) & (dt > 0)]
+    median_dt = float(np.median(positive_dt)) if len(positive_dt) else 0.0
+    frame_end = np.empty_like(t)
+    if len(t) > 1:
+        frame_end[:-1] = t[1:]
+    frame_end[-1] = t[-1] + median_dt
+
+    occupancy = np.zeros((xbins, ybins), dtype=float)
+    valid_position = np.isfinite(x_values) & np.isfinite(y_values)
+    for _, trial_row in trial_df.iterrows():
+        try:
+            trial_start = float(trial_row["TRIAL_START"])
+            trial_end = float(trial_row["TRIAL_END"])
+        except (TypeError, ValueError):
+            continue
+
+        if (
+            not np.isfinite(trial_start)
+            or not np.isfinite(trial_end)
+            or trial_end <= trial_start
+        ):
+            continue
+
+        overlap_start = np.maximum(t, trial_start)
+        overlap_end = np.minimum(frame_end, trial_end)
+        overlap = np.clip(overlap_end - overlap_start, 0, None)
+        frame_mask = valid_position & (overlap > 0)
+        if not frame_mask.any():
+            continue
+
+        trial_occupancy, _, _ = np.histogram2d(
+            x_values[frame_mask],
+            y_values[frame_mask],
+            bins=[xbins, ybins],
+            range=[list(x_range), list(y_range)],
+            weights=overlap[frame_mask],
+        )
+        occupancy += trial_occupancy
+
+    return occupancy
+
+
+def plot_four_condition_occupancy(
+    pair_id,
+    condition_dfs,
+    split_column,
+    roi_left,
+    roi_right,
+    roi_bottom,
+    roi_top,
+    bodypart="Center",
+    timestamp_col=("timestamp", ""),
+    xbins=15,
+    ybins=15,
+    x_range=(0, 640),
+    y_range=(0, 480),
+    cmap="viridis",
+    interpolation="gaussian",
+    figsize=(18, 4.5),
+):
+    """Plot four trial-clipped occupancy maps in one row."""
+    occ_maps = [
+        occupancy_for_trials(
+            behav_df,
+            trial_df,
+            bodypart=bodypart,
+            timestamp_col=timestamp_col,
+            xbins=xbins,
+            ybins=ybins,
+            x_range=x_range,
+            y_range=y_range,
+        )
+        for _, behav_df, trial_df in condition_dfs
+    ]
+    occ_values = np.concatenate([occ.ravel() for occ in occ_maps])
+    occ_norm = _normalize_from_values(occ_values)
+
+    fig, axes = plt.subplots(
+        1,
+        4,
+        figsize=figsize,
+        sharex=True,
+        sharey=True,
+    )
+    last_im = None
+    for ax, (condition_label, _, trial_df), occ in zip(
+        axes,
+        condition_dfs,
+        occ_maps,
+    ):
+        last_im = ax.imshow(
+            occ.T,
+            origin="lower",
+            extent=(*x_range, *y_range),
+            cmap=cmap,
+            norm=occ_norm,
+            interpolation=interpolation,
+        )
+        if trial_df.empty or not np.any(occ):
+            ax.text(
+                0.5,
+                0.5,
+                "No trial frames",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                color="white",
+            )
+        ax.add_patch(
+            patches.Rectangle(
+                (roi_left, roi_bottom),
+                roi_right - roi_left,
+                roi_top - roi_bottom,
+                linewidth=1.5,
+                edgecolor="white",
+                facecolor="none",
+                linestyle="--",
+            )
+        )
+        ax.set_title(condition_label, fontsize=10)
+        ax.set_aspect("equal")
+        ax.set_xlim(*x_range)
+        ax.set_ylim(*y_range)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    axes[0].invert_yaxis()
+    fig.suptitle(f"{pair_id} occupancy by {split_column}", fontsize=12)
+    if last_im is not None:
+        fig.colorbar(
+            last_im,
+            ax=axes,
+            label="occupancy (s/pixels)",
+            shrink=0.7,
+            fraction=0.025,
+            pad=0.02,
+            extend="both",
+        )
+    return fig
+
+
+def trajectory_segments_in_trials(
+    behav_df,
+    trial_df,
+    bodypart="Center",
+    timestamp_col=("timestamp", ""),
+):
+    """Prepare one speed-colored trajectory DataFrame per valid trial."""
+    if behav_df.empty or trial_df.empty:
+        return []
+
+    try:
+        timestamp = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                timestamp_col,
+            ),
+            errors="coerce",
+        )
+    except KeyError:
+        return []
+
+    segments = []
+    for _, trial_row in trial_df.iterrows():
+        try:
+            trial_start = float(trial_row["TRIAL_START"])
+            trial_end = float(trial_row["TRIAL_END"])
+        except (TypeError, ValueError):
+            continue
+
+        if (
+            not np.isfinite(trial_start)
+            or not np.isfinite(trial_end)
+            or trial_end <= trial_start
+        ):
+            continue
+
+        trial_mask = timestamp.between(
+            trial_start,
+            trial_end,
+            inclusive="both",
+        ).fillna(False)
+        trial_behav_df = behav_df.loc[trial_mask]
+        if len(trial_behav_df) < 2:
+            continue
+
+        try:
+            trajectory_df = prep_traj_speed_df(
+                trial_behav_df,
+                bodypart=bodypart,
+            )
+        except KeyError:
+            continue
+        if len(trajectory_df) >= 2:
+            segments.append(trajectory_df)
+    return segments
+
+
+def plot_four_condition_traj_speed(
+    pair_id,
+    condition_dfs,
+    split_column,
+    bodypart="Center",
+    timestamp_col=("timestamp", ""),
+    cmap="inferno",
+    x_range=(0, 640),
+    y_range=(0, 480),
+    figsize=(18, 4.5),
+):
+    """Plot four trial-separated speed-colored trajectories in one row."""
+    trajectory_segments = [
+        trajectory_segments_in_trials(
+            behav_df,
+            trial_df,
+            bodypart=bodypart,
+            timestamp_col=timestamp_col,
+        )
+        for _, behav_df, trial_df in condition_dfs
+    ]
+    speed_series = [
+        trajectory_df["mean_speed"]
+        for segments in trajectory_segments
+        for trajectory_df in segments
+    ]
+    speed_values = (
+        pd.concat(speed_series, ignore_index=True).dropna()
+        if speed_series
+        else pd.Series(dtype=float)
+    )
+    speed_norm = _normalize_from_values(speed_values)
+
+    fig, axes = plt.subplots(
+        1,
+        4,
+        figsize=figsize,
+        sharex=True,
+        sharey=True,
+    )
+    for ax, (condition_label, _, _), segments in zip(
+        axes,
+        condition_dfs,
+        trajectory_segments,
+    ):
+        if segments:
+            for trajectory_df in segments:
+                plot_traj_speed(
+                    trajectory_df,
+                    cmap=cmap,
+                    ax=ax,
+                    norm=speed_norm,
+                )
+        else:
+            ax.text(
+                0.5,
+                0.5,
+                "No trajectory",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+        ax.set_title(condition_label, fontsize=10)
+        ax.set_aspect("equal")
+        ax.set_xlim(*x_range)
+        ax.set_ylim(*y_range)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    axes[0].invert_yaxis()
+    fig.suptitle(f"{pair_id} trajectory speed by {split_column}", fontsize=12)
+    fig.colorbar(
+        plt.cm.ScalarMappable(norm=speed_norm, cmap=cmap),
+        ax=axes,
+        label="mean speed (pixels/s)",
+        shrink=0.7,
+        fraction=0.025,
+        pad=0.02,
+    )
+    return fig
+
+
+def analyze_paired_behavior_by_trial_column(
+    split_column,
+    df_dic_saline,
+    df_dic_dcz,
+    behav_df_dic_saline,
+    behav_df_dic_dcz,
+    behav_pair_map,
+    roi_left,
+    roi_right,
+    roi_bottom,
+    roi_top,
+    hM4Di_mice,
+    hM3Dq_mice,
+    behavior_svg_dir,
+    save_behavior_svg,
+    stimulus=None,
+    bodypart="Center",
+    true_label=None,
+    false_label=None,
+    include_stationary=False,
+    include_occupancy=True,
+    include_trajectory_speed=True,
+    include_roi_time=True,
+    include_stationary_speed=True,
+    include_stationary_time=True,
+    stationary_speed_threshold=10,
+    speed_col="mean_speed",
+    mo=None,
+):
+    """
+    Split paired saline/DCZ behavior by a trial-level boolean column.
+
+    Each pair is organized into four conditions:
+    true + saline, true + DCZ, false + saline, and false + DCZ.
+    Depending on the include_* switches, the function can create occupancy
+    maps, speed-colored trajectories, ROI-time summaries, stationary-speed
+    traces, and stationary-time summaries.
+
+    All time-based calculations are clipped to TRIAL_START and TRIAL_END.
+    Frames and time gaps between trials are not included.
+    """
+
+    def _markdown(text):
+        return mo.md(text) if mo is not None else text
+
+    def _vstack(items):
+        return mo.vstack(items) if mo is not None else items
+
+    # 1. Convert common split columns into readable True/False labels.
+    default_labels = {
+        "engaged": ("engaged", "disengaged"),
+        "correct": ("correct", "incorrect"),
+        "previous_correct": ("previous correct", "previous incorrect"),
+    }
+    default_true_label, default_false_label = default_labels.get(
+        split_column,
+        (f"{split_column}_true", f"{split_column}_false"),
+    )
+    true_label = true_label or default_true_label
+    false_label = false_label or default_false_label
+
+    # 2. behavior_utils performs stimulus filtering and all trial splitting.
+    split_result = behavior_utils.split_paired_behavior_by_trial_column(
+        split_column=split_column,
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        stimulus=stimulus,
+        bodypart=bodypart,
+    )
+    stimulus = split_result["stimulus"]
+    behav_pair_map = split_result["behav_pair_map"]
+    pair_ids = split_result["pair_ids"]
+    true_pair_ids = split_result["true_pair_ids"]
+    false_pair_ids = split_result["false_pair_ids"]
+    four_condition_pair_ids = split_result["four_condition_pair_ids"]
+
+    behav_df_dic_saline_true = split_result[
+        "behav_df_dic_saline_true"
+    ]
+    behav_df_dic_saline_false = split_result[
+        "behav_df_dic_saline_false"
+    ]
+    behav_df_dic_dcz_true = split_result["behav_df_dic_dcz_true"]
+    behav_df_dic_dcz_false = split_result["behav_df_dic_dcz_false"]
+    trial_df_dic_saline_true = split_result[
+        "trial_df_dic_saline_true"
+    ]
+    trial_df_dic_saline_false = split_result[
+        "trial_df_dic_saline_false"
+    ]
+    trial_df_dic_dcz_true = split_result["trial_df_dic_dcz_true"]
+    trial_df_dic_dcz_false = split_result["trial_df_dic_dcz_false"]
+
+    # Standard four-condition input consumed by plot_test functions.
+    def trial_conditions_for_pair(pair_id):
+        return [
+            (
+                f"{true_label} saline",
+                behav_df_dic_saline[pair_id],
+                trial_df_dic_saline_true[pair_id],
+            ),
+            (
+                f"{true_label} DCZ",
+                behav_df_dic_dcz[pair_id],
+                trial_df_dic_dcz_true[pair_id],
+            ),
+            (
+                f"{false_label} saline",
+                behav_df_dic_saline[pair_id],
+                trial_df_dic_saline_false[pair_id],
+            ),
+            (
+                f"{false_label} DCZ",
+                behav_df_dic_dcz[pair_id],
+                trial_df_dic_dcz_false[pair_id],
+            ),
+        ]
+
+    # 3. Generate the per-pair occupancy and/or trajectory figures requested
+    # by include_occupancy and include_trajectory_speed.
+    four_condition_pair_figures = []
+    if include_occupancy or include_trajectory_speed:
+        for pair_id in four_condition_pair_ids:
+            if include_occupancy:
+                four_condition_pair_figures.append(
+                    plot_four_condition_occupancy(
+                        pair_id=pair_id,
+                        condition_dfs=trial_conditions_for_pair(pair_id),
+                        split_column=split_column,
+                        roi_left=roi_left,
+                        roi_right=roi_right,
+                        roi_bottom=roi_bottom,
+                        roi_top=roi_top,
+                        bodypart=bodypart,
+                    )
+                )
+            if include_trajectory_speed:
+                four_condition_pair_figures.append(
+                    plot_four_condition_traj_speed(
+                        pair_id=pair_id,
+                        condition_dfs=trial_conditions_for_pair(pair_id),
+                        split_column=split_column,
+                        bodypart=bodypart,
+                    )
+                )
+
+        save_figures_svg(
+            four_condition_pair_figures,
+            f"paired_behavior_{true_label}_vs_{false_label}",
+            save_dir=behavior_svg_dir,
+            enabled=save_behavior_svg,
+        )
+
+    true_roi_time_ratio_summary = pd.DataFrame()
+    false_roi_time_ratio_summary = pd.DataFrame()
+    roi_split_summary = pd.DataFrame()
+    roi_time_ratio_four_condition_fig = None
+
+    # 4. Helpers shared by ROI and stationary four-condition statistics.
+    def roi_summary_for_merge(summary_df, split_label):
+        """Rename saline/DCZ columns before merging True and False results."""
+        if summary_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "pair_id",
+                    "subject",
+                    f"{split_label}_saline",
+                    f"{split_label}_dcz",
+                ]
+            )
+
+        roi_df = summary_df.copy()
+        if "subject" not in roi_df.columns and "pair_id" in roi_df.columns:
+            roi_df["subject"] = roi_df["pair_id"].str[:6]
+        for column in ["pair_id", "subject", "saline", "DCZ"]:
+            if column not in roi_df.columns:
+                roi_df[column] = pd.Series(dtype=float)
+        return roi_df[
+            ["pair_id", "subject", "saline", "DCZ"]
+        ].rename(
+            columns={
+                "saline": f"{split_label}_saline",
+                "DCZ": f"{split_label}_dcz",
+            }
+        )
+
+    def comparison_pvalue(group_df, left_col, right_col):
+        """Run a paired Wilcoxon test after removing incomplete pairs."""
+        paired_df = group_df[[left_col, right_col]].dropna()
+        if paired_df.empty:
+            return float("nan")
+        try:
+            return stats.wilcoxon(
+                paired_df[left_col],
+                paired_df[right_col],
+            ).pvalue
+        except ValueError:
+            return float("nan")
+
+    def add_sig_bar(ax, x0, x1, y, h, label):
+        """Draw one significance bracket and its star label."""
+        ax.plot(
+            [x0, x0, x1, x1],
+            [y, y + h, y + h, y],
+            color="black",
+            linewidth=1,
+        )
+        ax.text(
+            (x0 + x1) / 2,
+            y + h,
+            label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            color="black",
+        )
+
+    def plot_roi_ratio_four_conditions(summary_df):
+        """Compare four ROI ratios separately for hM4Di and hM3Dq mice."""
+        fig, axes = plt.subplots(
+            1,
+            2,
+            figsize=(12, 5),
+            sharey=True,
+        )
+
+        condition_cols = [
+            "true_saline",
+            "true_dcz",
+            "false_saline",
+            "false_dcz",
+        ]
+        condition_labels = [
+            f"{true_label}\nsaline",
+            f"{true_label}\nDCZ",
+            f"{false_label}\nsaline",
+            f"{false_label}\nDCZ",
+        ]
+        condition_colors = ["#2563eb", "#dc2626", "#93c5fd", "#fca5a5"]
+        # Four paired comparisons:
+        # True saline vs DCZ, False saline vs DCZ,
+        # saline True vs False, and DCZ True vs False.
+        comparisons = [
+            (0, 1, "true_saline", "true_dcz"),
+            (2, 3, "false_saline", "false_dcz"),
+            (0, 2, "true_saline", "false_saline"),
+            (1, 3, "true_dcz", "false_dcz"),
+        ]
+
+        for ax, mice, group_name in zip(
+            axes,
+            [hM4Di_mice, hM3Dq_mice],
+            ["hM4Di", "hM3Dq"],
+        ):
+            group_df = summary_df[
+                summary_df["subject"].isin(mice)
+            ].copy()
+            for column in condition_cols:
+                if column not in group_df.columns:
+                    group_df[column] = pd.Series(dtype=float)
+
+            for x0, x1, left_col, right_col in comparisons:
+                paired_df = group_df[[left_col, right_col]].dropna()
+                for _, row in paired_df.iterrows():
+                    ax.plot(
+                        [x0, x1],
+                        [row[left_col], row[right_col]],
+                        color="gray",
+                        alpha=0.25,
+                        linewidth=1,
+                        zorder=1,
+                    )
+
+            for x, (column, color) in enumerate(zip(condition_cols, condition_colors)):
+                values = pd.to_numeric(group_df[column], errors="coerce").dropna()
+                ax.scatter(
+                    [x] * len(values),
+                    values,
+                    color=color,
+                    edgecolor="black",
+                    zorder=3,
+                )
+
+            all_values = pd.to_numeric(
+                group_df[condition_cols].stack(),
+                errors="coerce",
+            ).dropna()
+            if all_values.empty:
+                y_max = 1.0
+                y_range = 0.1
+            else:
+                y_max = float(all_values.max())
+                y_min = float(all_values.min())
+                y_range = y_max - y_min
+                if not np.isfinite(y_range) or y_range == 0:
+                    y_range = max(abs(y_max), 1.0) * 0.1
+
+            h = y_range * 0.04
+            for idx, (x0, x1, left_col, right_col) in enumerate(comparisons):
+                p_value = comparison_pvalue(group_df, left_col, right_col)
+                add_sig_bar(
+                    ax,
+                    x0,
+                    x1,
+                    y_max + y_range * (0.10 + 0.13 * idx),
+                    h,
+                    p_to_star(p_value),
+                )
+
+            ax.set_xticks(range(4))
+            ax.set_xticklabels(condition_labels)
+            ax.set_ylabel("fraction of time in ROI")
+            ax.set_title(f"{group_name}, n={group_df['pair_id'].nunique()}")
+            ax.grid(axis="y", alpha=0.3)
+            ax.set_ylim(
+                bottom=0,
+                top=y_max + y_range * 0.75,
+            )
+
+        fig.tight_layout()
+        return fig
+
+    # 5. ROI-time ratio.
+    # Formula for one condition:
+    # sum(time inside ROI and selected trials) / sum(selected trial durations).
+    def roi_time_ratio_in_trials(behav_df, trial_df):
+        """Calculate a trial-clipped ROI ratio and its numerator/denominator."""
+        if behav_df.empty or trial_df.empty:
+            return np.nan, np.nan, 0.0
+
+        timestamp = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                ("timestamp", ""),
+            ),
+            errors="coerce",
+        )
+        x = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                (bodypart, "x"),
+            ),
+            errors="coerce",
+        )
+        y = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                (bodypart, "y"),
+            ),
+            errors="coerce",
+        )
+        frame_df = (
+            pd.DataFrame(
+                {
+                    "timestamp": timestamp.to_numpy(),
+                    "x": x.to_numpy(),
+                    "y": y.to_numpy(),
+                }
+            )
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna(subset=["timestamp"])
+            .sort_values("timestamp")
+        )
+        if frame_df.empty:
+            return np.nan, np.nan, 0.0
+
+        t = frame_df["timestamp"].to_numpy(dtype=float)
+        x_values = frame_df["x"].to_numpy(dtype=float)
+        y_values = frame_df["y"].to_numpy(dtype=float)
+        dt = np.diff(t)
+        positive_dt = dt[np.isfinite(dt) & (dt > 0)]
+        median_dt = float(np.median(positive_dt)) if len(positive_dt) else 0.0
+        frame_end = np.empty_like(t)
+        if len(t) > 1:
+            frame_end[:-1] = t[1:]
+        frame_end[-1] = t[-1] + median_dt
+
+        # Position validity and ROI membership are properties of each frame.
+        valid_position = np.isfinite(x_values) & np.isfinite(y_values)
+        in_roi = (
+            valid_position
+            & (x_values >= roi_left)
+            & (x_values <= roi_right)
+            & (y_values >= roi_bottom)
+            & (y_values <= roi_top)
+        )
+
+        roi_time = 0.0
+        trial_time = 0.0
+        for _, trial_row in trial_df.iterrows():
+            try:
+                trial_start = float(trial_row["TRIAL_START"])
+                trial_end = float(trial_row["TRIAL_END"])
+            except (TypeError, ValueError):
+                continue
+
+            if (
+                not np.isfinite(trial_start)
+                or not np.isfinite(trial_end)
+                or trial_end <= trial_start
+            ):
+                continue
+
+            # The denominator is the sum of this condition's trial lengths.
+            trial_time += trial_end - trial_start
+            # The numerator only receives frame time inside this trial.
+            overlap_start = np.maximum(t, trial_start)
+            overlap_end = np.minimum(frame_end, trial_end)
+            overlap = np.clip(overlap_end - overlap_start, 0, None)
+            roi_time += float(overlap[in_roi].sum())
+
+        if trial_time <= 0:
+            return np.nan, roi_time, trial_time
+        return roi_time / trial_time, roi_time, trial_time
+
+    def paired_trial_roi_time_ratio_comparison(target_value):
+        """Calculate saline/DCZ ROI ratios for True or False trials."""
+        saline_trial_df_dic = (
+            trial_df_dic_saline_true
+            if target_value
+            else trial_df_dic_saline_false
+        )
+        dcz_trial_df_dic = (
+            trial_df_dic_dcz_true
+            if target_value
+            else trial_df_dic_dcz_false
+        )
+        rows = []
+        for pair_id in pair_ids:
+            if (
+                pair_id not in behav_df_dic_saline
+                or pair_id not in behav_df_dic_dcz
+                or pair_id not in saline_trial_df_dic
+                or pair_id not in dcz_trial_df_dic
+            ):
+                continue
+
+            saline_ratio, saline_roi_time, saline_trial_time = (
+                roi_time_ratio_in_trials(
+                    behav_df_dic_saline[pair_id],
+                    saline_trial_df_dic[pair_id],
+                )
+            )
+            dcz_ratio, dcz_roi_time, dcz_trial_time = (
+                roi_time_ratio_in_trials(
+                    behav_df_dic_dcz[pair_id],
+                    dcz_trial_df_dic[pair_id],
+                )
+            )
+            rows.append(
+                {
+                    "pair_id": pair_id,
+                    "saline": saline_ratio,
+                    "DCZ": dcz_ratio,
+                    "DCZ_minus_saline": dcz_ratio - saline_ratio,
+                    "saline_roi_time": saline_roi_time,
+                    "saline_trial_time": saline_trial_time,
+                    "DCZ_roi_time": dcz_roi_time,
+                    "DCZ_trial_time": dcz_trial_time,
+                    "split_column": split_column,
+                    "split_value": target_value,
+                }
+            )
+
+        summary_df = pd.DataFrame(rows)
+        if not summary_df.empty:
+            summary_df = summary_df.dropna(subset=["saline", "DCZ"])
+        if (
+            behav_pair_map is not None
+            and not behav_pair_map.empty
+            and not summary_df.empty
+        ):
+            summary_df = behav_pair_map.merge(
+                summary_df,
+                on="pair_id",
+                how="inner",
+            )
+        return summary_df
+
+    # True and False summaries are calculated separately, then merged into
+    # true_saline, true_dcz, false_saline, and false_dcz columns.
+    if include_roi_time:
+        true_roi_time_ratio_summary = (
+            paired_trial_roi_time_ratio_comparison(True)
+        )
+        false_roi_time_ratio_summary = (
+            paired_trial_roi_time_ratio_comparison(False)
+        )
+        roi_split_summary = roi_summary_for_merge(
+            true_roi_time_ratio_summary,
+            "true",
+        ).merge(
+            roi_summary_for_merge(false_roi_time_ratio_summary, "false"),
+            on=["pair_id", "subject"],
+            how="outer",
+        )
+        roi_time_ratio_four_condition_fig = plot_roi_ratio_four_conditions(
+            roi_split_summary,
+        )
+
+        save_figure_svg(
+            roi_time_ratio_four_condition_fig,
+            f"roi_time_ratio_groups_{true_label}_vs_{false_label}",
+            save_dir=behavior_svg_dir,
+            enabled=save_behavior_svg,
+        )
+
+    stationary_speed_figures = []
+    true_stationary_time_ratio_summary = pd.DataFrame()
+    false_stationary_time_ratio_summary = pd.DataFrame()
+    stationary_split_summary = pd.DataFrame()
+    stationary_time_ratio_four_condition_fig = None
+
+    # 6. Stationary-speed analysis.
+    # A frame is stationary when speed <= stationary_speed_threshold.
+    def has_speed_data(behav_df):
+        """Check whether the requested speed column contains usable data."""
+        if behav_df.empty:
+            return False
+        if bodypart not in behav_df.columns.get_level_values(0):
+            return False
+        if speed_col not in behav_df[bodypart].columns:
+            return False
+        speed = pd.to_numeric(behav_df[(bodypart, speed_col)], errors="coerce")
+        return speed.notna().any()
+
+    def stationary_conditions_for_pair(pair_id):
+        """Return behavior, trial rows, and color for four conditions."""
+        return [
+            (
+                f"{true_label} saline",
+                behav_df_dic_saline_true[pair_id],
+                trial_df_dic_saline_true[pair_id],
+                "#2563eb",
+            ),
+            (
+                f"{true_label} DCZ",
+                behav_df_dic_dcz_true[pair_id],
+                trial_df_dic_dcz_true[pair_id],
+                "#dc2626",
+            ),
+            (
+                f"{false_label} saline",
+                behav_df_dic_saline_false[pair_id],
+                trial_df_dic_saline_false[pair_id],
+                "#93c5fd",
+            ),
+            (
+                f"{false_label} DCZ",
+                behav_df_dic_dcz_false[pair_id],
+                trial_df_dic_dcz_false[pair_id],
+                "#fca5a5",
+            ),
+        ]
+
+    def frame_time_speed_df(behav_df):
+        """Create a clean, time-sorted table containing timestamp and speed."""
+        timestamp = pd.to_numeric(
+            behavior_utils.get_behavior_column(behav_df, ("timestamp", "")),
+            errors="coerce",
+        )
+        speed = pd.to_numeric(
+            behavior_utils.get_behavior_column(behav_df, (bodypart, speed_col)),
+            errors="coerce",
+        )
+        frame_df = pd.DataFrame(
+            {
+                "timestamp": timestamp.to_numpy(),
+                "speed": speed.to_numpy(),
+            }
+        ).replace([np.inf, -np.inf], np.nan)
+        return frame_df.dropna(subset=["timestamp"]).sort_values("timestamp")
+
+    def frame_intervals(frame_df):
+        """Convert frame timestamps into [start, end) intervals."""
+        t = frame_df["timestamp"].to_numpy(dtype=float)
+        speed_values = frame_df["speed"].to_numpy(dtype=float)
+        dt = np.diff(t)
+        positive_dt = dt[np.isfinite(dt) & (dt > 0)]
+        median_dt = float(np.median(positive_dt)) if len(positive_dt) else 0.0
+        frame_end = np.empty_like(t)
+        if len(t) > 1:
+            frame_end[:-1] = t[1:]
+        frame_end[-1] = t[-1] + median_dt
+        return t, frame_end, speed_values
+
+    def shade_stationary_segments_in_trials(ax, behav_df, trial_df):
+        """Shade stationary intervals after clipping them to trial bounds."""
+        if behav_df.empty or trial_df.empty:
+            return
+
+        frame_df = frame_time_speed_df(behav_df)
+        if frame_df.empty:
+            return
+
+        t, frame_end, speed_values = frame_intervals(frame_df)
+        stationary = np.isfinite(speed_values) & (
+            speed_values <= stationary_speed_threshold
+        )
+
+        for _, trial_row in trial_df.iterrows():
+            try:
+                trial_start = float(trial_row["TRIAL_START"])
+                trial_end = float(trial_row["TRIAL_END"])
+            except (TypeError, ValueError):
+                continue
+
+            if (
+                not np.isfinite(trial_start)
+                or not np.isfinite(trial_end)
+                or trial_end <= trial_start
+            ):
+                continue
+
+            overlap_start = np.maximum(t, trial_start)
+            overlap_end = np.minimum(frame_end, trial_end)
+            draw_mask = stationary & (overlap_end > overlap_start)
+            starts = overlap_start[draw_mask]
+            ends = overlap_end[draw_mask]
+            if len(starts) == 0:
+                continue
+
+            # Merge adjacent stationary frame intervals into one shaded span.
+            run_start = starts[0]
+            run_end = ends[0]
+            for start, end in zip(starts[1:], ends[1:]):
+                if start <= run_end + 1e-9:
+                    run_end = max(run_end, end)
+                else:
+                    ax.axvspan(
+                        run_start,
+                        run_end,
+                        color="gray",
+                        alpha=0.18,
+                        linewidth=0,
+                    )
+                    run_start = start
+                    run_end = end
+
+            ax.axvspan(
+                run_start,
+                run_end,
+                color="gray",
+                alpha=0.18,
+                linewidth=0,
+            )
+
+    def speed_trace_segments_in_trials(behav_df, trial_df):
+        """Return one speed trace per trial to prevent cross-trial lines."""
+        if behav_df.empty or trial_df.empty:
+            return []
+
+        frame_df = frame_time_speed_df(behav_df)
+        if frame_df.empty:
+            return []
+
+        segments = []
+        for _, trial_row in trial_df.iterrows():
+            try:
+                trial_start = float(trial_row["TRIAL_START"])
+                trial_end = float(trial_row["TRIAL_END"])
+            except (TypeError, ValueError):
+                continue
+
+            if (
+                not np.isfinite(trial_start)
+                or not np.isfinite(trial_end)
+                or trial_end <= trial_start
+            ):
+                continue
+
+            trial_segment = frame_df.loc[
+                frame_df["timestamp"].between(
+                    trial_start,
+                    trial_end,
+                    inclusive="both",
+                )
+            ].dropna(subset=["speed"])
+            if not trial_segment.empty:
+                segments.append(trial_segment)
+        return segments
+
+    def plot_four_condition_stationary_speed_trace(pair_id):
+        """Plot four speed traces with trial-clipped stationary shading."""
+        condition_dfs = stationary_conditions_for_pair(pair_id)
+        fig, axes = plt.subplots(
+            1,
+            4,
+            figsize=(18, 4),
+            sharey=True,
+        )
+
+        for ax, (condition_label, behav_df, trial_df, color) in zip(axes, condition_dfs):
+            if has_speed_data(behav_df):
+                trace_segments = speed_trace_segments_in_trials(
+                    behav_df,
+                    trial_df,
+                )
+                if not trace_segments:
+                    ax.text(
+                        0.5,
+                        0.5,
+                        "No speed",
+                        ha="center",
+                        va="center",
+                        transform=ax.transAxes,
+                    )
+                else:
+                    shade_stationary_segments_in_trials(ax, behav_df, trial_df)
+                    for trace_segment in trace_segments:
+                        ax.plot(
+                            trace_segment["timestamp"],
+                            trace_segment["speed"],
+                            color=color,
+                            linewidth=1,
+                            alpha=0.85,
+                        )
+                    ax.set_xlabel("time (s)")
+            else:
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No speed",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                )
+
+            ax.axhline(
+                stationary_speed_threshold,
+                color="black",
+                linestyle="--",
+                linewidth=1,
+                alpha=0.7,
+            )
+            ax.set_title(condition_label, fontsize=10)
+            ax.grid(axis="y", alpha=0.25)
+
+        axes[0].set_ylabel(f"{bodypart} {speed_col} (pixels/s)")
+        fig.suptitle(f"{pair_id} stationary speed trace by {split_column}", fontsize=12)
+        fig.tight_layout()
+        return fig
+
+    def stationary_time_ratio_in_trials(behav_df, trial_df):
+        """Return stationary_time / selected_trial_time for one condition."""
+        if behav_df.empty or trial_df.empty:
+            return np.nan, np.nan, 0.0
+
+        frame_df = frame_time_speed_df(behav_df)
+        if frame_df.empty:
+            return np.nan, np.nan, 0.0
+
+        t, frame_end, speed_values = frame_intervals(frame_df)
+        stationary = np.isfinite(speed_values) & (
+            speed_values <= stationary_speed_threshold
+        )
+        stationary_time = 0.0
+        trial_time = 0.0
+        for _, trial_row in trial_df.iterrows():
+            try:
+                trial_start = float(trial_row["TRIAL_START"])
+                trial_end = float(trial_row["TRIAL_END"])
+            except (TypeError, ValueError):
+                continue
+
+            if (
+                not np.isfinite(trial_start)
+                or not np.isfinite(trial_end)
+                or trial_end <= trial_start
+            ):
+                continue
+
+            # As for ROI, each condition uses only its own trial durations.
+            trial_time += trial_end - trial_start
+            overlap_start = np.maximum(t, trial_start)
+            overlap_end = np.minimum(frame_end, trial_end)
+            overlap = np.clip(overlap_end - overlap_start, 0, None)
+            stationary_time += float(overlap[stationary].sum())
+
+        if trial_time <= 0:
+            return np.nan, stationary_time, trial_time
+        return stationary_time / trial_time, stationary_time, trial_time
+
+    def paired_trial_stationary_time_ratio_comparison(target_value):
+        """Calculate paired saline/DCZ stationary ratios for one split value."""
+        saline_trial_df_dic = (
+            trial_df_dic_saline_true
+            if target_value
+            else trial_df_dic_saline_false
+        )
+        dcz_trial_df_dic = (
+            trial_df_dic_dcz_true
+            if target_value
+            else trial_df_dic_dcz_false
+        )
+        rows = []
+        for pair_id in pair_ids:
+            if (
+                pair_id not in behav_df_dic_saline
+                or pair_id not in behav_df_dic_dcz
+                or pair_id not in saline_trial_df_dic
+                or pair_id not in dcz_trial_df_dic
+            ):
+                continue
+
+            saline_ratio, saline_stationary_time, saline_trial_time = (
+                stationary_time_ratio_in_trials(
+                    behav_df_dic_saline[pair_id],
+                    saline_trial_df_dic[pair_id],
+                )
+            )
+            dcz_ratio, dcz_stationary_time, dcz_trial_time = (
+                stationary_time_ratio_in_trials(
+                    behav_df_dic_dcz[pair_id],
+                    dcz_trial_df_dic[pair_id],
+                )
+            )
+            rows.append(
+                {
+                    "pair_id": pair_id,
+                    "saline": saline_ratio,
+                    "DCZ": dcz_ratio,
+                    "DCZ_minus_saline": dcz_ratio - saline_ratio,
+                    "saline_stationary_time": saline_stationary_time,
+                    "saline_trial_time": saline_trial_time,
+                    "DCZ_stationary_time": dcz_stationary_time,
+                    "DCZ_trial_time": dcz_trial_time,
+                    "speed_threshold": stationary_speed_threshold,
+                    "split_column": split_column,
+                    "split_value": target_value,
+                }
+            )
+
+        summary_df = pd.DataFrame(rows)
+        if not summary_df.empty:
+            summary_df = summary_df.dropna(subset=["saline", "DCZ"])
+        if (
+            behav_pair_map is not None
+            and not behav_pair_map.empty
+            and not summary_df.empty
+        ):
+            summary_df = behav_pair_map.merge(
+                summary_df,
+                on="pair_id",
+                how="inner",
+            )
+        return summary_df
+
+    def stationary_summary_for_merge(summary_df, split_label):
+        """Rename stationary columns before combining True and False groups."""
+        if summary_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "pair_id",
+                    "subject",
+                    f"{split_label}_saline",
+                    f"{split_label}_dcz",
+                ]
+            )
+
+        stationary_df = summary_df.copy()
+        if "subject" not in stationary_df.columns and "pair_id" in stationary_df.columns:
+            stationary_df["subject"] = stationary_df["pair_id"].str[:6]
+        for column in ["pair_id", "subject", "saline", "DCZ"]:
+            if column not in stationary_df.columns:
+                stationary_df[column] = pd.Series(dtype=float)
+        return stationary_df[
+            ["pair_id", "subject", "saline", "DCZ"]
+        ].rename(
+            columns={
+                "saline": f"{split_label}_saline",
+                "DCZ": f"{split_label}_dcz",
+            }
+        )
+
+    def plot_stationary_ratio_four_conditions(summary_df):
+        """Compare four stationary ratios for hM4Di and hM3Dq mice."""
+        fig, axes = plt.subplots(
+            1,
+            2,
+            figsize=(12, 5),
+            sharey=True,
+        )
+
+        condition_cols = [
+            "true_saline",
+            "true_dcz",
+            "false_saline",
+            "false_dcz",
+        ]
+        condition_labels = [
+            f"{true_label}\nsaline",
+            f"{true_label}\nDCZ",
+            f"{false_label}\nsaline",
+            f"{false_label}\nDCZ",
+        ]
+        condition_colors = ["#2563eb", "#dc2626", "#93c5fd", "#fca5a5"]
+        # Use the same four paired comparisons as the ROI summary plot.
+        comparisons = [
+            (0, 1, "true_saline", "true_dcz"),
+            (2, 3, "false_saline", "false_dcz"),
+            (0, 2, "true_saline", "false_saline"),
+            (1, 3, "true_dcz", "false_dcz"),
+        ]
+
+        for ax, mice, group_name in zip(
+            axes,
+            [hM4Di_mice, hM3Dq_mice],
+            ["hM4Di", "hM3Dq"],
+        ):
+            group_df = summary_df[summary_df["subject"].isin(mice)].copy()
+            for column in condition_cols:
+                if column not in group_df.columns:
+                    group_df[column] = pd.Series(dtype=float)
+
+            for x0, x1, left_col, right_col in comparisons:
+                paired_df = group_df[[left_col, right_col]].dropna()
+                for _, row in paired_df.iterrows():
+                    ax.plot(
+                        [x0, x1],
+                        [row[left_col], row[right_col]],
+                        color="gray",
+                        alpha=0.25,
+                        linewidth=1,
+                        zorder=1,
+                    )
+
+            for x, (column, color) in enumerate(zip(condition_cols, condition_colors)):
+                values = pd.to_numeric(group_df[column], errors="coerce").dropna()
+                ax.scatter(
+                    [x] * len(values),
+                    values,
+                    color=color,
+                    edgecolor="black",
+                    zorder=3,
+                )
+
+            all_values = pd.to_numeric(
+                group_df[condition_cols].stack(),
+                errors="coerce",
+            ).dropna()
+            if all_values.empty:
+                y_max = 1.0
+                y_range = 0.1
+            else:
+                y_max = float(all_values.max())
+                y_min = float(all_values.min())
+                y_range = y_max - y_min
+                if not np.isfinite(y_range) or y_range == 0:
+                    y_range = max(abs(y_max), 1.0) * 0.1
+
+            h = y_range * 0.04
+            for idx, (x0, x1, left_col, right_col) in enumerate(comparisons):
+                p_value = comparison_pvalue(group_df, left_col, right_col)
+                add_sig_bar(
+                    ax,
+                    x0,
+                    x1,
+                    y_max + y_range * (0.10 + 0.13 * idx),
+                    h,
+                    p_to_star(p_value),
+                )
+
+            ax.set_xticks(range(4))
+            ax.set_xticklabels(condition_labels)
+            ax.set_ylabel("fraction of time stationary")
+            ax.set_title(f"{group_name}, n={group_df['pair_id'].nunique()}")
+            ax.grid(axis="y", alpha=0.3)
+            ax.set_ylim(
+                bottom=0,
+                top=y_max + y_range * 0.75,
+            )
+
+        fig.tight_layout()
+        return fig
+
+    # Draw speed traces only when both the stationary master switch and
+    # the trace-specific switch are enabled.
+    if include_stationary and include_stationary_speed:
+        stationary_pair_ids = [
+            pair_id
+            for pair_id in pair_ids
+            if pair_id in behav_df_dic_saline_true
+            and pair_id in behav_df_dic_dcz_true
+            and pair_id in behav_df_dic_saline_false
+            and pair_id in behav_df_dic_dcz_false
+            and any(
+                has_speed_data(behav_df)
+                for _, behav_df, _, _ in stationary_conditions_for_pair(pair_id)
+            )
+        ]
+        stationary_speed_figures = [
+            plot_four_condition_stationary_speed_trace(pair_id)
+            for pair_id in stationary_pair_ids
+        ]
+
+        save_figures_svg(
+            stationary_speed_figures,
+            f"stationary_speed_trace_{true_label}_vs_{false_label}",
+            save_dir=behavior_svg_dir,
+            enabled=save_behavior_svg,
+        )
+
+    # Calculate and plot stationary ratios independently from speed traces.
+    if include_stationary and include_stationary_time:
+        true_stationary_time_ratio_summary = (
+            paired_trial_stationary_time_ratio_comparison(True)
+        )
+        false_stationary_time_ratio_summary = (
+            paired_trial_stationary_time_ratio_comparison(False)
+        )
+        stationary_split_summary = stationary_summary_for_merge(
+            true_stationary_time_ratio_summary,
+            "true",
+        ).merge(
+            stationary_summary_for_merge(
+                false_stationary_time_ratio_summary,
+                "false",
+            ),
+            on=["pair_id", "subject"],
+            how="outer",
+        )
+        stationary_time_ratio_four_condition_fig = (
+            plot_stationary_ratio_four_conditions(stationary_split_summary)
+        )
+
+        save_figure_svg(
+            stationary_time_ratio_four_condition_fig,
+            f"stationary_time_ratio_groups_{true_label}_vs_{false_label}",
+            save_dir=behavior_svg_dir,
+            enabled=save_behavior_svg,
+        )
+
+    # 7. Assemble only the requested outputs into one Marimo view.
+    view_items = []
+    if four_condition_pair_figures:
+        view_items.extend(
+            [
+                _markdown(f"## {true_label} vs {false_label} paired behavior"),
+                *four_condition_pair_figures,
+            ]
+        )
+    if roi_time_ratio_four_condition_fig is not None:
+        view_items.extend(
+            [
+                _markdown(f"## {true_label} vs {false_label} ROI time ratio groups"),
+                roi_time_ratio_four_condition_fig,
+            ]
+        )
+    if stationary_speed_figures:
+        view_items.extend(
+            [
+                _markdown(f"## {true_label} vs {false_label} stationary speed traces"),
+                *stationary_speed_figures,
+            ]
+        )
+    if stationary_time_ratio_four_condition_fig is not None:
+        view_items.extend(
+            [
+                _markdown(f"## {true_label} vs {false_label} stationary time ratio groups"),
+                stationary_time_ratio_four_condition_fig,
+            ]
+        )
+    if not view_items:
+        view_items.append(_markdown(f"## {true_label} vs {false_label}: no output selected"))
+
+    # Return intermediate dictionaries and summary tables as well as plots.
+    # This makes it possible to inspect or reuse every analysis stage.
+    return {
+        "split_column": split_column,
+        "stimulus": stimulus,
+        "split_result": split_result,
+        "behav_pair_map": behav_pair_map,
+        "true_label": true_label,
+        "false_label": false_label,
+        "true_pair_ids": true_pair_ids,
+        "false_pair_ids": false_pair_ids,
+        "include_stationary": include_stationary,
+        "include_occupancy": include_occupancy,
+        "include_trajectory_speed": include_trajectory_speed,
+        "include_roi_time": include_roi_time,
+        "include_stationary_speed": include_stationary_speed,
+        "include_stationary_time": include_stationary_time,
+        "stationary_speed_threshold": stationary_speed_threshold,
+        "behav_df_dic_dcz_true": behav_df_dic_dcz_true,
+        "behav_df_dic_dcz_false": behav_df_dic_dcz_false,
+        "behav_df_dic_saline_true": behav_df_dic_saline_true,
+        "behav_df_dic_saline_false": behav_df_dic_saline_false,
+        "trial_df_dic_dcz_true": trial_df_dic_dcz_true,
+        "trial_df_dic_dcz_false": trial_df_dic_dcz_false,
+        "trial_df_dic_saline_true": trial_df_dic_saline_true,
+        "trial_df_dic_saline_false": trial_df_dic_saline_false,
+        "four_condition_pair_ids": four_condition_pair_ids,
+        "four_condition_pair_figures": four_condition_pair_figures,
+        "true_roi_time_ratio_summary": true_roi_time_ratio_summary,
+        "false_roi_time_ratio_summary": false_roi_time_ratio_summary,
+        "roi_split_summary": roi_split_summary,
+        "roi_time_ratio_four_condition_fig": roi_time_ratio_four_condition_fig,
+        "stationary_speed_figures": stationary_speed_figures,
+        "true_stationary_time_ratio_summary": true_stationary_time_ratio_summary,
+        "false_stationary_time_ratio_summary": false_stationary_time_ratio_summary,
+        "stationary_split_summary": stationary_split_summary,
+        "stationary_time_ratio_four_condition_fig": stationary_time_ratio_four_condition_fig,
+        "view": _vstack(view_items),
+    }
+
+
 def plot_pair_occupancy(
     pair_id,
     behav_df_dic_saline,

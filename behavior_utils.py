@@ -266,6 +266,218 @@ def split_paired_behavior_dicts(
     )
 
 
+def split_paired_behavior_by_trial_column(
+    split_column: str,
+    df_dic_saline: dict,
+    df_dic_dcz: dict,
+    behav_df_dic_saline: dict,
+    behav_df_dic_dcz: dict,
+    behav_pair_map: pd.DataFrame,
+    stimulus=None,
+    bodypart: str = "Center",
+    timestamp_col=("timestamp", ""),
+):
+    """
+    Split paired saline/DCZ behavior into True and False trial groups.
+
+    The returned dictionaries form four conditions:
+    True saline, True DCZ, False saline, and False DCZ. Matching trial
+    dictionaries are returned alongside behavior-frame dictionaries so
+    downstream time calculations can remain clipped to trial boundaries.
+    """
+
+    pair_map = behav_pair_map.copy()
+    normalized_stimulus = None
+    if stimulus is not None:
+        normalized_stimulus = str(stimulus).strip().lower()
+        if normalized_stimulus not in {"visual", "auditory"}:
+            raise ValueError(
+                "stimulus should be None, 'visual', or 'auditory'."
+            )
+        if "stimulus_modality" not in pair_map.columns:
+            raise KeyError(
+                "behav_pair_map does not contain 'stimulus_modality'."
+            )
+
+        modality_mask = (
+            pair_map["stimulus_modality"]
+            .astype("string")
+            .str.strip()
+            .str.lower()
+            .eq(normalized_stimulus)
+            .fillna(False)
+        )
+        pair_map = pair_map.loc[modality_mask].copy()
+
+    def split_trial_dataframe(trial_df):
+        empty_trial_df = trial_df.iloc[0:0].copy()
+        if trial_df.empty or split_column not in trial_df.columns:
+            return empty_trial_df, empty_trial_df.copy()
+
+        true_mask = []
+        false_mask = []
+        for split_value in trial_df[split_column]:
+            if pd.isna(split_value):
+                true_mask.append(False)
+                false_mask.append(False)
+            else:
+                is_true = bool(split_value)
+                true_mask.append(is_true)
+                false_mask.append(not is_true)
+        return (
+            trial_df.loc[true_mask].copy(),
+            trial_df.loc[false_mask].copy(),
+        )
+
+    def behavior_frames_for_trials(behav_df, trial_df):
+        empty_behav_df = behav_df.iloc[0:0].copy()
+        if behav_df.empty or trial_df.empty:
+            return empty_behav_df
+
+        timestamp = pd.to_numeric(
+            get_behavior_column(behav_df, timestamp_col),
+            errors="coerce",
+        )
+        frame_mask = pd.Series(False, index=behav_df.index)
+        for _, trial_row in trial_df.iterrows():
+            try:
+                trial_start = float(trial_row["TRIAL_START"])
+                trial_end = float(trial_row["TRIAL_END"])
+            except (TypeError, ValueError):
+                continue
+
+            if (
+                not np.isfinite(trial_start)
+                or not np.isfinite(trial_end)
+                or trial_end <= trial_start
+            ):
+                continue
+
+            frame_mask = frame_mask | timestamp.between(
+                trial_start,
+                trial_end,
+                inclusive="both",
+            ).fillna(False)
+        return behav_df.loc[frame_mask].copy()
+
+    pair_ids = list(pair_map["pair_id"].unique())
+    split_data = {
+        "stimulus": normalized_stimulus,
+        "behav_pair_map": pair_map,
+        "pair_ids": pair_ids,
+        "behav_df_dic_saline_true": {},
+        "behav_df_dic_saline_false": {},
+        "behav_df_dic_dcz_true": {},
+        "behav_df_dic_dcz_false": {},
+        "trial_df_dic_saline_true": {},
+        "trial_df_dic_saline_false": {},
+        "trial_df_dic_dcz_true": {},
+        "trial_df_dic_dcz_false": {},
+    }
+
+    for pair_id in pair_ids:
+        if (
+            pair_id not in df_dic_saline
+            or pair_id not in df_dic_dcz
+            or pair_id not in behav_df_dic_saline
+            or pair_id not in behav_df_dic_dcz
+        ):
+            continue
+
+        (
+            split_data["trial_df_dic_saline_true"][pair_id],
+            split_data["trial_df_dic_saline_false"][pair_id],
+        ) = split_trial_dataframe(df_dic_saline[pair_id])
+        (
+            split_data["trial_df_dic_dcz_true"][pair_id],
+            split_data["trial_df_dic_dcz_false"][pair_id],
+        ) = split_trial_dataframe(df_dic_dcz[pair_id])
+
+        split_data["behav_df_dic_saline_true"][pair_id] = (
+            behavior_frames_for_trials(
+                behav_df_dic_saline[pair_id],
+                split_data["trial_df_dic_saline_true"][pair_id],
+            )
+        )
+        split_data["behav_df_dic_saline_false"][pair_id] = (
+            behavior_frames_for_trials(
+                behav_df_dic_saline[pair_id],
+                split_data["trial_df_dic_saline_false"][pair_id],
+            )
+        )
+        split_data["behav_df_dic_dcz_true"][pair_id] = (
+            behavior_frames_for_trials(
+                behav_df_dic_dcz[pair_id],
+                split_data["trial_df_dic_dcz_true"][pair_id],
+            )
+        )
+        split_data["behav_df_dic_dcz_false"][pair_id] = (
+            behavior_frames_for_trials(
+                behav_df_dic_dcz[pair_id],
+                split_data["trial_df_dic_dcz_false"][pair_id],
+            )
+        )
+
+    def has_position_data(behav_df):
+        if behav_df.empty:
+            return False
+        try:
+            x = pd.to_numeric(
+                get_behavior_column(behav_df, (bodypart, "x")),
+                errors="coerce",
+            )
+            y = pd.to_numeric(
+                get_behavior_column(behav_df, (bodypart, "y")),
+                errors="coerce",
+            )
+        except KeyError:
+            return False
+        return x.notna().any() and y.notna().any()
+
+    split_data["true_pair_ids"] = [
+        pair_id
+        for pair_id in pair_ids
+        if pair_id in split_data["behav_df_dic_saline_true"]
+        and pair_id in split_data["behav_df_dic_dcz_true"]
+        and has_position_data(
+            split_data["behav_df_dic_saline_true"][pair_id]
+        )
+        and has_position_data(
+            split_data["behav_df_dic_dcz_true"][pair_id]
+        )
+    ]
+    split_data["false_pair_ids"] = [
+        pair_id
+        for pair_id in pair_ids
+        if pair_id in split_data["behav_df_dic_saline_false"]
+        and pair_id in split_data["behav_df_dic_dcz_false"]
+        and has_position_data(
+            split_data["behav_df_dic_saline_false"][pair_id]
+        )
+        and has_position_data(
+            split_data["behav_df_dic_dcz_false"][pair_id]
+        )
+    ]
+    split_data["four_condition_pair_ids"] = [
+        pair_id
+        for pair_id in pair_ids
+        if pair_id in split_data["behav_df_dic_saline_true"]
+        and pair_id in split_data["behav_df_dic_dcz_true"]
+        and pair_id in split_data["behav_df_dic_saline_false"]
+        and pair_id in split_data["behav_df_dic_dcz_false"]
+        and any(
+            has_position_data(behav_df)
+            for behav_df in [
+                split_data["behav_df_dic_saline_true"][pair_id],
+                split_data["behav_df_dic_dcz_true"][pair_id],
+                split_data["behav_df_dic_saline_false"][pair_id],
+                split_data["behav_df_dic_dcz_false"][pair_id],
+            ]
+        )
+    ]
+    return split_data
+
+
 def get_behavior_column(behav_df: pd.DataFrame, column):
     if column in behav_df.columns:
         return behav_df[column]

@@ -469,6 +469,78 @@ def _():
 
 
 @app.cell
+def _():
+    # # no curve
+
+    # for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
+    #     plt.figure(figsize=(5, 5), dpi=150)
+
+    #     if "vis" in stage_name__:
+    #         # x_col = "visual_stimulus_ratio"
+    #         valueType = "discrete"
+    #     else:
+    #         # x_col = "total_evidence_strength"
+    #         valueType = "continue"
+
+    #     if "easy" in stage_name__:
+    #         bins = 2
+    #     else:
+    #         bins = 6
+
+
+    #     for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
+    #         color_palette = sns.color_palette(
+    #             "colorblind",
+    #             df_stage__['subject'].nunique()
+    #         )
+
+    #     for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
+    #         df_stage__.groupby('subject'),
+    #         sns.color_palette("colorblind", df_stage__['subject'].nunique())
+    #     ):
+    #         utils_test.psychometric_plot_easy_logistic(
+    #             df_mouse_psycurve,
+    #             x=stim_col,
+    #             y="first_choice_numeric",
+    #             valueType = valueType,
+    #             bins = bins,
+    #             point_kwargs={
+    #                 "color": color,
+    #                 "label": "",
+    #                 "alpha": 0.3,
+    #             },
+    #             line_kwargs={
+    #                 "color": color,
+    #                 "label": "",
+    #                 "alpha": 0,
+    #             },
+    #         )
+
+    #     utils_test.psychometric_plot_easy_logistic(
+    #         df_stage__,
+    #         x=stim_col,
+    #         valueType = valueType,
+    #         bins = bins,
+    #         y="first_choice_numeric",
+    #         point_kwargs={
+    #             "color": "black",
+    #             "label": "All mice",
+    #         },
+    #         line_kwargs={
+    #             "color": "black",
+    #             "label": "",
+    #             "alpha": 0,
+    #         },
+    #     )
+
+    #     plt.title(stage_name__)
+    #     plt.legend(frameon=False)
+    #     plt.tight_layout()
+    #     plt.show()
+    return
+
+
+@app.cell
 def _(df_test, plt, sns, stim_col, utils_test):
     for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
         plt.figure(figsize=(5, 5), dpi=150)
@@ -499,7 +571,7 @@ def _(df_test, plt, sns, stim_col, utils_test):
             utils_test.psychometric_plot_easy_logistic(
                 df_mouse_psycurve,
                 x=stim_col,
-                y="first_choice_numeric",
+                y="roa_choice_numeric",
                 valueType = valueType,
                 bins = bins,
                 point_kwargs={
@@ -519,13 +591,13 @@ def _(df_test, plt, sns, stim_col, utils_test):
             x=stim_col,
             valueType = valueType,
             bins = bins,
-            y="first_choice_numeric",
+            y="roa_choice_numeric",
             point_kwargs={
                 "color": "black",
-                "label": "All mice",
+                "label": "",
             },
             line_kwargs={
-                "color": "black",
+                "color": color,
                 "label": "",
                 "alpha": 0,
             },
@@ -795,12 +867,23 @@ def _(
 ):
     _stage_order = list(df_options.keys())
     _selected_mice = list(mouse_select.value)
-    _saved_label = "__".join(_selected_mice) if _selected_mice else "no_mouse"
     _alpha_output_dir = Path(r"E:\data\LeciLab\behavioral_data\tmp\processing")
     if not _alpha_output_dir.is_absolute() and str(_alpha_output_dir).startswith("E:\\"):
         _alpha_output_dir = Path("/mnt/e/data/LeciLab/behavioral_data/tmp/processing")
-    _alpha_act_path = _alpha_output_dir / f"{_saved_label}_per_mouse_stage_alpha_df_act.pkl"
-    _alpha_stim_path = _alpha_output_dir / f"{_saved_label}_per_mouse_stage_alpha_df_stim.pkl"
+    _alpha_act_paths = {
+        _mouse: (
+            _alpha_output_dir
+            / f"{_mouse}_per_mouse_stage_alpha_df_act.pkl"
+        )
+        for _mouse in _selected_mice
+    }
+    _alpha_stim_paths = {
+        _mouse: (
+            _alpha_output_dir
+            / f"{_mouse}_per_mouse_stage_alpha_df_stim.pkl"
+        )
+        for _mouse in _selected_mice
+    }
 
     def _make_alpha_plot(alpha_df, alpha_col, title, ylabel):
         if alpha_df.empty:
@@ -847,16 +930,30 @@ def _(
         _fig.tight_layout()
         return _fig
 
-    if (
-        _alpha_act_path.exists()
-        and _alpha_stim_path.exists()
-        and not download_button.value
-    ):
-        per_mouse_stage_alpha_df_act = pd.read_pickle(_alpha_act_path)
-        per_mouse_stage_alpha_df_stim = pd.read_pickle(_alpha_stim_path)
+    _all_selected_alpha_files_exist = bool(_selected_mice) and all(
+        _alpha_act_paths[_mouse].exists()
+        and _alpha_stim_paths[_mouse].exists()
+        for _mouse in _selected_mice
+    )
+
+    if _all_selected_alpha_files_exist and not download_button.value:
+        per_mouse_stage_alpha_df_act = pd.concat(
+            [
+                pd.read_pickle(_alpha_act_paths[_mouse])
+                for _mouse in _selected_mice
+            ],
+            ignore_index=True,
+        )
+        per_mouse_stage_alpha_df_stim = pd.concat(
+            [
+                pd.read_pickle(_alpha_stim_paths[_mouse])
+                for _mouse in _selected_mice
+            ],
+            ignore_index=True,
+        )
         print(
-            "Loaded saved per-mouse stage alpha data: "
-            f"{_alpha_act_path}, {_alpha_stim_path}"
+            "Loaded saved per-mouse stage alpha data for: "
+            f"{_selected_mice}"
         )
     else:
         _all_stage_dfs = []
@@ -952,11 +1049,42 @@ def _(
             alpha_col="alpha_stim",
         )
         _alpha_output_dir.mkdir(parents=True, exist_ok=True)
-        per_mouse_stage_alpha_df_act.to_pickle(_alpha_act_path)
-        per_mouse_stage_alpha_df_stim.to_pickle(_alpha_stim_path)
+
+        for _mouse in _selected_mice:
+            _mouse_alpha_act = (
+                per_mouse_stage_alpha_df_act[
+                    per_mouse_stage_alpha_df_act["mouse"] == _mouse
+                ].copy()
+                if "mouse" in per_mouse_stage_alpha_df_act.columns
+                else pd.DataFrame()
+            )
+            _mouse_alpha_stim = (
+                per_mouse_stage_alpha_df_stim[
+                    per_mouse_stage_alpha_df_stim["mouse"] == _mouse
+                ].copy()
+                if "mouse" in per_mouse_stage_alpha_df_stim.columns
+                else pd.DataFrame()
+            )
+            _mouse_alpha_act.to_pickle(_alpha_act_paths[_mouse])
+            _mouse_alpha_stim.to_pickle(_alpha_stim_paths[_mouse])
+
+        per_mouse_stage_alpha_df_act = pd.concat(
+            [
+                pd.read_pickle(_alpha_act_paths[_mouse])
+                for _mouse in _selected_mice
+            ],
+            ignore_index=True,
+        ) if _selected_mice else pd.DataFrame()
+        per_mouse_stage_alpha_df_stim = pd.concat(
+            [
+                pd.read_pickle(_alpha_stim_paths[_mouse])
+                for _mouse in _selected_mice
+            ],
+            ignore_index=True,
+        ) if _selected_mice else pd.DataFrame()
         print(
-            "Saved per-mouse stage alpha data: "
-            f"{_alpha_act_path}, {_alpha_stim_path}"
+            "Saved per-mouse stage alpha data for: "
+            f"{_selected_mice}"
         )
 
     per_mouse_stage_alpha_plot_act = _make_alpha_plot(
@@ -1075,12 +1203,6 @@ def _():
     import io
 
     return contextlib, io
-
-
-@app.cell
-def _(df_test_kernel):
-    df_test_kernel['visual_stimulus_diff'].max()
-    return
 
 
 @app.cell
@@ -1379,6 +1501,7 @@ def _():
 
 @app.cell
 def _(
+    Path,
     df_test_kernel,
     glmhmm_fit_button,
     glmhmm_n_iters,
@@ -1388,95 +1511,98 @@ def _(
     stim_col,
     utils_test,
 ):
+    import pickle as _pickle
+
     hmm_model_dic = {}
     _hmm_model_rows = []
+    _model_output_dir = Path(
+        "/mnt/e/data/LeciLab/behavioral_data/tmp/processing/glmhmm_models"
+    )
 
-    if not glmhmm_fit_button.value:
+    _subject_col = None
+    if "analysis_mouse" in df_test_kernel.columns:
+        _subject_col = "analysis_mouse"
+    elif "subject" in df_test_kernel.columns:
+        _subject_col = "subject"
+
+    _input_cols = [stim_col] + input_cols_noStim
+    _real_input_cols = [_col for _col in _input_cols if _col != "bias"]
+    _required_cols = {
+        "session",
+        "selected_df_option",
+        "first_choice_numeric",
+        *_real_input_cols,
+    }
+
+    if df_test_kernel.empty:
+        _hmm_model_rows.append({"status": "df_test_kernel is empty"})
+    elif _subject_col is None:
         _hmm_model_rows.append(
-            {"status": "Click 'Run GLM-HMM fitting' to fit models"}
+            {"status": "No subject or analysis_mouse column found"}
         )
-
+    elif not _required_cols.issubset(df_test_kernel.columns):
+        _missing_cols = sorted(_required_cols - set(df_test_kernel.columns))
+        _hmm_model_rows.append({"status": f"Missing columns: {_missing_cols}"})
     else:
-        _subject_col = None
-        if "analysis_mouse" in df_test_kernel.columns:
-            _subject_col = "analysis_mouse"
-        elif "subject" in df_test_kernel.columns:
-            _subject_col = "subject"
-
-        _input_cols = [stim_col] + input_cols_noStim
-        _real_input_cols = [_col for _col in _input_cols if _col != "bias"]
-        _required_cols = {
-            "session",
-            "selected_df_option",
-            "first_choice_numeric",
-            *_real_input_cols,
-        }
-
-        if df_test_kernel.empty:
-            _hmm_model_rows.append({"status": "df_test_kernel is empty"})
-        elif _subject_col is None:
-            _hmm_model_rows.append(
-                {"status": "No subject or analysis_mouse column found"}
+        for (_subject, _stage), _df_subject_stage in df_test_kernel.groupby(
+            [_subject_col, "selected_df_option"],
+            sort=True,
+        ):
+            _model_key = f"{_subject}_{_stage}"
+            _model_path = (
+                _model_output_dir / f"{_model_key}_glmhmm_model.pkl"
             )
-        elif not _required_cols.issubset(df_test_kernel.columns):
-            _missing_cols = sorted(_required_cols - set(df_test_kernel.columns))
-            _hmm_model_rows.append({"status": f"Missing columns: {_missing_cols}"})
-        else:
-            for (_subject, _stage), _df_subject_stage in df_test_kernel.groupby(
-                [_subject_col, "selected_df_option"],
-                sort=True,
-            ):
-                _model_key = f"{_subject}_{_stage}"
-                _df_model = _df_subject_stage.dropna(
-                    subset=["first_choice_numeric"] + _real_input_cols
-                ).copy()
+            _df_model = _df_subject_stage.dropna(
+                subset=["first_choice_numeric"] + _real_input_cols
+            ).copy()
 
-                if _df_model.empty:
-                    _hmm_model_rows.append(
-                        {
-                            "model_key": _model_key,
-                            "subject": _subject,
-                            "stage": _stage,
-                            "n_trials": 0,
-                            "n_sessions": 0,
-                            "log_likelihood": pd.NA,
-                            "status": "no valid trials after dropna",
-                        }
-                    )
-                    continue
-
-                _datas, _inpts = utils_test.build_glmhmm_inputs_by_session(
-                    _df_model,
-                    y_col="first_choice_numeric",
-                    stim_col=_input_cols,
+            if _df_model.empty:
+                _hmm_model_rows.append(
+                    {
+                        "model_key": _model_key,
+                        "subject": _subject,
+                        "stage": _stage,
+                        "n_trials": 0,
+                        "n_sessions": 0,
+                        "log_likelihood": pd.NA,
+                        "status": "no valid trials after dropna",
+                    }
                 )
+                continue
 
-                _valid_pairs = [
-                    (_data, _inpt)
-                    for _data, _inpt in zip(_datas, _inpts)
-                    if len(_data) > 0 and len(_inpt) > 0
-                ]
+            _datas, _inpts = utils_test.build_glmhmm_inputs_by_session(
+                _df_model,
+                y_col="first_choice_numeric",
+                stim_col=_input_cols,
+            )
 
-                if not _valid_pairs:
-                    _hmm_model_rows.append(
-                        {
-                            "model_key": _model_key,
-                            "subject": _subject,
-                            "stage": _stage,
-                            "n_trials": len(_df_model),
-                            "n_sessions": 0,
-                            "log_likelihood": pd.NA,
-                            "status": "no valid sessions",
-                        }
-                    )
-                    continue
+            _valid_pairs = [
+                (_data, _inpt)
+                for _data, _inpt in zip(_datas, _inpts)
+                if len(_data) > 0 and len(_inpt) > 0
+            ]
 
-                _datas, _inpts = zip(*_valid_pairs)
-                _datas = list(_datas)
-                _inpts = list(_inpts)
-                _input_dim = _inpts[0].shape[1]
+            if not _valid_pairs:
+                _hmm_model_rows.append(
+                    {
+                        "model_key": _model_key,
+                        "subject": _subject,
+                        "stage": _stage,
+                        "n_trials": len(_df_model),
+                        "n_sessions": 0,
+                        "log_likelihood": pd.NA,
+                        "status": "no valid sessions",
+                    }
+                )
+                continue
 
-                try:
+            _datas, _inpts = zip(*_valid_pairs)
+            _datas = list(_datas)
+            _inpts = list(_inpts)
+            _input_dim = _inpts[0].shape[1]
+
+            try:
+                if glmhmm_fit_button.value:
                     _map_glmhmm, _ll, _hmm_lls = utils_test.fit_glmhmm(
                         _datas,
                         _inpts,
@@ -1489,44 +1615,111 @@ def _(
                         kappa=15,
                     )
 
-                    hmm_model_dic[_model_key] = {
+                    _saved_model_info = {
                         "model": _map_glmhmm,
                         "log_likelihood": _ll,
                         "hmm_lls": _hmm_lls,
-                        "datas": _datas,
-                        "inpts": _inpts,
-                        "df": _df_model,
                         "subject": _subject,
                         "stage": _stage,
                         "inputs": _input_cols,
+                        "input_dim": _input_dim,
+                        "num_states": int(glmhmm_num_states.value),
                     }
+                    _model_output_dir.mkdir(parents=True, exist_ok=True)
+                    with open(_model_path, "wb") as _file:
+                        _pickle.dump(
+                            _saved_model_info,
+                            _file,
+                            protocol=_pickle.HIGHEST_PROTOCOL,
+                        )
+                    _status = "fit and saved"
+                else:
+                    if not _model_path.exists():
+                        _hmm_model_rows.append(
+                            {
+                                "model_key": _model_key,
+                                "subject": _subject,
+                                "stage": _stage,
+                                "n_trials": len(_df_model),
+                                "n_sessions": len(_datas),
+                                "input_dim": _input_dim,
+                                "log_likelihood": pd.NA,
+                                "status": (
+                                    "saved model not found; click "
+                                    "'Run GLM-HMM fitting'"
+                                ),
+                            }
+                        )
+                        continue
 
-                    _hmm_model_rows.append(
-                        {
-                            "model_key": _model_key,
-                            "subject": _subject,
-                            "stage": _stage,
-                            "n_trials": len(_df_model),
-                            "n_sessions": len(_datas),
-                            "input_dim": _input_dim,
-                            "log_likelihood": _ll,
-                            "status": "ok",
-                        }
-                    )
+                    with open(_model_path, "rb") as _file:
+                        _saved_model_info = _pickle.load(_file)
 
-                except Exception as _exc:
-                    _hmm_model_rows.append(
-                        {
-                            "model_key": _model_key,
-                            "subject": _subject,
-                            "stage": _stage,
-                            "n_trials": len(_df_model),
-                            "n_sessions": len(_datas),
-                            "input_dim": _input_dim,
-                            "log_likelihood": pd.NA,
-                            "status": f"failed: {_exc}",
-                        }
-                    )
+                    if (
+                        _saved_model_info.get("input_dim") != _input_dim
+                        or _saved_model_info.get("num_states")
+                        != int(glmhmm_num_states.value)
+                    ):
+                        _hmm_model_rows.append(
+                            {
+                                "model_key": _model_key,
+                                "subject": _subject,
+                                "stage": _stage,
+                                "n_trials": len(_df_model),
+                                "n_sessions": len(_datas),
+                                "input_dim": _input_dim,
+                                "log_likelihood": pd.NA,
+                                "status": (
+                                    "saved model configuration differs; "
+                                    "refit required"
+                                ),
+                            }
+                        )
+                        continue
+
+                    _map_glmhmm = _saved_model_info["model"]
+                    _ll = _saved_model_info.get("log_likelihood", pd.NA)
+                    _hmm_lls = _saved_model_info.get("hmm_lls", [])
+                    _status = "loaded"
+
+                hmm_model_dic[_model_key] = {
+                    "model": _map_glmhmm,
+                    "log_likelihood": _ll,
+                    "hmm_lls": _hmm_lls,
+                    "datas": _datas,
+                    "inpts": _inpts,
+                    "df": _df_model,
+                    "subject": _subject,
+                    "stage": _stage,
+                    "inputs": _input_cols,
+                }
+
+                _hmm_model_rows.append(
+                    {
+                        "model_key": _model_key,
+                        "subject": _subject,
+                        "stage": _stage,
+                        "n_trials": len(_df_model),
+                        "n_sessions": len(_datas),
+                        "input_dim": _input_dim,
+                        "log_likelihood": _ll,
+                        "status": _status,
+                    }
+                )
+
+            except Exception as _exc:
+                _hmm_model_rows.append(
+                    {
+                        "model_key": _model_key,
+                        "subject": _subject,
+                        "stage": _stage,
+                        "n_trials": len(_df_model),
+                        "n_sessions": len(_datas),
+                        "input_dim": _input_dim,
+                        "log_likelihood": pd.NA,
+                        "status": f"failed: {_exc}",
+                    }
+                )
 
     hmm_model_summary = pd.DataFrame(_hmm_model_rows)
     hmm_model_summary
@@ -1534,93 +1727,98 @@ def _(
 
 
 @app.cell
-def _(hmm_model_dic, input_cols_noStim, pd, stim_col):
+def _(hmm_model_dic, input_cols_noStim, np, pd, stim_col):
+    from scipy.optimize import linear_sum_assignment
+
     weight_cols = (
         [stim_col]
-        + [col for col in input_cols_noStim if col != "bias"]
+        + [col_ for col_ in input_cols_noStim if col_ != "bias"]
         + ["bias"]
     )
-
-    eps = 1e-9
 
     for hmm_model_name, model_info in hmm_model_dic.items():
         hmm = model_info["model"]
 
         if hmm.K != 3:
-            print(f"[skip] {hmm_model_name}: expected 3 states, got {hmm.K}")
+            print(
+                f"[skip] {hmm_model_name}: "
+                f"expected 3 states, got {hmm.K}"
+            )
             continue
 
-        weights = hmm.observations.params.squeeze()
+        weights = np.asarray(
+            hmm.observations.params
+        ).squeeze()
+
         if weights.ndim != 2 or weights.shape[1] != len(weight_cols):
             print(
-                f"[skip] {hmm_model_name}: weights shape {weights.shape} does "
-                f"not match columns {weight_cols}"
+                f"[skip] {hmm_model_name}: weights shape {weights.shape} "
+                f"does not match columns {weight_cols}"
             )
             continue
 
         weight_df_before = pd.DataFrame(
             weights,
             columns=weight_cols,
-            index=[f"state{i}" for i in range(weights.shape[0])],
+            index=[f"state{i}" for i in range(hmm.K)],
         )
 
+        # 各类 weight 的绝对强度
         stim_abs = weight_df_before[stim_col].abs()
         bias_abs = weight_df_before["bias"].abs()
+        act_trace_abs = weight_df_before["action_trace"].abs()
+        stim_trace_abs = weight_df_before["stimulus_trace"].abs()
 
-        stim_score = stim_abs / (bias_abs + eps)
-        bias_score = bias_abs / (stim_abs + eps)
+        # 用 L2 norm 合并两个 history weights
+        history_abs = np.sqrt(
+            act_trace_abs**2 + stim_trace_abs**2
+        )
 
-        old_stim_state_label = stim_score.idxmax()
-        old_stim_state = int(old_stim_state_label.replace("state", ""))
-
-        remaining_state_labels = [
-            f"state{state}"
-            for state in range(hmm.K)
-            if state != old_stim_state
+        # stimulus state
+        old_stimulus_label = stim_abs.idxmax()
+        old_stimulus_state = int(old_stimulus_label.replace("state", ""))
+    
+        # remaining states
+        remaining_labels = [
+            f"state{i}"
+            for i in range(hmm.K)
+            if f"state{i}" != old_stimulus_label
         ]
-
-        old_bias_state_label = bias_score.loc[remaining_state_labels].idxmax()
-        old_bias_state = int(old_bias_state_label.replace("state", ""))
-
-        old_other_state = [
-            state
-            for state in range(hmm.K)
-            if state not in {old_bias_state, old_stim_state}
-        ][0]
-
-        # new state0 <- relative-bias strongest old state
-        # new state1 <- relative-stim strongest old state
-        # new state2 <- remaining old state
-        perm = [old_bias_state, old_stim_state, old_other_state]
-
+    
+        # bias vs history dominance
+        dominance = bias_abs - history_abs
+    
+        old_bias_label = dominance.loc[remaining_labels].idxmax()
+        old_history_label = dominance.loc[remaining_labels].idxmin()
+    
+        old_bias_state = int(old_bias_label.replace("state", ""))
+        old_history_state = int(old_history_label.replace("state", ""))
+    
+        perm = [
+            old_bias_state,
+            old_stimulus_state,
+            old_history_state,
+        ]
+    
         hmm.permute(perm)
 
-        weights_after = hmm.observations.params.squeeze()
+        weights_after = np.asarray(
+            hmm.observations.params
+        ).squeeze()
+
         weight_df_after = pd.DataFrame(
             weights_after,
             columns=weight_cols,
-            index=[f"state{i}" for i in range(weights_after.shape[0])],
+            index=[f"state{i}" for i in range(hmm.K)],
         )
 
-        model_info["state_permutation"] = perm
         model_info["weight_df_before_reorder"] = weight_df_before
         model_info["weight_df_after_reorder"] = weight_df_after
-        model_info["state_reorder_scores"] = pd.DataFrame(
-            {
-                "stim_abs": stim_abs,
-                "bias_abs": bias_abs,
-                "stim_relative_to_bias": stim_score,
-                "bias_relative_to_stim": bias_score,
-            }
-        )
 
-    # if (
-    #     model in hmm_model_dic
-    #     and "weight_df_after_reorder" in hmm_model_dic[model]
-    # ):
-    #     hmm_model_dic[model]["weight_df_after_reorder"]
-    # else:
-    #     pd.DataFrame()
+        print(hmm_model_name)
+        print(f"weight before reorder\n{weight_df_before}")
+        print(f"permute{perm}")
+
     return
 
 
@@ -1782,6 +1980,203 @@ def _(Path, hmm_model_dic, input_cols_noStim, pd, stim_col, utils_test):
 
     state_distribution_df
     return (state_distribution_df,)
+
+
+@app.cell
+def _(hmm_model_dic):
+    hmm_model_dic['NUO001_aud_easy']['model'].observations.params.squeeze().ndim
+    return
+
+
+@app.cell
+def _(hmm_model_dic, mo, np, pd, plt):
+    from sklearn.decomposition import PCA as _PCA
+    from sklearn.preprocessing import StandardScaler as _StandardScaler
+
+    _all_weights = []
+    _state_rows = []
+    _weight_names = None
+    pc_num = 3
+
+    for _model_name, _model_info in hmm_model_dic.items():
+        _weights = np.asarray(
+            _model_info["model"].observations.params
+        ).squeeze()
+
+        # 恢复模型实际使用的输入顺序，并将 bias 放在最后
+        _model_inputs = list(_model_info.get("inputs", []))
+        _model_weight_names = [
+            _col for _col in _model_inputs if _col != "bias"
+        ]
+
+        if "bias" in _model_inputs:
+            _model_weight_names.append("bias")
+
+        if len(_model_weight_names) != _weights.shape[1]:
+            print(
+                f"[skip] {_model_name}: weights shape {_weights.shape} "
+                f"does not match inputs {_model_weight_names}"
+            )
+            continue
+
+        if _weight_names is None:
+            _weight_names = _model_weight_names
+        elif _model_weight_names != _weight_names:
+            print(
+                f"[skip] {_model_name}: input order {_model_weight_names} "
+                f"does not match {_weight_names}"
+            )
+            continue
+
+        for _state in range(_weights.shape[0]):
+            _all_weights.append(_weights[_state])
+
+            _state_rows.append(
+                {
+                    "model_name": _model_name,
+                    "mouse": _model_info.get(
+                        "subject",
+                        _model_name.split("_")[0],
+                    ),
+                    "stage": _model_info.get(
+                        "stage",
+                        "_".join(_model_name.split("_")[1:]),
+                    ),
+                    "state": _state,
+                }
+            )
+
+    state_pca_fig = None
+    state_weight_df = pd.DataFrame()
+    state_info = pd.DataFrame(_state_rows)
+    pca_loadings = pd.DataFrame()
+
+    if not _all_weights:
+        _state_pca_output = mo.md(
+            "No valid GLM-HMM state weights available for PCA."
+        )
+
+    else:
+        _X = np.asarray(_all_weights, dtype=float)
+
+        state_weight_df = pd.DataFrame(
+            _X,
+            columns=_weight_names,
+        )
+
+        state_weight_df = pd.concat(
+            [
+                state_info.reset_index(drop=True),
+                state_weight_df,
+            ],
+            axis=1,
+        )
+
+        # 按每个 weight/covariate 标准化
+        _scaler = _StandardScaler()
+        _Xz = _scaler.fit_transform(_X)
+
+        # PCA 成分数不能超过样本数或变量数
+        _n_components = min(
+            pc_num,
+            _Xz.shape[0],
+            _Xz.shape[1],
+        )
+
+        _pca = _PCA(n_components=_n_components)
+        _X_pca_raw = _pca.fit_transform(_Xz)
+
+        pca_loadings = pd.DataFrame(
+            _pca.components_.T,
+            index=_weight_names,
+            columns=[
+                f"PC{i + 1}"
+                for i in range(_n_components)
+            ],
+        )
+
+
+        # 保证画图数组始终有 PC1、PC2、PC3 三列
+        _X_pca = np.zeros((_Xz.shape[0], 3))
+        _X_pca[:, :_n_components] = _X_pca_raw
+
+        state_info = state_info.copy()
+        state_info["pc1"] = _X_pca[:, 0]
+        state_info["pc2"] = _X_pca[:, 1]
+        state_info["pc3"] = _X_pca[:, 2]
+
+        state_info["label"] = [
+            f"{_row.model_name}_s{_row.state}"
+            for _, _row in state_info.iterrows()
+        ]
+
+        state_pca_fig = plt.figure(
+            figsize=(10, 6),
+            dpi=180,
+        )
+
+        _pca_ax = state_pca_fig.add_subplot(
+            1,
+            1,
+            1,
+            projection="3d",
+        )
+
+        _state_colors = plt.get_cmap("tab10")
+
+        for _state in sorted(state_info["state"].unique()):
+            _mask = state_info["state"].to_numpy() == _state
+
+            _pca_ax.scatter(
+                _X_pca[_mask, 0],
+                _X_pca[_mask, 1],
+                _X_pca[_mask, 2],
+                color=_state_colors(int(_state)),
+                label=f"State {_state}",
+                alpha=0.8,
+                s=42,
+            )
+
+        _explained = _pca.explained_variance_ratio_
+
+        _pc1_pct = (
+            100 * _explained[0]
+            if len(_explained) > 0 else 0
+        )
+        _pc2_pct = (
+            100 * _explained[1]
+            if len(_explained) > 1 else 0
+        )
+        _pc3_pct = (
+            100 * _explained[2]
+            if len(_explained) > 2 else 0
+        )
+
+        _pca_ax.set_xlabel(f"PC1 ({_pc1_pct:.1f}%)")
+        _pca_ax.set_ylabel(f"PC2 ({_pc2_pct:.1f}%)")
+        _pca_ax.set_zlabel(
+            f"PC3 ({_pc3_pct:.1f}%)",
+            labelpad=-2,
+        )
+        _pca_ax.set_title("PCA of standardized GLM-HMM state weights")
+        _pca_ax.legend(frameon=False, fontsize=8)
+
+        state_pca_fig.tight_layout()
+
+        _state_pca_output = mo.vstack(
+            [
+                state_pca_fig,
+                mo.md("### PCA loadings"),
+                pca_loadings,
+                mo.md("### State PCA coordinates"),
+                state_info,
+                mo.md("### State weights"),
+                state_weight_df,
+            ]
+        )
+
+    _state_pca_output
+    return
 
 
 @app.cell
