@@ -960,8 +960,238 @@ def _(mo):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## roi time
+    """)
+    return
+
+
 @app.cell
-def _(behavior_utils, pd):
+def _(behavior_utils, np, pd):
+    def _empty_roi_output(difference=False, by_engagement=False):
+        condition_keys = (
+            ["vis", "aud"]
+            if difference
+            else ["vis_saline", "vis_dcz", "aud_saline", "aud_dcz"]
+        )
+        return {condition_key: {} for condition_key in condition_keys}
+
+    def _mouse_split_output(condition_dict, subject, split_labels):
+        return condition_dict.setdefault(
+            subject,
+            {split_label: [] for split_label in split_labels},
+        )
+
+    def get_trial_roi_ratios_by_split_col(
+        behav_df,
+        trial_df,
+        roi_left,
+        roi_right,
+        roi_bottom,
+        roi_top,
+        split_column="engaged",
+        split_labels=("engaged", "disengaged"),
+        bodypart="Center",
+    ):
+        true_label, false_label = split_labels
+        trial_ratios = {true_label: [], false_label: []}
+        roi_time_by_split = {true_label: 0.0, false_label: 0.0}
+        trial_time_by_split = {true_label: 0.0, false_label: 0.0}
+
+        timestamp = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                ("timestamp", ""),
+            ),
+            errors="coerce",
+        )
+        x = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                (bodypart, "x"),
+            ),
+            errors="coerce",
+        )
+        y = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                (bodypart, "y"),
+            ),
+            errors="coerce",
+        )
+
+        frame_df = (
+            pd.DataFrame(
+                {
+                    "timestamp": timestamp.to_numpy(),
+                    "x": x.to_numpy(),
+                    "y": y.to_numpy(),
+                }
+            )
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna(subset=["timestamp"])
+            .sort_values("timestamp")
+        )
+
+        t = frame_df["timestamp"].to_numpy(dtype=float)
+        x_values = frame_df["x"].to_numpy(dtype=float)
+        y_values = frame_df["y"].to_numpy(dtype=float)
+        dt = np.diff(t)
+        positive_dt = dt[np.isfinite(dt) & (dt > 0)]
+        median_dt = float(np.median(positive_dt)) if len(positive_dt) else 0.0
+
+        frame_end = np.empty_like(t)
+        if len(t) > 1:
+            frame_end[:-1] = t[1:]
+        frame_end[-1] = t[-1] + median_dt
+
+        valid_position = np.isfinite(x_values) & np.isfinite(y_values)
+        in_roi = (
+            valid_position
+            & (x_values >= roi_left)
+            & (x_values <= roi_right)
+            & (y_values >= roi_bottom)
+            & (y_values <= roi_top)
+        )
+
+        for _, trial_row in trial_df.iterrows():
+            split_label = true_label if bool(trial_row[split_column]) else false_label
+            trial_start = pd.to_numeric(
+                trial_row["TRIAL_START"],
+                errors="coerce",
+            )
+            trial_end = pd.to_numeric(
+                trial_row["TRIAL_END"],
+                errors="coerce",
+            )
+            if (
+                not np.isfinite(trial_start)
+                or not np.isfinite(trial_end)
+                or trial_end <= trial_start
+            ):
+                continue
+
+            overlap_start = np.maximum(t, float(trial_start))
+            overlap_end = np.minimum(frame_end, float(trial_end))
+            overlap = np.clip(overlap_end - overlap_start, 0, None)
+            trial_time = float(trial_end - trial_start)
+            roi_time = float(overlap[in_roi].sum())
+            roi_time_by_split[split_label] += roi_time
+            trial_time_by_split[split_label] += trial_time
+
+        for split_label in split_labels:
+            if trial_time_by_split[split_label] > 0:
+                trial_ratios[split_label].append(
+                    roi_time_by_split[split_label]
+                    / trial_time_by_split[split_label]
+                )
+
+        return trial_ratios
+
+    def get_trial_roi_per_mouse_sessions(
+        behav_df_dic_saline,
+        behav_df_dic_dcz,
+        df_dic_saline,
+        df_dic_dcz,
+        behav_pair_map,
+        roi_left,
+        roi_right,
+        roi_bottom,
+        roi_top,
+        subjects=None,
+        bodypart="Center",
+        split_column="engaged",
+        split_labels=("engaged", "disengaged"),
+        difference=False,
+    ):
+        output = _empty_roi_output(
+            difference=difference,
+            by_engagement=True,
+        )
+
+        for _, pair_row in behav_pair_map.sort_values("pair_id").iterrows():
+            pair_id = pair_row["pair_id"]
+            subject = str(pair_row["subject"])
+            if subjects is not None and subject not in subjects:
+                continue
+            if (
+                pair_id not in behav_df_dic_saline
+                or pair_id not in behav_df_dic_dcz
+                or pair_id not in df_dic_saline
+                or pair_id not in df_dic_dcz
+            ):
+                continue
+
+            modality = str(pair_row.get("stimulus_modality", "")).lower()
+            has_visual = "visual" in modality
+            has_auditory = "auditory" in modality
+            if has_visual == has_auditory:
+                continue
+            modality_prefix = "vis" if has_visual else "aud"
+
+            saline_ratios = get_trial_roi_ratios_by_split_col(
+                behav_df_dic_saline[pair_id],
+                df_dic_saline[pair_id],
+                roi_left=roi_left,
+                roi_right=roi_right,
+                roi_bottom=roi_bottom,
+                roi_top=roi_top,
+                split_column=split_column,
+                split_labels=split_labels,
+                bodypart=bodypart,
+            )
+            dcz_ratios = get_trial_roi_ratios_by_split_col(
+                behav_df_dic_dcz[pair_id],
+                df_dic_dcz[pair_id],
+                roi_left=roi_left,
+                roi_right=roi_right,
+                roi_bottom=roi_bottom,
+                roi_top=roi_top,
+                split_column=split_column,
+                split_labels=split_labels,
+                bodypart=bodypart,
+            )
+
+            if difference:
+                mouse_output = _mouse_split_output(
+                    output[modality_prefix],
+                    subject,
+                    split_labels,
+                )
+                for split_label in split_labels:
+                    saline_values = np.asarray(
+                        saline_ratios[split_label],
+                        dtype=float,
+                    )
+                    dcz_values = np.asarray(
+                        dcz_ratios[split_label],
+                        dtype=float,
+                    )
+                    if len(saline_values) == 0 or len(dcz_values) == 0:
+                        continue
+                    mouse_output[split_label].append(
+                        float(np.nanmean(saline_values) - np.nanmean(dcz_values))
+                    )
+                continue
+
+            saline_output = _mouse_split_output(
+                output[f"{modality_prefix}_saline"],
+                subject,
+                split_labels,
+            )
+            dcz_output = _mouse_split_output(
+                output[f"{modality_prefix}_dcz"],
+                subject,
+                split_labels,
+            )
+            for split_label in split_labels:
+                saline_output[split_label].extend(saline_ratios[split_label])
+                dcz_output[split_label].extend(dcz_ratios[split_label])
+
+        return output
+
     def get_roi_per_mouse_sessions(
         behav_df_dic_saline,
         behav_df_dic_dcz,
@@ -970,28 +1200,33 @@ def _(behavior_utils, pd):
         roi_right,
         roi_bottom,
         roi_top,
+        df_dic_saline=None,
+        df_dic_dcz=None,
         subjects=None,
         bodypart="Center",
+        split_column=None,
+        split_labels=("engaged", "disengaged"),
         difference=False,
     ):
-        if difference:
-            output = {
-                "vis": {},
-                "aud": {},
-            }
-        else:
-            output = {
-                "vis_saline": {},
-                "vis_dcz": {},
-                "aud_saline": {},
-                "aud_dcz": {},
-            }
+        if split_column is not None:
+            return get_trial_roi_per_mouse_sessions(
+                behav_df_dic_saline=behav_df_dic_saline,
+                behav_df_dic_dcz=behav_df_dic_dcz,
+                df_dic_saline=df_dic_saline,
+                df_dic_dcz=df_dic_dcz,
+                behav_pair_map=behav_pair_map,
+                roi_left=roi_left,
+                roi_right=roi_right,
+                roi_bottom=roi_bottom,
+                roi_top=roi_top,
+                subjects=subjects,
+                bodypart=bodypart,
+                split_column=split_column,
+                split_labels=split_labels,
+                difference=difference,
+            )
 
-        if behav_pair_map is None or behav_pair_map.empty:
-            return output
-
-        if subjects is not None:
-            subjects = {str(subject) for subject in subjects}
+        output = _empty_roi_output(difference=difference)
 
         for _, pair_row in behav_pair_map.sort_values("pair_id").iterrows():
             pair_id = pair_row["pair_id"]
@@ -1116,6 +1351,116 @@ def _(
 
 
 @app.cell
+def _(mo):
+    compare_value_settings = {
+        "engagement": {
+            "split_col": "engaged",
+            "split_label": ["engaged", "disengaged"]
+        },
+        "previous correct": {
+            "split_col": "previous_correct",
+            "split_label": ["previous correct", "previous incorrect"]
+        },
+    }
+    compare_value_select = mo.ui.dropdown(
+        options=list(compare_value_settings),
+        value="engagement",
+        label="Compare value",
+    )
+    compare_value_select
+    return compare_value_select, compare_value_settings
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    compare_value_select,
+    compare_value_settings,
+    df_dic_dcz,
+    df_dic_saline,
+    get_roi_per_mouse_sessions,
+    hM3Dq_mice,
+    hM4Di_mice,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+):
+    compare_value_setting = compare_value_settings[compare_value_select.value]
+    split_col = compare_value_setting["split_col"]
+    split_label = compare_value_setting["split_label"]
+
+    roi_per_animal_condition_hm4_split_col = get_roi_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        subjects=hM4Di_mice,
+        split_column=split_col,
+        split_labels=split_label,
+    )
+    roi_per_animal_condition_hm4_diff_split_col = get_roi_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        subjects=hM4Di_mice,
+        split_column=split_col,
+        split_labels=split_label,
+        difference=True,
+    )
+    roi_per_animal_condition_hm3_split_col = get_roi_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        subjects=hM3Dq_mice,
+        split_column=split_col,
+        split_labels=split_label,
+    )
+    roi_per_animal_condition_hm3_diff_split_col = get_roi_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        subjects=hM3Dq_mice,
+        split_column=split_col,
+        split_labels=split_label,
+        difference=True,
+    )
+    return (
+        roi_per_animal_condition_hm3_diff_split_col,
+        roi_per_animal_condition_hm3_split_col,
+        roi_per_animal_condition_hm4_diff_split_col,
+        roi_per_animal_condition_hm4_split_col,
+        split_col,
+        split_label,
+    )
+
+
+@app.cell
 def _(
     mo,
     plot_test,
@@ -1148,6 +1493,7 @@ def _(
             title="ROI time ratio saline - DCZ",
         )
     )
+
     mo.vstack(
         [
             hm4_roi_condition_session_fig,
@@ -1159,8 +1505,74 @@ def _(
 
 
 @app.cell
-def _(roi_per_animal_condition_hm4):
-    roi_per_animal_condition_hm4
+def _(
+    compare_value_select,
+    mo,
+    plot_test,
+    roi_per_animal_condition_hm3_diff_split_col,
+    roi_per_animal_condition_hm3_split_col,
+    roi_per_animal_condition_hm4_diff_split_col,
+    roi_per_animal_condition_hm4_split_col,
+    split_col,
+    split_label,
+):
+    compare_value_name = compare_value_select.value
+    hm4_roi_engagement_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            roi_per_animal_condition_hm4_split_col,
+            "hM4Di",
+            ylabel="Session ROI time ratio",
+            title=(
+                f"hM4Di: ROI time ratio by condition and "
+                f"{compare_value_name}"
+            ),
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    hm3_roi_engagement_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            roi_per_animal_condition_hm3_split_col,
+            "hM3Dq",
+            ylabel="Session ROI time ratio",
+            title=(
+                f"hM3Dq: ROI time ratio by condition and "
+                f"{compare_value_name}"
+            ),
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    roi_engagement_condition_diff_session_fig = (
+        plot_test.plot_group_condition_values_by_mouse(
+            roi_per_animal_condition_hm3_diff_split_col,
+            roi_per_animal_condition_hm4_diff_split_col,
+            ylabel="saline - DCZ (session ROI time ratio)",
+            title=f"ROI time ratio saline - DCZ by {compare_value_name}",
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    mo.vstack(
+        [
+            hm4_roi_engagement_condition_session_fig,
+            hm3_roi_engagement_condition_session_fig,
+            roi_engagement_condition_diff_session_fig,
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## speed
+    """)
+    return
+
+
+@app.cell
+def _():
     return
 
 
@@ -1218,7 +1630,7 @@ def _(
         speed_col="mean_speed",
         mo=mo,
     )
-    trial_split_analysis["view"]
+    # trial_split_analysis["view"]
     return (trial_split_analysis,)
 
 

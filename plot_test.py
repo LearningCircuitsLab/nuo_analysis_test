@@ -5283,7 +5283,16 @@ def plot_condition_session_values_by_mouse(
     ylabel="Session value",
     title=None,
     figsize=(10, 5),
+    split_column=None,
+    split_labels=None,
 ):
+    def values_for_split(mouse_values, split_label):
+        if split_label is None:
+            return mouse_values
+        if isinstance(mouse_values, dict):
+            return mouse_values.get(split_label, [])
+        return []
+
     condition_order = [
         "vis_saline",
         "vis_dcz",
@@ -5296,6 +5305,30 @@ def plot_condition_session_values_by_mouse(
         "aud saline",
         "aud DCZ",
     ]
+    split_labels = (
+        list(split_labels)
+        if split_column is not None and split_labels is not None
+        else ["engaged", "disengaged"]
+        if split_column is not None
+        else None
+    )
+    if split_labels is None:
+        plot_order = [(condition, None) for condition in condition_order]
+        plot_labels = condition_labels
+    else:
+        plot_order = [
+            (condition, split_label)
+            for condition in condition_order
+            for split_label in split_labels
+        ]
+        plot_labels = [
+            f"{condition_label}\n{split_label}"
+            for condition_label in condition_labels
+            for split_label in split_labels
+        ]
+        if figsize == (10, 5):
+            figsize = (12, 5)
+
     mouse_names = sorted(
         {
             mouse
@@ -5328,14 +5361,17 @@ def plot_condition_session_values_by_mouse(
         if len(mouse_names) > 1
         else np.array([0])
     )
-    x_positions = np.arange(len(condition_order))
+    x_positions = np.arange(len(plot_order))
     labeled_mice = set()
+    plotted_any = False
 
-    for condition_idx, condition in enumerate(condition_order):
+    for condition_idx, (condition, split_label) in enumerate(plot_order):
         condition_dict = output_per_mouse_dic.get(condition, {})
         for mouse_idx, mouse in enumerate(mouse_names):
+            mouse_values = condition_dict.get(mouse, [])
+            mouse_values = values_for_split(mouse_values, split_label)
             session_values = np.array(
-                condition_dict.get(mouse, []),
+                mouse_values,
                 dtype=float,
             )
             session_values = session_values[~np.isnan(session_values)]
@@ -5376,9 +5412,20 @@ def plot_condition_session_values_by_mouse(
                 label=mouse if mouse not in labeled_mice else None,
             )
             labeled_mice.add(mouse)
+            plotted_any = True
+
+    if not plotted_any:
+        ax.text(
+            0.5,
+            0.5,
+            "No session values to plot.",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
 
     ax.set_xticks(x_positions)
-    ax.set_xticklabels(condition_labels, rotation=20, ha="right")
+    ax.set_xticklabels(plot_labels, rotation=20, ha="right")
     ax.set_ylabel(ylabel)
     ax.set_title(title or f"{group_name}: session values by condition")
     ax.grid(True, axis="y", alpha=0.3)
@@ -5393,7 +5440,16 @@ def plot_group_condition_values_by_mouse(
     ylabel="Session value",
     title=None,
     figsize=(10, 5),
+    split_column=None,
+    split_labels=None,
 ):
+    def values_for_split(mouse_values, split_label):
+        if split_label is None:
+            return mouse_values
+        if isinstance(mouse_values, dict):
+            return mouse_values.get(split_label, [])
+        return []
+
     group_values = {
         "vis_hm3": output_per_mouse_dic_hm3_diff.get("vis", {}),
         "aud_hm3": output_per_mouse_dic_hm3_diff.get("aud", {}),
@@ -5402,6 +5458,30 @@ def plot_group_condition_values_by_mouse(
     }
     group_order = ["vis_hm3", "aud_hm3", "vis_hm4", "aud_hm4"]
     group_labels = ["vis hM3Dq", "aud hM3Dq", "vis hM4Di", "aud hM4Di"]
+    split_labels = (
+        list(split_labels)
+        if split_column is not None and split_labels is not None
+        else ["engaged", "disengaged"]
+        if split_column is not None
+        else None
+    )
+    if split_labels is None:
+        plot_order = [(group, None) for group in group_order]
+        plot_labels = group_labels
+    else:
+        plot_order = [
+            (group, split_label)
+            for group in group_order
+            for split_label in split_labels
+        ]
+        plot_labels = [
+            f"{group_label}\n{split_label}"
+            for group_label in group_labels
+            for split_label in split_labels
+        ]
+        if figsize == (10, 5):
+            figsize = (12, 5)
+
     mouse_names = sorted(
         {
             mouse
@@ -5434,14 +5514,17 @@ def plot_group_condition_values_by_mouse(
         if len(mouse_names) > 1
         else np.array([0])
     )
-    x_positions = np.arange(len(group_order))
+    x_positions = np.arange(len(plot_order))
     labeled_mice = set()
+    plotted_any = False
 
-    for group_idx, group in enumerate(group_order):
+    for group_idx, (group, split_label) in enumerate(plot_order):
         group_dict = group_values.get(group, {})
         for mouse_idx, mouse in enumerate(mouse_names):
+            mouse_values = group_dict.get(mouse, [])
+            mouse_values = values_for_split(mouse_values, split_label)
             session_values = np.array(
-                group_dict.get(mouse, []),
+                mouse_values,
                 dtype=float,
             )
             session_values = session_values[~np.isnan(session_values)]
@@ -5483,9 +5566,20 @@ def plot_group_condition_values_by_mouse(
                 label=mouse if mouse not in labeled_mice else None,
             )
             labeled_mice.add(mouse)
+            plotted_any = True
+
+    if not plotted_any:
+        ax.text(
+            0.5,
+            0.5,
+            "No session values to plot.",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
 
     ax.set_xticks(x_positions)
-    ax.set_xticklabels(group_labels, rotation=20, ha="right")
+    ax.set_xticklabels(plot_labels, rotation=20, ha="right")
     ax.set_ylabel(ylabel)
     ax.set_title(title or "Session values by group and modality")
     ax.grid(True, axis="y", alpha=0.3)
