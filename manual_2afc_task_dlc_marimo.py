@@ -840,12 +840,6 @@ def _(
 
 
 @app.cell
-def _(behav_pair_map):
-    behav_pair_map
-    return
-
-
-@app.cell
 def _(
     behav_df_dic_dcz,
     behav_df_dic_saline,
@@ -956,6 +950,226 @@ def _(mo):
     )
     stimulus_modality_select
     return (stimulus_modality_select,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # condition compare by animals
+    """)
+    return
+
+
+@app.cell
+def _(behavior_utils, pd):
+    def get_roi_per_mouse_sessions(
+        behav_df_dic_saline,
+        behav_df_dic_dcz,
+        behav_pair_map,
+        roi_left,
+        roi_right,
+        roi_bottom,
+        roi_top,
+        subjects=None,
+        bodypart="Center",
+        difference=False,
+    ):
+        if difference:
+            output = {
+                "vis": {},
+                "aud": {},
+            }
+        else:
+            output = {
+                "vis_saline": {},
+                "vis_dcz": {},
+                "aud_saline": {},
+                "aud_dcz": {},
+            }
+
+        if behav_pair_map is None or behav_pair_map.empty:
+            return output
+
+        if subjects is not None:
+            subjects = {str(subject) for subject in subjects}
+
+        for _, pair_row in behav_pair_map.sort_values("pair_id").iterrows():
+            pair_id = pair_row["pair_id"]
+            subject = str(pair_row["subject"])
+            if subjects is not None and subject not in subjects:
+                continue
+            if (
+                pair_id not in behav_df_dic_saline
+                or pair_id not in behav_df_dic_dcz
+            ):
+                continue
+
+            modality = str(pair_row.get("stimulus_modality", "")).lower()
+            has_visual = "visual" in modality
+            has_auditory = "auditory" in modality
+            if has_visual == has_auditory:
+                continue
+            modality_prefix = "vis" if has_visual else "aud"
+
+            saline_ratio = behavior_utils.get_roi_time_ratio(
+                behav_df_dic_saline[pair_id],
+                roi_left=roi_left,
+                roi_right=roi_right,
+                roi_bottom=roi_bottom,
+                roi_top=roi_top,
+                bodypart=bodypart,
+            )
+            dcz_ratio = behavior_utils.get_roi_time_ratio(
+                behav_df_dic_dcz[pair_id],
+                roi_left=roi_left,
+                roi_right=roi_right,
+                roi_bottom=roi_bottom,
+                roi_top=roi_top,
+                bodypart=bodypart,
+            )
+
+            if difference:
+                if pd.notna(saline_ratio) and pd.notna(dcz_ratio):
+                    output[modality_prefix].setdefault(
+                        subject,
+                        [],
+                    ).append(float(saline_ratio - dcz_ratio))
+                continue
+
+            if pd.notna(saline_ratio):
+                output[f"{modality_prefix}_saline"].setdefault(
+                    subject,
+                    [],
+                ).append(float(saline_ratio))
+            if pd.notna(dcz_ratio):
+                output[f"{modality_prefix}_dcz"].setdefault(
+                    subject,
+                    [],
+                ).append(float(dcz_ratio))
+
+        return output
+
+    return (get_roi_per_mouse_sessions,)
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    get_roi_per_mouse_sessions,
+    hM3Dq_mice,
+    hM4Di_mice,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+):
+    roi_per_animal_condition_hm4 = get_roi_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        subjects=hM4Di_mice,
+    )
+    roi_per_animal_condition_hm4_diff = get_roi_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        subjects=hM4Di_mice,
+        difference=True,
+    )
+    roi_per_animal_condition_hm3 = get_roi_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        subjects=hM3Dq_mice,
+    )
+    roi_per_animal_condition_hm3_diff = get_roi_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        roi_left=roi_left,
+        roi_right=roi_right,
+        roi_bottom=roi_bottom,
+        roi_top=roi_top,
+        subjects=hM3Dq_mice,
+        difference=True,
+    )
+    return (
+        roi_per_animal_condition_hm3,
+        roi_per_animal_condition_hm3_diff,
+        roi_per_animal_condition_hm4,
+        roi_per_animal_condition_hm4_diff,
+    )
+
+
+@app.cell
+def _(
+    mo,
+    plot_test,
+    roi_per_animal_condition_hm3,
+    roi_per_animal_condition_hm3_diff,
+    roi_per_animal_condition_hm4,
+    roi_per_animal_condition_hm4_diff,
+):
+    hm4_roi_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            roi_per_animal_condition_hm4,
+            "hM4Di",
+            ylabel="Session ROI time ratio",
+            title="hM4Di: ROI time ratio by condition",
+        )
+    )
+    hm3_roi_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            roi_per_animal_condition_hm3,
+            "hM3Dq",
+            ylabel="Session ROI time ratio",
+            title="hM3Dq: ROI time ratio by condition",
+        )
+    )
+    roi_condition_diff_session_fig = (
+        plot_test.plot_group_condition_values_by_mouse(
+            roi_per_animal_condition_hm3_diff,
+            roi_per_animal_condition_hm4_diff,
+            ylabel="saline - DCZ (session ROI time ratio)",
+            title="ROI time ratio saline - DCZ",
+        )
+    )
+    mo.vstack(
+        [
+            hm4_roi_condition_session_fig,
+            hm3_roi_condition_session_fig,
+            roi_condition_diff_session_fig,
+        ]
+    )
+    return
+
+
+@app.cell
+def _(roi_per_animal_condition_hm4):
+    roi_per_animal_condition_hm4
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # condition compare by sessions
+    """)
+    return
 
 
 @app.cell

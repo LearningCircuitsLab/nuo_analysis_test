@@ -1336,7 +1336,22 @@ def _(behav_pair_map):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # save tmp svg
+    # compare behavior by animals
+    """)
+    return
+
+
+@app.cell
+def _():
+    roi_per_animal_condition_hm3 = {}
+    roi_per_animal_condition_hm4 = {}
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # compare behavior by sessions
     """)
     return
 

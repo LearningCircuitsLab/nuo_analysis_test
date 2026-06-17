@@ -1016,231 +1016,6 @@ def _(
 
 
 @app.cell
-def _(np, plt):
-    def plot_condition_session_values_by_mouse(
-        output_per_mouse_dic,
-        group_name,
-        ylabel="Session value",
-        title=None,
-        figsize=(10, 5),
-    ):
-        condition_order = [
-            "vis_saline",
-            "vis_dcz",
-            "aud_saline",
-            "aud_dcz",
-        ]
-        condition_labels = [
-            "vis saline",
-            "vis DCZ",
-            "aud saline",
-            "aud DCZ",
-        ]
-        mouse_names = sorted(
-            {
-                mouse
-                for condition in condition_order
-                for mouse in output_per_mouse_dic.get(condition, {})
-            }
-        )
-
-        fig, ax = plt.subplots(figsize=figsize)
-        if not mouse_names:
-            ax.text(
-                0.5,
-                0.5,
-                "No session values to plot.",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-            )
-            ax.set_axis_off()
-            fig.tight_layout()
-            return fig
-
-        cmap = plt.get_cmap("tab20" if len(mouse_names) > 10 else "tab10")
-        mouse_colors = {
-            mouse: cmap(idx % cmap.N)
-            for idx, mouse in enumerate(mouse_names)
-        }
-        mouse_offsets = (
-            np.linspace(-0.32, 0.32, len(mouse_names))
-            if len(mouse_names) > 1
-            else np.array([0])
-        )
-        x_positions = np.arange(len(condition_order))
-        labeled_mice = set()
-
-        for condition_idx, condition in enumerate(condition_order):
-            condition_dict = output_per_mouse_dic.get(condition, {})
-            for mouse_idx, mouse in enumerate(mouse_names):
-                session_values = np.array(
-                    condition_dict.get(mouse, []),
-                    dtype=float,
-                )
-                session_values = session_values[~np.isnan(session_values)]
-                if len(session_values) == 0:
-                    continue
-
-                mouse_x = x_positions[condition_idx] + mouse_offsets[mouse_idx]
-                session_span = min(0.11, 0.55 / max(len(mouse_names), 1))
-                boxplot = ax.boxplot(
-                    session_values,
-                    positions=[mouse_x],
-                    widths=session_span,
-                    patch_artist=True,
-                    showfliers=False,
-                    manage_ticks=False,
-                    zorder=2,
-                )
-                for patch in boxplot["boxes"]:
-                    patch.set_facecolor(mouse_colors[mouse])
-                    patch.set_alpha(0.25)
-                    patch.set_edgecolor(mouse_colors[mouse])
-                    patch.set_linewidth(0.9)
-                for line_key in ["whiskers", "caps"]:
-                    for line in boxplot[line_key]:
-                        line.set_color(mouse_colors[mouse])
-                        line.set_linewidth(0.9)
-                for median in boxplot["medians"]:
-                    median.set_color("black")
-                    median.set_linewidth(1.1)
-                ax.scatter(
-                    mouse_x,
-                    session_values.mean(),
-                    color=mouse_colors[mouse],
-                    edgecolor="black",
-                    linewidth=0.6,
-                    s=60,
-                    zorder=4,
-                    label=mouse if mouse not in labeled_mice else None,
-                )
-                labeled_mice.add(mouse)
-
-        ax.set_xticks(x_positions)
-        ax.set_xticklabels(condition_labels, rotation=20, ha="right")
-        ax.set_ylabel(ylabel)
-        ax.set_title(title or f"{group_name}: session values by condition")
-        ax.grid(True, axis="y", alpha=0.3)
-        ax.legend(title="Mouse", bbox_to_anchor=(1.02, 1), loc="upper left")
-        fig.tight_layout()
-        return fig
-
-    return (plot_condition_session_values_by_mouse,)
-
-
-@app.cell
-def _(np, plt):
-    def plot_group_condition_values_by_mouse(
-        output_per_mouse_dic_hm3_diff,
-        output_per_mouse_dic_hm4_diff,
-        ylabel="Session value",
-        title=None,
-        figsize=(10, 5),
-    ):
-        group_values = {
-            "vis_hm3": output_per_mouse_dic_hm3_diff.get("vis", {}),
-            "aud_hm3": output_per_mouse_dic_hm3_diff.get("aud", {}),
-            "vis_hm4": output_per_mouse_dic_hm4_diff.get("vis", {}),
-            "aud_hm4": output_per_mouse_dic_hm4_diff.get("aud", {}),
-        }
-        group_order = ["vis_hm3", "aud_hm3", "vis_hm4", "aud_hm4"]
-        group_labels = ["vis hM3Dq", "aud hM3Dq", "vis hM4Di", "aud hM4Di"]
-        mouse_names = sorted(
-            {
-                mouse
-                for group in group_order
-                for mouse in group_values.get(group, {})
-            }
-        )
-
-        fig, ax = plt.subplots(figsize=figsize)
-        if not mouse_names:
-            ax.text(
-                0.5,
-                0.5,
-                "No session values to plot.",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-            )
-            ax.set_axis_off()
-            fig.tight_layout()
-            return fig
-
-        cmap = plt.get_cmap("tab20" if len(mouse_names) > 10 else "tab10")
-        mouse_colors = {
-            mouse: cmap(idx % cmap.N)
-            for idx, mouse in enumerate(mouse_names)
-        }
-        mouse_offsets = (
-            np.linspace(-0.32, 0.32, len(mouse_names))
-            if len(mouse_names) > 1
-            else np.array([0])
-        )
-        x_positions = np.arange(len(group_order))
-        labeled_mice = set()
-
-        for group_idx, group in enumerate(group_order):
-            group_dict = group_values.get(group, {})
-            for mouse_idx, mouse in enumerate(mouse_names):
-                session_values = np.array(
-                    group_dict.get(mouse, []),
-                    dtype=float,
-                )
-                session_values = session_values[~np.isnan(session_values)]
-                if len(session_values) == 0:
-                    continue
-
-                mouse_x = x_positions[group_idx] + mouse_offsets[mouse_idx]
-                box_width = min(0.11, 0.55 / max(len(mouse_names), 1))
-                boxplot = ax.boxplot(
-                    session_values,
-                    positions=[mouse_x],
-                    widths=box_width,
-                    patch_artist=True,
-                    showfliers=False,
-                    manage_ticks=False,
-                    zorder=2,
-                )
-                for patch in boxplot["boxes"]:
-                    patch.set_facecolor(mouse_colors[mouse])
-                    patch.set_alpha(0.25)
-                    patch.set_edgecolor(mouse_colors[mouse])
-                    patch.set_linewidth(0.9)
-                for line_key in ["whiskers", "caps"]:
-                    for line in boxplot[line_key]:
-                        line.set_color(mouse_colors[mouse])
-                        line.set_linewidth(0.9)
-                for median in boxplot["medians"]:
-                    median.set_color("black")
-                    median.set_linewidth(1.1)
-
-                ax.scatter(
-                    mouse_x,
-                    session_values.mean(),
-                    color=mouse_colors[mouse],
-                    edgecolor="black",
-                    linewidth=0.6,
-                    s=60,
-                    zorder=4,
-                    label=mouse if mouse not in labeled_mice else None,
-                )
-                labeled_mice.add(mouse)
-
-        ax.set_xticks(x_positions)
-        ax.set_xticklabels(group_labels, rotation=20, ha="right")
-        ax.set_ylabel(ylabel)
-        ax.set_title(title or "Session values by group and modality")
-        ax.grid(True, axis="y", alpha=0.3)
-        ax.legend(title="Mouse", bbox_to_anchor=(1.02, 1), loc="upper left")
-        fig.tight_layout()
-        return fig
-
-    return (plot_group_condition_values_by_mouse,)
-
-
-@app.cell
 def _(
     compare_y_label,
     mo,
@@ -1248,23 +1023,25 @@ def _(
     output_per_mouse_dic_hm3_diff,
     output_per_mouse_dic_hm4,
     output_per_mouse_dic_hm4_diff,
-    plot_condition_session_values_by_mouse,
-    plot_group_condition_values_by_mouse,
+    plot_test,
 ):
-    hm4_condition_session_fig = plot_condition_session_values_by_mouse(
+    hm4_condition_session_fig = plot_test.plot_condition_session_values_by_mouse(
         output_per_mouse_dic_hm4,
         "hM4Di",
         ylabel=compare_y_label,
+        title=f"hM4Di: {compare_y_label}",
     )
-    hm3_condition_session_fig = plot_condition_session_values_by_mouse(
+    hm3_condition_session_fig = plot_test.plot_condition_session_values_by_mouse(
         output_per_mouse_dic_hm3,
         "hM3Dq",
         ylabel=compare_y_label,
+        title=f"hM4Di: {compare_y_label}",
     )
-    condition_diff_session_fig = plot_group_condition_values_by_mouse(
+    condition_diff_session_fig = plot_test.plot_group_condition_values_by_mouse(
         output_per_mouse_dic_hm3_diff,
         output_per_mouse_dic_hm4_diff,
         ylabel=f"saline - DCZ ({compare_y_label})",
+        title=f"saline - DCZ: {compare_y_label}",
     )
     mo.vstack(
         [
