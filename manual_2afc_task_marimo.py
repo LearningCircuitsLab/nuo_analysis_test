@@ -642,7 +642,16 @@ def _(pd, utils):
 
 
 @app.cell
-def _(add_number_of_pokes, df_test_selected, dft, hM3Dq_mice, hM4Di_mice):
+def _(
+    add_number_of_pokes,
+    behavior_utils,
+    df_test_selected,
+    dft,
+    hM3Dq_mice,
+    hM4Di_mice,
+    injection_info_df,
+    pd,
+):
     session_performance = df_test_selected.groupby(
         ["subject", "session"]
     )["correct"].transform("mean")
@@ -663,6 +672,91 @@ def _(add_number_of_pokes, df_test_selected, dft, hM3Dq_mice, hM4Di_mice):
         add_number_of_pokes(df_test_selected_upd, port_number=2)
     ))
 
+    metric_paired_dates = behavior_utils.get_paired_injection_dates(
+        injection_info_df
+    )
+    df_test_selected_upd["_observation_group"] = df_test_selected_upd[
+        "observations"
+    ].apply(observation_group)
+    df_test_selected_upd["_pair_date"] = pd.to_datetime(
+        df_test_selected_upd["year_month_day"],
+        errors="coerce",
+    ).dt.strftime("%Y-%m-%d")
+
+    available_dates = df_test_selected_upd[
+        ["subject", "_pair_date", "_observation_group"]
+    ].dropna().drop_duplicates()
+
+    paired_dates_for_filter = metric_paired_dates.copy()
+    paired_dates_for_filter["subject"] = paired_dates_for_filter["subject"].astype(str)
+    paired_dates_for_filter["_saline_date"] = pd.to_datetime(
+        paired_dates_for_filter["saline_date"],
+        errors="coerce",
+    ).dt.strftime("%Y-%m-%d")
+    paired_dates_for_filter["_DCZ_date"] = pd.to_datetime(
+        paired_dates_for_filter["DCZ_date"],
+        errors="coerce",
+    ).dt.strftime("%Y-%m-%d")
+
+    saline_available = available_dates.rename(
+        columns={
+            "_pair_date": "_saline_date",
+            "_observation_group": "_saline_observation_group",
+        }
+    )
+    dcz_available = available_dates.rename(
+        columns={
+            "_pair_date": "_DCZ_date",
+            "_observation_group": "_DCZ_observation_group",
+        }
+    )
+
+    paired_dates_for_filter = (
+        paired_dates_for_filter.merge(
+            saline_available,
+            on=["subject", "_saline_date"],
+            how="inner",
+        )
+        .merge(
+            dcz_available,
+            on=["subject", "_DCZ_date"],
+            how="inner",
+        )
+    )
+    paired_dates_for_filter = paired_dates_for_filter[
+        (paired_dates_for_filter["_saline_observation_group"] == "saline")
+        & (paired_dates_for_filter["_DCZ_observation_group"] == "DCZ")
+    ].copy()
+
+    metric_paired_dates = metric_paired_dates[
+        metric_paired_dates["pair_id"].isin(paired_dates_for_filter["pair_id"])
+    ].copy()
+
+    paired_date_rows = pd.concat(
+        [
+            metric_paired_dates[["subject", "saline_date"]]
+            .rename(columns={"saline_date": "_pair_date"})
+            .assign(_observation_group="saline"),
+            metric_paired_dates[["subject", "DCZ_date"]]
+            .rename(columns={"DCZ_date": "_pair_date"})
+            .assign(_observation_group="DCZ"),
+        ],
+        ignore_index=True,
+    )
+    paired_date_rows["subject"] = paired_date_rows["subject"].astype(str)
+    paired_date_rows["_pair_date"] = pd.to_datetime(
+        paired_date_rows["_pair_date"],
+        errors="coerce",
+    ).dt.strftime("%Y-%m-%d")
+    paired_date_rows = paired_date_rows.dropna().drop_duplicates()
+
+    df_test_selected_upd["subject"] = df_test_selected_upd["subject"].astype(str)
+    df_test_selected_upd = df_test_selected_upd.merge(
+        paired_date_rows,
+        on=["subject", "_pair_date", "_observation_group"],
+        how="inner",
+    ).drop(columns=["_pair_date", "_observation_group"])
+
     # df_test_selected_upd = df_test_selected_upd[
     #     df_test_selected_upd['year_month_day'].isin(
     #         ['2026-05-22', '2026-05-20']
@@ -676,7 +770,13 @@ def _(add_number_of_pokes, df_test_selected, dft, hM3Dq_mice, hM4Di_mice):
     df_test_selected_hm3 = df_test_selected_upd[
         df_test_selected_upd["subject"].isin(hM3Dq_mice)
     ].copy()
-    return df_test_selected_hm3, df_test_selected_hm4, df_test_selected_upd
+    return (
+        available_dates,
+        df_test_selected_hm3,
+        df_test_selected_hm4,
+        df_test_selected_upd,
+        metric_paired_dates,
+    )
 
 
 @app.cell(hide_code=True)
@@ -695,14 +795,6 @@ def observation_group(observation):
     if "saline" in observation:
         return "saline"
     return None
-
-
-@app.cell
-def _(behavior_utils, injection_info_df):
-    metric_paired_dates = behavior_utils.get_paired_injection_dates(
-        injection_info_df
-    )
-    return (metric_paired_dates,)
 
 
 @app.function
