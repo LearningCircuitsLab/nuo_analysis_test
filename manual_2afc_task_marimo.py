@@ -423,8 +423,8 @@ def _(mo):
 @app.cell
 def _(mo):
     stimulus_modality_select = mo.ui.dropdown(
-        options=["visual", "auditory"],
-        value="auditory",
+        options=["visual", "auditory", "all"],
+        value="all",
         label="Stimulus modality",
     )
     stimulus_modality_select
@@ -514,11 +514,28 @@ def _(
         if combined_results["df_test_aud"]
         else pd.DataFrame()
     )
-    df_test_selected_raw = (
-        df_test_vis_raw
-        if stimulus_modality_select.value == "visual"
-        else df_test_aud_raw
-    )
+    if not df_test_vis_raw.empty:
+        df_test_vis_raw = df_test_vis_raw.copy()
+        df_test_vis_raw["stimulus_modality"] = "visual"
+    if not df_test_aud_raw.empty:
+        df_test_aud_raw = df_test_aud_raw.copy()
+        df_test_aud_raw["stimulus_modality"] = "auditory"
+
+    if stimulus_modality_select.value == "visual":
+        df_test_selected_raw = df_test_vis_raw
+    elif stimulus_modality_select.value == "auditory":
+        df_test_selected_raw = df_test_aud_raw
+    else:
+        selected_raw_dfs = [
+            df_raw
+            for df_raw in [df_test_vis_raw, df_test_aud_raw]
+            if not df_raw.empty
+        ]
+        df_test_selected_raw = (
+            pd.concat(selected_raw_dfs, ignore_index=True)
+            if selected_raw_dfs
+            else pd.DataFrame()
+        )
     return (df_test_selected_raw,)
 
 
@@ -662,13 +679,522 @@ def _(add_number_of_pokes, df_test_selected, dft, hM3Dq_mice, hM4Di_mice):
     return df_test_selected_hm3, df_test_selected_hm4, df_test_selected_upd
 
 
-@app.cell
-def _(behavior_utils, injection_info_df, pd, plt):
-    from scipy import stats
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # compare by animals
+    """)
+    return
 
+
+@app.function
+def observation_group(observation):
+    observation = str(observation).lower()
+    if "dcz" in observation:
+        return "DCZ"
+    if "saline" in observation:
+        return "saline"
+    return None
+
+
+@app.cell
+def _(behavior_utils, injection_info_df):
     metric_paired_dates = behavior_utils.get_paired_injection_dates(
         injection_info_df
     )
+    return (metric_paired_dates,)
+
+
+@app.function
+def get_metric_per_mouse_sessions(
+    df,
+    metric_paired_dates,
+    metric_col="correct",
+    agg_func="mean",
+    difference=False,
+):
+    import pandas as pd
+
+    if agg_func == "len":
+        agg_func = len
+
+    df_metric = df.dropna(
+        subset=[
+            "subject",
+            "session",
+            "year_month_day",
+            "stimulus_modality",
+            "observations",
+            metric_col,
+        ]
+    ).copy()
+
+    df_metric["observation_group"] = df_metric["observations"].apply(
+        observation_group
+    )
+    df_metric = df_metric.dropna(subset=["observation_group"])
+
+    paired_columns = ["subject", "pair_id"]
+    paired_dates = pd.concat(
+        [
+            metric_paired_dates[paired_columns + ["saline_date"]]
+            .rename(columns={"saline_date": "year_month_day"})
+            .assign(observation_group="saline"),
+            metric_paired_dates[paired_columns + ["DCZ_date"]]
+            .rename(columns={"DCZ_date": "year_month_day"})
+            .assign(observation_group="DCZ"),
+        ],
+        ignore_index=True,
+    ).dropna()
+    paired_dates["subject"] = paired_dates["subject"].astype(str)
+    paired_dates["year_month_day"] = pd.to_datetime(
+        paired_dates["year_month_day"],
+        errors="coerce",
+    ).dt.strftime("%Y-%m-%d")
+    paired_dates = paired_dates.dropna()
+    if not difference:
+        paired_dates = paired_dates.drop(columns="pair_id").drop_duplicates()
+
+    df_metric["subject"] = df_metric["subject"].astype(str)
+    df_metric["year_month_day"] = pd.to_datetime(
+        df_metric["year_month_day"],
+        errors="coerce",
+    ).dt.strftime("%Y-%m-%d")
+    df_metric = df_metric.merge(
+        paired_dates,
+        on=["subject", "year_month_day", "observation_group"],
+        how="inner",
+    )
+
+    group_columns = [
+        "subject",
+        "year_month_day",
+        "session",
+        "stimulus_modality",
+        "observation_group",
+    ]
+    if difference:
+        group_columns.insert(1, "pair_id")
+
+    session_summary = (
+        df_metric.groupby(group_columns, sort=True)
+        .agg(metric_value=(metric_col, agg_func))
+        .reset_index()
+    )
+
+    if difference:
+        difference_output = {
+            "vis": {},
+            "aud": {},
+        }
+        for (subject, pair_id, modality), df_pair in session_summary.groupby(
+            ["subject", "pair_id", "stimulus_modality"],
+            sort=True,
+        ):
+            if modality == "visual":
+                modality_key = "vis"
+            elif modality == "auditory":
+                modality_key = "aud"
+            else:
+                continue
+
+            saline_values = df_pair.loc[
+                df_pair["observation_group"] == "saline",
+                "metric_value",
+            ]
+            dcz_values = df_pair.loc[
+                df_pair["observation_group"] == "DCZ",
+                "metric_value",
+            ]
+            if saline_values.empty or dcz_values.empty:
+                continue
+
+            difference_output[modality_key].setdefault(subject, []).append(
+                saline_values.mean() - dcz_values.mean()
+            )
+
+        return difference_output
+
+    output = {
+        "vis_saline": {},
+        "vis_dcz": {},
+        "aud_saline": {},
+        "aud_dcz": {},
+    }
+
+    for (modality, observation), df_condition in session_summary.groupby(
+        ["stimulus_modality", "observation_group"]
+    ):
+        modality_prefix = "vis" if modality == "visual" else "aud"
+        observation_suffix = observation.lower()
+        key = f"{modality_prefix}_{observation_suffix}"
+
+        output[key] = {
+            subject: df_mouse["metric_value"].tolist()
+            for subject, df_mouse in df_condition.groupby("subject")
+        }
+
+    return output
+
+
+@app.cell
+def _(mo):
+    compare_value_settings = {
+        "performance": {
+            "metric_col": "correct",
+            "agg_func": "mean",
+            "ylabel": "Session mean performance",
+        },
+        "number of central pokes": {
+            "metric_col": "port2_pokes_num",
+            "agg_func": "mean",
+            "ylabel": "Session mean number of central pokes",
+        },
+        "reaction time": {
+            "metric_col": "reaction_time",
+            "agg_func": "mean",
+            "ylabel": "Session mean reaction time",
+        },
+        "time interval": {
+            "metric_col": "time_between_trials",
+            "agg_func": "mean",
+            "ylabel": "Session mean time interval",
+        },
+        "number of trials": {
+            "metric_col": "trial",
+            "agg_func": "len",
+            "ylabel": "Session total number of trials",
+        }
+    }
+    compare_value_select = mo.ui.dropdown(
+        options=list(compare_value_settings),
+        value="performance",
+        label="Compare value",
+    )
+    compare_value_select
+    return compare_value_select, compare_value_settings
+
+
+@app.cell
+def _(
+    compare_value_select,
+    compare_value_settings,
+    df_test_selected_hm3,
+    df_test_selected_hm4,
+    metric_paired_dates,
+):
+    compare_value_setting = compare_value_settings[compare_value_select.value]
+    compare_metric_col = compare_value_setting["metric_col"]
+    compare_agg_func = compare_value_setting["agg_func"]
+    compare_y_label = compare_value_setting["ylabel"]
+
+    output_per_mouse_dic_hm4 = get_metric_per_mouse_sessions(
+        df_test_selected_hm4,
+        metric_paired_dates,
+        metric_col=compare_metric_col,
+        agg_func=compare_agg_func,
+    )
+    output_per_mouse_dic_hm3 = get_metric_per_mouse_sessions(
+        df_test_selected_hm3,
+        metric_paired_dates,
+        metric_col=compare_metric_col,
+        agg_func=compare_agg_func,
+    )
+    output_per_mouse_dic_hm4_diff = get_metric_per_mouse_sessions(
+        df_test_selected_hm4,
+        metric_paired_dates,
+        metric_col=compare_metric_col,
+        agg_func=compare_agg_func,
+        difference=True
+    )
+    output_per_mouse_dic_hm3_diff = get_metric_per_mouse_sessions(
+        df_test_selected_hm3,
+        metric_paired_dates,
+        metric_col=compare_metric_col,
+        agg_func=compare_agg_func,
+        difference=True
+    )
+    return (
+        compare_y_label,
+        output_per_mouse_dic_hm3,
+        output_per_mouse_dic_hm3_diff,
+        output_per_mouse_dic_hm4,
+        output_per_mouse_dic_hm4_diff,
+    )
+
+
+@app.cell
+def _(np, plt):
+    def plot_condition_session_values_by_mouse(
+        output_per_mouse_dic,
+        group_name,
+        ylabel="Session value",
+        title=None,
+        figsize=(10, 5),
+    ):
+        condition_order = [
+            "vis_saline",
+            "vis_dcz",
+            "aud_saline",
+            "aud_dcz",
+        ]
+        condition_labels = [
+            "vis saline",
+            "vis DCZ",
+            "aud saline",
+            "aud DCZ",
+        ]
+        mouse_names = sorted(
+            {
+                mouse
+                for condition in condition_order
+                for mouse in output_per_mouse_dic.get(condition, {})
+            }
+        )
+
+        fig, ax = plt.subplots(figsize=figsize)
+        if not mouse_names:
+            ax.text(
+                0.5,
+                0.5,
+                "No session values to plot.",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            fig.tight_layout()
+            return fig
+
+        cmap = plt.get_cmap("tab20" if len(mouse_names) > 10 else "tab10")
+        mouse_colors = {
+            mouse: cmap(idx % cmap.N)
+            for idx, mouse in enumerate(mouse_names)
+        }
+        mouse_offsets = (
+            np.linspace(-0.32, 0.32, len(mouse_names))
+            if len(mouse_names) > 1
+            else np.array([0])
+        )
+        x_positions = np.arange(len(condition_order))
+        labeled_mice = set()
+
+        for condition_idx, condition in enumerate(condition_order):
+            condition_dict = output_per_mouse_dic.get(condition, {})
+            for mouse_idx, mouse in enumerate(mouse_names):
+                session_values = np.array(
+                    condition_dict.get(mouse, []),
+                    dtype=float,
+                )
+                session_values = session_values[~np.isnan(session_values)]
+                if len(session_values) == 0:
+                    continue
+
+                mouse_x = x_positions[condition_idx] + mouse_offsets[mouse_idx]
+                session_span = min(0.11, 0.55 / max(len(mouse_names), 1))
+                boxplot = ax.boxplot(
+                    session_values,
+                    positions=[mouse_x],
+                    widths=session_span,
+                    patch_artist=True,
+                    showfliers=False,
+                    manage_ticks=False,
+                    zorder=2,
+                )
+                for patch in boxplot["boxes"]:
+                    patch.set_facecolor(mouse_colors[mouse])
+                    patch.set_alpha(0.25)
+                    patch.set_edgecolor(mouse_colors[mouse])
+                    patch.set_linewidth(0.9)
+                for line_key in ["whiskers", "caps"]:
+                    for line in boxplot[line_key]:
+                        line.set_color(mouse_colors[mouse])
+                        line.set_linewidth(0.9)
+                for median in boxplot["medians"]:
+                    median.set_color("black")
+                    median.set_linewidth(1.1)
+                ax.scatter(
+                    mouse_x,
+                    session_values.mean(),
+                    color=mouse_colors[mouse],
+                    edgecolor="black",
+                    linewidth=0.6,
+                    s=60,
+                    zorder=4,
+                    label=mouse if mouse not in labeled_mice else None,
+                )
+                labeled_mice.add(mouse)
+
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(condition_labels, rotation=20, ha="right")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title or f"{group_name}: session values by condition")
+        ax.grid(True, axis="y", alpha=0.3)
+        ax.legend(title="Mouse", bbox_to_anchor=(1.02, 1), loc="upper left")
+        fig.tight_layout()
+        return fig
+
+    return (plot_condition_session_values_by_mouse,)
+
+
+@app.cell
+def _(np, plt):
+    def plot_group_condition_values_by_mouse(
+        output_per_mouse_dic_hm3_diff,
+        output_per_mouse_dic_hm4_diff,
+        ylabel="Session value",
+        title=None,
+        figsize=(10, 5),
+    ):
+        group_values = {
+            "vis_hm3": output_per_mouse_dic_hm3_diff.get("vis", {}),
+            "aud_hm3": output_per_mouse_dic_hm3_diff.get("aud", {}),
+            "vis_hm4": output_per_mouse_dic_hm4_diff.get("vis", {}),
+            "aud_hm4": output_per_mouse_dic_hm4_diff.get("aud", {}),
+        }
+        group_order = ["vis_hm3", "aud_hm3", "vis_hm4", "aud_hm4"]
+        group_labels = ["vis hM3Dq", "aud hM3Dq", "vis hM4Di", "aud hM4Di"]
+        mouse_names = sorted(
+            {
+                mouse
+                for group in group_order
+                for mouse in group_values.get(group, {})
+            }
+        )
+
+        fig, ax = plt.subplots(figsize=figsize)
+        if not mouse_names:
+            ax.text(
+                0.5,
+                0.5,
+                "No session values to plot.",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            fig.tight_layout()
+            return fig
+
+        cmap = plt.get_cmap("tab20" if len(mouse_names) > 10 else "tab10")
+        mouse_colors = {
+            mouse: cmap(idx % cmap.N)
+            for idx, mouse in enumerate(mouse_names)
+        }
+        mouse_offsets = (
+            np.linspace(-0.32, 0.32, len(mouse_names))
+            if len(mouse_names) > 1
+            else np.array([0])
+        )
+        x_positions = np.arange(len(group_order))
+        labeled_mice = set()
+
+        for group_idx, group in enumerate(group_order):
+            group_dict = group_values.get(group, {})
+            for mouse_idx, mouse in enumerate(mouse_names):
+                session_values = np.array(
+                    group_dict.get(mouse, []),
+                    dtype=float,
+                )
+                session_values = session_values[~np.isnan(session_values)]
+                if len(session_values) == 0:
+                    continue
+
+                mouse_x = x_positions[group_idx] + mouse_offsets[mouse_idx]
+                box_width = min(0.11, 0.55 / max(len(mouse_names), 1))
+                boxplot = ax.boxplot(
+                    session_values,
+                    positions=[mouse_x],
+                    widths=box_width,
+                    patch_artist=True,
+                    showfliers=False,
+                    manage_ticks=False,
+                    zorder=2,
+                )
+                for patch in boxplot["boxes"]:
+                    patch.set_facecolor(mouse_colors[mouse])
+                    patch.set_alpha(0.25)
+                    patch.set_edgecolor(mouse_colors[mouse])
+                    patch.set_linewidth(0.9)
+                for line_key in ["whiskers", "caps"]:
+                    for line in boxplot[line_key]:
+                        line.set_color(mouse_colors[mouse])
+                        line.set_linewidth(0.9)
+                for median in boxplot["medians"]:
+                    median.set_color("black")
+                    median.set_linewidth(1.1)
+
+                ax.scatter(
+                    mouse_x,
+                    session_values.mean(),
+                    color=mouse_colors[mouse],
+                    edgecolor="black",
+                    linewidth=0.6,
+                    s=60,
+                    zorder=4,
+                    label=mouse if mouse not in labeled_mice else None,
+                )
+                labeled_mice.add(mouse)
+
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(group_labels, rotation=20, ha="right")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title or "Session values by group and modality")
+        ax.grid(True, axis="y", alpha=0.3)
+        ax.legend(title="Mouse", bbox_to_anchor=(1.02, 1), loc="upper left")
+        fig.tight_layout()
+        return fig
+
+    return (plot_group_condition_values_by_mouse,)
+
+
+@app.cell
+def _(
+    compare_y_label,
+    mo,
+    output_per_mouse_dic_hm3,
+    output_per_mouse_dic_hm3_diff,
+    output_per_mouse_dic_hm4,
+    output_per_mouse_dic_hm4_diff,
+    plot_condition_session_values_by_mouse,
+    plot_group_condition_values_by_mouse,
+):
+    hm4_condition_session_fig = plot_condition_session_values_by_mouse(
+        output_per_mouse_dic_hm4,
+        "hM4Di",
+        ylabel=compare_y_label,
+    )
+    hm3_condition_session_fig = plot_condition_session_values_by_mouse(
+        output_per_mouse_dic_hm3,
+        "hM3Dq",
+        ylabel=compare_y_label,
+    )
+    condition_diff_session_fig = plot_group_condition_values_by_mouse(
+        output_per_mouse_dic_hm3_diff,
+        output_per_mouse_dic_hm4_diff,
+        ylabel=f"saline - DCZ ({compare_y_label})",
+    )
+    mo.vstack(
+        [
+            hm4_condition_session_fig,
+            hm3_condition_session_fig,
+            condition_diff_session_fig,
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # compare by sessions
+    """)
+    return
+
+
+@app.cell
+def _(behavior_utils, metric_paired_dates, pd, plt):
+    from scipy import stats
 
     def observation_to_color(observation):
         observation = str(observation).lower()
@@ -678,13 +1204,6 @@ def _(behavior_utils, injection_info_df, pd, plt):
             return "blue"
         return "gray"
 
-    def observation_group(observation):
-        observation = str(observation).lower()
-        if "dcz" in observation:
-            return "DCZ"
-        if "saline" in observation:
-            return "saline"
-        return None
 
     def p_value_to_label(p_value):
         if p_value < 0.0001:
@@ -1041,10 +1560,12 @@ def _(mo):
 
 @app.cell
 def _(stimulus_modality_select):
-    if stimulus_modality_select.value == 'visual':
-        stimulus_col = 'visual_stimulus_ratio'
+    if stimulus_modality_select.value == "visual":
+        stimulus_col = "visual_stimulus_ratio"
+    elif stimulus_modality_select.value == "auditory":
+        stimulus_col = "total_evidence_strength"
     else:
-        stimulus_col = 'total_evidence_strength'
+        stimulus_col = "total_evidence_strength"
     return (stimulus_col,)
 
 

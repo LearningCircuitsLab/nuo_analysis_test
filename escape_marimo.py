@@ -113,7 +113,31 @@ def _(mo):
 
 
 @app.cell
-def _(Path, credential, download_button, mouse_select, pd, project, utils):
+def _(credential, download_button, pd, utils):
+    if download_button.value:
+        utils.rsync_specific_file(
+                            credentials=credential,
+                            file_path="/storage/training_village/auditory_escape_data/village03/deleted_sessions.csv",
+                            local_path='/home/kudongdong/data/LeciLab/behavioral_data/auditory_escape_data/village03/',
+                        )
+    deleted_sessions = pd.read_csv(
+        "/home/kudongdong/data/LeciLab/behavioral_data/auditory_escape_data/village03/deleted_sessions.csv"
+    )
+    deleted_sessions_list = [d[0][:37] for d in deleted_sessions.values]
+    return (deleted_sessions_list,)
+
+
+@app.cell
+def _(
+    Path,
+    credential,
+    deleted_sessions_list,
+    download_button,
+    mouse_select,
+    pd,
+    project,
+    utils,
+):
     behav_df_dic = {}
 
     parent_path = "/home/kudongdong/data/behavior_DLC/escape_auditory-LeciLab-2025-10-20/v2/"
@@ -148,9 +172,10 @@ def _(Path, credential, download_button, mouse_select, pd, project, utils):
                     )
 
         for csv_path in local_path_dlc_sub.glob("*DLC*.csv"):
-            if sub in csv_path.name:
+            if (csv_path.name[:37] not in deleted_sessions_list) and (sub in csv_path.name):
                 random_df = pd.read_csv(csv_path, header=[1, 2])
                 behav_df_dic[csv_path.name[:37]] = random_df
+
 
     analyzed_video_names = list(behav_df_dic.keys())
 
@@ -222,23 +247,17 @@ def _(Path, credential, download_button, mouse_select, pd, project, utils):
         video_df = video_df[2:]
         video_df.index = range(len(video_df))
         video_df_dic[name] = video_df
-    return (
-        analyzed_video_names,
-        behav_df_dic,
-        name,
-        session_df_dic,
-        video_df_dic,
-    )
+    return analyzed_video_names, behav_df_dic, session_df_dic, video_df_dic
 
 
 @app.cell
-def _(analyzed_video_names, name, session_df_dic):
+def _(analyzed_video_names, session_df_dic):
     sound_play_dic = {}
     for _name in analyzed_video_names:
         sound_play_list = []
         for n in session_df_dic[_name]['sound_played']:
             sound_play_list.append(eval(n)[0])
-        sound_play_dic[name] = sound_play_list
+        sound_play_dic[_name] = sound_play_list
     return (sound_play_dic,)
 
 
@@ -260,34 +279,34 @@ def _(mo):
 def _(
     analyzed_video_names,
     behav_df_dic,
+    behavior_utils,
     bodyparts,
     np,
-    preprocess_positions,
     sound_play_dic,
     video_df_dic,
 ):
     behav_df_filtered_dic = {}
-    for name in analyzed_video_names:
-        df = behav_df_dic[name]
-        df['timestamp'] = video_df_dic[name]['timestamp']
+    for name1 in analyzed_video_names:
+        df = behav_df_dic[name1]
+        df['timestamp'] = video_df_dic[name1]['timestamp']
         # input the sound play time in behavior data
-        idx = np.searchsorted(df['timestamp'], sound_play_dic[name], side='right')
+        idx = np.searchsorted(df['timestamp'], sound_play_dic[name1], side='right')
         df['sound_played'] = np.nan
-        df.loc[idx, 'sound_played'] = sound_play_dic[name]
-        df = preprocess_positions(df, likelihood_thr=0.65, distance_thr=200, max_iter=100)
-        behav_df_filtered_dic[name] = df
+        df.loc[idx, 'sound_played'] = sound_play_dic[name1]
+        df = behavior_utils.preprocess_positions(df, likelihood_thr=0.65, distance_thr=200, max_iter=100)
+        behav_df_filtered_dic[name1] = df
 
     # interpolate the positions
-    for name in analyzed_video_names:
-        behav_df_filtered = behav_df_filtered_dic[name]
+    for name1 in analyzed_video_names:
+        behav_df_filtered = behav_df_filtered_dic[name1]
         for bp in bodyparts:
             for coord in ["x", "y"]:
                 behav_df_filtered[(bp, coord)] = (
                     behav_df_filtered[(bp, coord)]
                     .interpolate(method="linear", limit_direction="both")
                 )
-        behav_df_filtered_dic[name] = behav_df_filtered
-    return (name,)
+        behav_df_filtered_dic[name1] = behav_df_filtered
+    return (behav_df_filtered_dic,)
 
 
 @app.cell(hide_code=True)
@@ -308,185 +327,27 @@ def _():
 
 
 @app.cell
-def _(pd):
+def _(behavior_utils, mouse_select, pd):
     injection_info_file_path = "/mnt/e/data/LeciLab/behavioral_data/data_test/escape_test_record_nuo.xlsx"
     injection_info_df = pd.read_excel(injection_info_file_path)
-    injection_info_df
-    return (injection_info_df,)
-
-
-@app.cell
-def _(injection_info_df, pd):
-    date_col = injection_info_df.columns[0]
-
-    injection_dates = pd.to_datetime(
-        injection_info_df[date_col],
-        errors="coerce",
-    ).dt.strftime("%Y-%m-%d")
-    injection_info_with_dates = injection_info_df.copy()
-    injection_info_with_dates["_injection_date"] = injection_dates
-    injection_mouse_columns = [
-        column for column in injection_info_df.columns if column != date_col
-    ]
-    injection_lookup = (
-        injection_info_with_dates.melt(
-            id_vars="_injection_date",
-            value_vars=injection_mouse_columns,
-            var_name="_mouse",
-            value_name="_observations",
-        )
-        .set_index(["_injection_date", "_mouse"])["_observations"]
-        .to_dict()
-    )
-    injection_lookup
-    # trial_dates = pd.to_datetime(
-    #     df_test_aud["date"],
-    #     errors="coerce",
-    # ).dt.strftime("%Y-%m-%d")
-    # trial_mice = (
-    #     df_test_aud["subject"].astype(str)
-    #     if "subject" in df_test_aud.columns
-    #     else pd.Series(mouse, index=df_test_aud.index)
-    # )
-    # df_test_aud["observations"] = [
-    #     injection_lookup.get((trial_date, trial_mouse), pd.NA)
-    #     for trial_date, trial_mouse in zip(trial_dates, trial_mice)
-    # ]
-
-    # df_test_aud['observations']
-    return
-
-
-@app.cell
-def _(pd):
-    def flatten_dlc_columns(columns):
-        flat_columns = []
-        for column in columns:
-            if isinstance(column, tuple) and len(column) >= 3:
-                if column[0] == "scorer" and column[1] == "bodyparts":
-                    column_name = "frame"
-                else:
-                    column_name = f"{column[1]}_{column[2]}"
-            else:
-                column_name = str(column)
-
-            if column_name in flat_columns:
-                column_name = f"{column_name}_{flat_columns.count(column_name)}"
-            flat_columns.append(column_name)
-        return flat_columns
-
-    def read_dlc_csv(dlc_file):
-        dlc_df = pd.read_csv(dlc_file, header=[0, 1, 2])
-        dlc_df.columns = flatten_dlc_columns(dlc_df.columns)
-        if "frame" in dlc_df.columns:
-            dlc_df["frame"] = pd.to_numeric(
-                dlc_df["frame"],
-                errors="coerce",
-            ).astype("Int64")
-        return dlc_df
-
-
-    return
-
-
-@app.cell
-def _(mo):
-    download_dlcData_button = mo.ui.run_button(label="Download / update the mice dlc data")
-    download_dlcData_button
-    return (download_dlcData_button,)
-
-
-@app.cell
-def _():
-    dlc_mice_selected = ['NUO005', 'NUO008', 'NUO010', 'NUO012']
-    return (dlc_mice_selected,)
-
-
-@app.cell
-def _(mo):
-    load_paired_dlc_button = mo.ui.run_button(label="Load paired DLC data")
-    load_paired_dlc_button
-    return
-
-
-@app.cell
-def _(
-    Path,
-    behavior_utils,
-    dlc_mice_selected,
-    download_dlcData_button,
-    injection_info_df,
-    pd,
-    project,
-    utils,
-):
-    behav_df_dic = {}
-    video_df_dic = {}
-
-    if download_dlcData_button.value:
-        for dlc_mouse_selected in dlc_mice_selected:
-            _local_path = Path(utils.get_outpath()) / project / "sessions" / dlc_mouse_selected / "DLC"
-            _local_path.mkdir(parents=True, exist_ok=True)
-
-            utils.rsync_specific_file(
-                file_path="/home/kudongdong/data/behavior_DLC/TrainingVillage_2AFC_superanimal-LeciLab-2025-10-16/v2/{}_*.csv".format(dlc_mouse_selected),
-                local_path=str(_local_path),
-                credentials=utils.get_idibaps_cluster_credentials(),
-            )
-
-    else:
-        for dlc_mouse_selected in dlc_mice_selected:
-            _local_path = Path(utils.get_outpath()) / project / "sessions" / dlc_mouse_selected / "DLC"
-            for dlc_file_ in sorted(_local_path.glob("*DLC*.csv")):
-                random_df = pd.read_csv(dlc_file_, header=[1, 2])
-                behav_df_dic[dlc_file_.name[:29]] = random_df
-
-    video_data_path = f'/storage/training_village/{project}/videos/'
-    if download_dlcData_button.value:
-        for dlc_mouse_selected in dlc_mice_selected:
-            _local_path = Path(utils.get_outpath()) / project / "sessions" / dlc_mouse_selected / "DLC"
-            for dlc_file_ in sorted(_local_path.glob("*DLC*.csv")):
-                utils.rsync_specific_file(
-                    file_path=Path(video_data_path, dlc_mouse_selected, dlc_file_.name[:29]+".csv"),
-                    local_path=str(_local_path),
-                    credentials=utils.get_idibaps_cluster_credentials(),
-                )
-    else:
-        video_df_dic = {}
-        for video_file_ in behav_df_dic:
-            _local_path = Path(utils.get_outpath()) / project / "sessions" / video_file_[:6] / "DLC"
-            video_df = pd.read_csv(Path(_local_path, video_file_+".csv"), sep=';', index_col='frame')
-            video_df = video_df[2:]
-            video_df.index = range(0, len(video_df))
-            video_df_dic[video_file_] = video_df
-
     paired_dlc_dates = behavior_utils.get_paired_injection_dates(
         injection_info_df,
-        mice_selected=dlc_mice_selected,
+        mice_selected=mouse_select,
+        saline_position = "after"
     )
+    paired_dlc_dates
+    return (paired_dlc_dates,)
+
+
+@app.cell
+def _(behav_df_filtered_dic, behavior_utils, paired_dlc_dates):
     (
         behav_df_dic_saline,
         behav_df_dic_dcz,
         behav_pair_map,
         missing_behav_pairs,
-    ) = behavior_utils.split_paired_behavior_dicts(behav_df_dic, paired_dlc_dates)
-    (
-        video_df_dic_saline,
-        video_df_dic_dcz,
-        video_pair_map,
-        missing_video_pairs,
-    ) = behavior_utils.split_paired_behavior_dicts(video_df_dic, paired_dlc_dates)
-
-    behav_pair_map
-    return (
-        behav_df_dic,
-        behav_df_dic_dcz,
-        behav_df_dic_saline,
-        behav_pair_map,
-        video_df_dic,
-        video_df_dic_dcz,
-        video_df_dic_saline,
-    )
+    ) = behavior_utils.split_paired_behavior_dicts(behav_df_filtered_dic, paired_dlc_dates)
+    return behav_df_dic_dcz, behav_df_dic_saline, behav_pair_map
 
 
 @app.cell

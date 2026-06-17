@@ -63,6 +63,7 @@ def get_paired_injection_dates(
     date_col=None,
     subject_col: str = "subject",
     observation_col: str = "observations",
+    saline_position: str = "before",  # "before" or "after"
 ):
     observation_dates = get_injection_observation_dates(
         injection_info_df,
@@ -79,28 +80,50 @@ def get_paired_injection_dates(
         observation_dates["observation_group"] == "DCZ"
     ].copy()
 
-    paired_rows = []
-    for _, dcz_row in dcz_dates.sort_values([subject_col, "date"]).iterrows():
-        previous_saline = saline_dates[
-            (saline_dates[subject_col] == dcz_row[subject_col])
-            & (saline_dates["date"] < dcz_row["date"])
-        ].sort_values("date")
-        if previous_saline.empty:
-            continue
+    if saline_position not in {"before", "after"}:
+        raise ValueError('saline_position must be "before" or "after"')
 
-        saline_row = previous_saline.iloc[-1]
+    paired_rows = []
+
+    for _, dcz_row in dcz_dates.sort_values([subject_col, "date"]).iterrows():
+        same_mouse_saline = saline_dates[
+            saline_dates[subject_col] == dcz_row[subject_col]
+        ]
+
+        if saline_position == "before":
+            candidate_saline = same_mouse_saline[
+                same_mouse_saline["date"] < dcz_row["date"]
+            ].sort_values("date")
+
+            if candidate_saline.empty:
+                continue
+
+            saline_row = candidate_saline.iloc[-1]  # closest previous saline
+
+        else:
+            candidate_saline = same_mouse_saline[
+                same_mouse_saline["date"] > dcz_row["date"]
+            ].sort_values("date")
+
+            if candidate_saline.empty:
+                continue
+
+            saline_row = candidate_saline.iloc[0]  # closest next saline
+
         paired_rows.append(
             {
                 subject_col: dcz_row[subject_col],
                 "saline_date": saline_row["date"],
                 "DCZ_date": dcz_row["date"],
-                "days_between": (dcz_row["date"] - saline_row["date"]).days,
+                "days_between": abs((dcz_row["date"] - saline_row["date"]).days),
                 "saline_observation": saline_row[observation_col],
                 "DCZ_observation": dcz_row[observation_col],
+                "saline_position": saline_position,
             }
         )
 
     paired_dates = pd.DataFrame(paired_rows)
+
     if paired_dates.empty:
         return pd.DataFrame(
             columns=[
@@ -110,6 +133,7 @@ def get_paired_injection_dates(
                 "days_between",
                 "saline_observation",
                 "DCZ_observation",
+                "saline_position",
                 "pair_index",
                 "pair_id",
             ]
@@ -122,6 +146,7 @@ def get_paired_injection_dates(
         + "_pair_"
         + paired_dates["pair_index"].astype(str).str.zfill(2)
     )
+
     return paired_dates.reset_index(drop=True)
 
 
