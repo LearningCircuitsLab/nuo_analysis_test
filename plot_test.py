@@ -615,6 +615,8 @@ def plot_traj_speed(df_bp, cmap, ax, norm):
     x = df_bp['x'].to_numpy()
     y = df_bp['y'].to_numpy()
     sp = df_bp['mean_speed'].to_numpy()
+    if len(x) < 2:
+        return
 
     # Line segments with shape (N-1, 2, 2)
     points = np.column_stack([x, y]).reshape(-1, 1, 2)
@@ -629,12 +631,6 @@ def plot_traj_speed(df_bp, cmap, ax, norm):
     lc.set_capstyle('round')
     lc.set_joinstyle('round')
     ax.add_collection(lc)
-
-    # # Mark start and end points
-    # ax.scatter(x[0], y[0], color='k', s=200, marker='o',
-    #            edgecolors='k', zorder=3)
-    # ax.scatter(x[-1], y[-1], color='w', s=200, marker='o',
-    #            edgecolors='k', zorder=3)
 
 
 def _normalize_from_values(values, quantiles=(0.01, 0.99), default=(0, 1)):

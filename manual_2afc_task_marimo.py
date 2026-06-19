@@ -683,7 +683,7 @@ def _(
         errors="coerce",
     ).dt.strftime("%Y-%m-%d")
 
-    available_dates = df_test_selected_upd[
+    available_dates_ = df_test_selected_upd[
         ["subject", "_pair_date", "_observation_group"]
     ].dropna().drop_duplicates()
 
@@ -698,13 +698,13 @@ def _(
         errors="coerce",
     ).dt.strftime("%Y-%m-%d")
 
-    saline_available = available_dates.rename(
+    saline_available = available_dates_.rename(
         columns={
             "_pair_date": "_saline_date",
             "_observation_group": "_saline_observation_group",
         }
     )
-    dcz_available = available_dates.rename(
+    dcz_available = available_dates_.rename(
         columns={
             "_pair_date": "_DCZ_date",
             "_observation_group": "_DCZ_observation_group",
@@ -771,7 +771,6 @@ def _(
         df_test_selected_upd["subject"].isin(hM3Dq_mice)
     ].copy()
     return (
-        available_dates,
         df_test_selected_hm3,
         df_test_selected_hm4,
         df_test_selected_upd,

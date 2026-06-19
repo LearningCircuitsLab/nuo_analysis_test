@@ -46,7 +46,7 @@ def _():
     )
 
     warnings.filterwarnings("ignore")
-    return Path, behavior_utils, np, pd, plot_test, plt, utils
+    return Path, behavior_utils, mpl, np, pd, plot_test, plt, utils
 
 
 @app.cell(hide_code=True)
@@ -251,17 +251,6 @@ def _(
 
 
 @app.cell
-def _(analyzed_video_names, session_df_dic):
-    sound_play_dic = {}
-    for _name in analyzed_video_names:
-        sound_play_list = []
-        for n in session_df_dic[_name]['sound_played']:
-            sound_play_list.append(eval(n)[0])
-        sound_play_dic[_name] = sound_play_list
-    return (sound_play_dic,)
-
-
-@app.cell
 def _(analyzed_video_names, behav_df_dic):
     bodyparts = behav_df_dic[analyzed_video_names[0]].columns.get_level_values(0).unique().tolist()[1:]
     return (bodyparts,)
@@ -281,19 +270,13 @@ def _(
     behav_df_dic,
     behavior_utils,
     bodyparts,
-    np,
-    sound_play_dic,
     video_df_dic,
 ):
     behav_df_filtered_dic = {}
     for name1 in analyzed_video_names:
         df = behav_df_dic[name1]
         df['timestamp'] = video_df_dic[name1]['timestamp']
-        # input the sound play time in behavior data
-        idx = np.searchsorted(df['timestamp'], sound_play_dic[name1], side='right')
-        df['sound_played'] = np.nan
-        df.loc[idx, 'sound_played'] = sound_play_dic[name1]
-        df = behavior_utils.preprocess_positions(df, likelihood_thr=0.65, distance_thr=200, max_iter=100)
+        df = behavior_utils.preprocess_positions(df, likelihood_thr=0.80, distance_thr=200, max_iter=100)
         behav_df_filtered_dic[name1] = df
 
     # interpolate the positions
@@ -312,7 +295,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # manual mouse select
+    ## manual mouse select
     """)
     return
 
@@ -340,22 +323,26 @@ def _(behavior_utils, mouse_select, pd):
 
 
 @app.cell
-def _(behav_df_filtered_dic, behavior_utils, paired_dlc_dates):
+def _(behav_df_filtered_dic, behavior_utils, paired_dlc_dates, video_df_dic):
     (
         behav_df_dic_saline,
         behav_df_dic_dcz,
         behav_pair_map,
         missing_behav_pairs,
     ) = behavior_utils.split_paired_behavior_dicts(behav_df_filtered_dic, paired_dlc_dates)
-    return behav_df_dic_dcz, behav_df_dic_saline, behav_pair_map
-
-
-@app.cell
-def _(behavior_utils, plot_test):
-    import importlib
-    importlib.reload(behavior_utils)
-    importlib.reload(plot_test)
-    return
+    (
+        video_df_dic_saline,
+        video_df_dic_dcz,
+        video_pair_map,
+        missing_video_pairs,
+    ) = behavior_utils.split_paired_behavior_dicts(video_df_dic, paired_dlc_dates)
+    return (
+        behav_df_dic_dcz,
+        behav_df_dic_saline,
+        behav_pair_map,
+        video_df_dic_dcz,
+        video_df_dic_saline,
+    )
 
 
 @app.cell
@@ -387,26 +374,12 @@ def _(
             video_df_dic_dcz[pair_id],
         )
         behav_df_dic_dcz[pair_id].dropna(subset=[("timestamp", "")], inplace=True)
-        behav_df_dic_dcz[pair_id] = behavior_utils.preprocess_positions(
-            behav_df_dic_dcz[pair_id],
-            likelihood_thr=0.7,
-            distance_thr=200,
-            max_iter=100,
-            speed_thr=600
-        )
 
         behav_df_dic_saline[pair_id] = add_timestamp_from_end(
             behav_df_dic_saline[pair_id],
             video_df_dic_saline[pair_id],
         )
         behav_df_dic_saline[pair_id].dropna(subset=[("timestamp", "")], inplace=True)
-        behav_df_dic_saline[pair_id] = behavior_utils.preprocess_positions(
-            behav_df_dic_saline[pair_id],
-            likelihood_thr=0.7,
-            distance_thr=200,
-            max_iter=100,
-            speed_thr=600
-        )
 
         behav_df_dic_dcz[pair_id] = behavior_utils.compute_distance_speed(
             behav_df_dic_dcz[pair_id],
@@ -420,17 +393,211 @@ def _(
 
 
 @app.cell
-def _():
-    roi_bottom = 80
-    roi_top = 190
-    roi_left = 235
-    roi_right = 400
-    return roi_bottom, roi_left, roi_right, roi_top
+def _(behav_pair_map, mo):
+
+    mouse_options = sorted(behav_pair_map["subject"].unique())
+
+    mouse_dropdown = mo.ui.dropdown(
+        options=mouse_options,
+        value=mouse_options[0],
+        label="Mouse",
+    )
+
+    mouse_dropdown
+    return (mouse_dropdown,)
 
 
 @app.cell
-def _(behav_pair_map):
-    behav_pair_map
+def _(behav_df_dic_saline):
+    behav_df_dic_saline['NUO003_pair_01'][('Center', 'mean_speed')]
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    mo,
+    mouse_dropdown,
+    mpl,
+    pd,
+    plot_test,
+    plt,
+    session_df_dic,
+):
+    def get_timestamp(behav_df):
+        if ("timestamp", "") in behav_df.columns:
+            return behav_df[("timestamp", "")]
+        return behav_df["timestamp"]
+
+
+    def plot_one_session_trajectory(behav_df_filtered, session_df, ax, norm):
+        timestamp = get_timestamp(behav_df_filtered)
+
+        # ========= 2) Plot trajectories =========
+        # ---- no-sound windows: all trials with sound_not_played values
+        if "sound_not_played" in session_df.columns:
+            for _, trial_row in session_df.iterrows():
+                if pd.isna(trial_row["sound_not_played"]):
+                    no_sound_list = []
+                else:
+                    no_sound_list = eval(trial_row["sound_not_played"])
+
+                for t0 in no_sound_list:
+                    df_ns = behav_df_filtered[
+                        (timestamp >= t0)
+                        & (timestamp <= t0 + 15)
+                    ]["Center"]
+
+                    df_ns_inter = df_ns.copy()
+                    df_ns_inter[["x", "y", "mean_speed"]] = (
+                        df_ns_inter[["x", "y", "mean_speed"]]
+                        .interpolate(limit_direction="both")
+                        .dropna()
+                    )
+
+                    plot_test.plot_traj_speed(
+                        df_ns_inter,
+                        cmap="viridis",
+                        ax=ax,
+                        norm=norm,
+                    )
+                    if not df_ns_inter.empty:
+                        ax.scatter(
+                            df_ns_inter["x"].iloc[0],
+                            df_ns_inter["y"].iloc[0],
+                            color="k",
+                            s=200,
+                            marker="o",
+                            edgecolors="k",
+                            zorder=3,
+                        )
+
+        # ---- sound windows: all trials with sound_played values
+        for _, trial_row in session_df.iterrows():
+            if pd.isna(trial_row["sound_played"]):
+                continue
+
+            sound_play_list = eval(trial_row["sound_played"])
+
+            for sound_play_start in sound_play_list:
+                df_s = behav_df_filtered[
+                    (timestamp >= sound_play_start)
+                    & (timestamp <= sound_play_start + 15)
+                ]["Center"]
+
+                df_s_inter = df_s.copy()
+                df_s_inter[["x", "y", "mean_speed"]] = (
+                    df_s_inter[["x", "y", "mean_speed"]]
+                    .interpolate(limit_direction="both")
+                    .dropna()
+                )
+
+                plot_test.plot_traj_speed(
+                    df_s_inter,
+                    cmap="inferno",
+                    ax=ax,
+                    norm=norm,
+                )
+                if not df_s_inter.empty:
+                    ax.scatter(
+                        df_s_inter["x"].iloc[0],
+                        df_s_inter["y"].iloc[0],
+                        color="w",
+                        s=200,
+                        marker="o",
+                        edgecolors="k",
+                        zorder=3,
+                    )
+
+        # ========= 3) Axes and reference lines =========
+        ax.set_xlim(0, 640)
+        ax.set_ylim(0, 480)
+        ax.axes.xaxis.set_visible(False)
+        ax.axes.yaxis.set_visible(False)
+        ax.axvline(x=364, c="k", linestyle="--", linewidth=2)
+
+
+    def plot_all_pairs_for_mouse(mouse):
+        mouse_pair_map = behav_pair_map[
+            behav_pair_map["subject"] == mouse
+        ].copy()
+
+        pair_figures = []
+
+        for _, pair_row in mouse_pair_map.iterrows():
+            pair_id = pair_row["pair_id"]
+
+            saline_df = behav_df_dic_saline[pair_id]
+            dcz_df = behav_df_dic_dcz[pair_id]
+
+            saline_key = pair_row["saline_key"]
+            dcz_key = pair_row["DCZ_key"]
+
+            # ========= 1) Unify the colorbar scale (global vmin/vmax) =========
+            all_speed = pd.concat(
+                [
+                    saline_df[('Center', 'mean_speed')].dropna(),
+                    dcz_df[('Center', 'mean_speed')].dropna(),
+                ]
+            )
+
+            vmin = all_speed.quantile(0.01)
+            vmax = all_speed.quantile(0.99)
+            norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+
+            fig, axes = plt.subplots(1, 2, figsize=(18, 6), sharex=True, sharey=True)
+
+            plot_one_session_trajectory(
+                saline_df,
+                session_df_dic[saline_key],
+                axes[0],
+                norm,
+            )
+            plot_one_session_trajectory(
+                dcz_df,
+                session_df_dic[dcz_key],
+                axes[1],
+                norm,
+            )
+
+            axes[0].set_title(f"saline\n{saline_key}")
+            axes[1].set_title(f"DCZ\n{dcz_key}")
+
+            # ========= 4) Unified colorbars (two colormaps sharing the same norm) =========
+            sm_inferno = mpl.cm.ScalarMappable(norm=norm, cmap="inferno")
+            sm_viridis = mpl.cm.ScalarMappable(norm=norm, cmap="viridis")
+
+            cbar1 = plt.colorbar(
+                sm_inferno,
+                orientation="vertical",
+                ax=axes,
+                shrink=0.3,
+                pad=0.02,
+            )
+            cbar1.set_label("speed (sound) pixels/s", rotation=90)
+
+            cbar2 = plt.colorbar(
+                sm_viridis,
+                orientation="vertical",
+                ax=axes,
+                shrink=0.3,
+                pad=0.10,
+            )
+            cbar2.set_label("speed (no-sound) pixels/s", rotation=90)
+
+            fig.suptitle(pair_id)
+            fig.tight_layout()
+
+            pair_figures.append(fig)
+
+        return pair_figures
+
+
+    trajectory_pair_figures = plot_all_pairs_for_mouse(mouse_dropdown.value)
+
+    mo.vstack(trajectory_pair_figures)
     return
 
 

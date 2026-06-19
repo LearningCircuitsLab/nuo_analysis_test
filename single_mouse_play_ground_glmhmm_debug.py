@@ -70,6 +70,7 @@ def _(utils):
 def _():
     # project = "visual_and_COT_data"
     project = "COT_cannula_data"
+    # project = "COT_cannula_GAD2_data"
     return (project,)
 
 
@@ -321,7 +322,22 @@ def _(df_options, df_selector, pd):
 
     stim_col = "model_stimulus"
     df_test
-    return df_test, stim_col
+    for session_1 in df_test["session"].unique():
+        df_session_1 = df_test[df_test["session"] == session_1].copy()
+
+        repeat_choice_numeric = (
+            df_session_1["previous_first_choice"]
+            == df_session_1["first_choice"]
+        ).astype(int)
+
+        df_test.loc[
+            df_session_1.index,
+            "repeat_choice_numeric"
+        ] = repeat_choice_numeric
+
+    df_test_vis = df_test[df_test['stimulus_modality'] == 'visual']
+    df_test_aud = df_test[df_test['stimulus_modality'] == 'auditory']
+    return df_test, df_test_aud, df_test_vis, stim_col
 
 
 @app.cell(hide_code=True)
@@ -546,10 +562,8 @@ def _(df_test, plt, sns, stim_col, utils_test):
         plt.figure(figsize=(5, 5), dpi=150)
 
         if "vis" in stage_name__:
-            # x_col = "visual_stimulus_ratio"
             valueType = "discrete"
         else:
-            # x_col = "total_evidence_strength"
             valueType = "continue"
 
         if "easy" in stage_name__:
@@ -571,13 +585,13 @@ def _(df_test, plt, sns, stim_col, utils_test):
             utils_test.psychometric_plot_easy_logistic(
                 df_mouse_psycurve,
                 x=stim_col,
-                y="roa_choice_numeric",
+                y="repeat_choice_numeric",
                 valueType = valueType,
                 bins = bins,
                 point_kwargs={
                     "color": color,
                     "label": "",
-                    "alpha": 0.3,
+                    "alpha": 0.6,
                 },
                 line_kwargs={
                     "color": color,
@@ -591,7 +605,7 @@ def _(df_test, plt, sns, stim_col, utils_test):
             x=stim_col,
             valueType = valueType,
             bins = bins,
-            y="roa_choice_numeric",
+            y="repeat_choice_numeric",
             point_kwargs={
                 "color": "black",
                 "label": "",
@@ -607,6 +621,366 @@ def _(df_test, plt, sns, stim_col, utils_test):
         plt.legend(frameon=False)
         plt.tight_layout()
         plt.show()
+    return
+
+
+@app.cell
+def _():
+    # for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
+    #     plt.figure(figsize=(5, 5), dpi=150)
+
+    #     if "vis" in stage_name__:
+    #         x_col = "visual_stimulus_diff"
+    #         valueType = "continue"
+    #     else:
+    #         x_col = "total_evidence_strength"
+    #         valueType = "continue"
+
+    #     if "easy" in stage_name__:
+    #         bins = 2
+    #     else:
+    #         bins = 6
+
+
+    #     for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
+    #         color_palette = sns.color_palette(
+    #             "colorblind",
+    #             df_stage__['subject'].nunique()
+    #         )
+
+    #     for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
+    #         df_stage__.groupby('subject'),
+    #         sns.color_palette("colorblind", df_stage__['subject'].nunique())
+    #     ):
+    #         utils_test.psychometric_plot_easy_logistic(
+    #             df_mouse_psycurve,
+    #             x=x_col,
+    #             y="first_choice_numeric",
+    #             valueType = valueType,
+    #             bins = bins,
+    #             point_kwargs={
+    #                 "color": color,
+    #                 "label": "",
+    #                 "alpha": 0.6,
+    #             },
+    #             line_kwargs={
+    #                 "color": color,
+    #                 "label": "",
+    #                 "alpha": 1,
+    #             },
+    #         )
+
+    #     utils_test.psychometric_plot_easy_logistic(
+    #         df_stage__,
+    #         x=x_col,
+    #         valueType = valueType,
+    #         bins = bins,
+    #         y="first_choice_numeric",
+    #         point_kwargs={
+    #             "color": "black",
+    #             "label": "",
+    #         },
+    #         line_kwargs={
+    #             "color": color,
+    #             "label": "",
+    #             "alpha": 1,
+    #         },
+    #     )
+
+    #     plt.title(stage_name__)
+    #     plt.legend(frameon=False)
+    #     plt.tight_layout()
+    #     plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # matrix with previous choices
+    """)
+    return
+
+
+@app.cell
+def _():
+    # fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+    # for ax_idx, (choice_value, df_test_) in enumerate(
+    #     df_test[df_test['stimulus_modality'] == 'visual'].groupby('previous_first_choice')
+    # ):
+    #     df_test_ = df_test_.copy()
+    #     df_test_['visual_stimulus_ratio'] = df_test_['visual_stimulus_ratio'].apply(lambda x: round(x, 2))
+    #     for mouse in df_test_['subject'].unique():
+    #         for session in df_test_[df_test_.subject == mouse]['session'].unique():
+    #             df_mouse_session = df_test_[np.logical_and(df_test_['subject'] == mouse, df_test_['session'] == session)]
+    #             df_mouse_session['previous_visual_stimulus_ratio'] = df_mouse_session['visual_stimulus_ratio'].shift(1, fill_value=np.nan)
+    #             df_test_.loc[df_mouse_session.index, 'previous_visual_stimulus_ratio'] = df_mouse_session['previous_visual_stimulus_ratio']
+    #     pivot_table = df_test_.pivot_table(
+    #         index='previous_visual_stimulus_ratio',
+    #         columns='visual_stimulus_ratio',
+    #         values='first_choice_numeric',
+    #         aggfunc='mean',
+    #         observed=True
+    #     )
+    #     # plot the heatmap
+    #     sns.heatmap(
+    #         pivot_table,
+    #         cmap='coolwarm',
+    #         annot=True,
+    #         fmt=".2f",
+    #         cbar_kws={'label': 'Probability of Left Choice'},
+    #         vmin=0,
+    #         vmax=1,
+    #         annot_kws={"color": "black"},
+    #         ax=axes[ax_idx],
+    #     )
+
+    #     axes[ax_idx].set_xlabel("Visual Stimulus Ratio")
+    #     axes[ax_idx].set_ylabel("Previous Visual Stimulus Ratio")
+    #     axes[ax_idx].set_title(f"previous first choice = {choice_value}")
+    # # rotate the y-axis labels
+    # plt.yticks(rotation=0)
+    # plt.show()
+    return
+
+
+@app.cell
+def _():
+    # fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+    # for ax_idx, (choice_value, df_test_) in enumerate(
+    #     df_test[df_test['stimulus_modality'] == 'auditory'].groupby('previous_first_choice')
+    # ):
+    #     df_test_ = df_test_.copy()
+    #     bins_=6
+    #     bin_groups = pd.cut(df_test_['total_evidence_strength'], bins=bins_)
+    #     labels = df_test_['total_evidence_strength'].groupby(bin_groups).mean()
+    #     df_test_['total_evidence_strength_binned'] = pd.cut(df_test_['total_evidence_strength'], bins=bins_, labels=labels).astype(float)
+    #     df_test_['total_evidence_strength_binned'] = df_test_['total_evidence_strength_binned'].apply(lambda x: round(x, 2))
+    #     for mouse in df_test_['subject'].unique():
+    #         for session in df_test_[df_test_.subject == mouse]['session'].unique():
+    #             df_mouse_session = df_test_[np.logical_and(df_test_['subject'] == mouse, df_test_['session'] == session)]
+    #             df_mouse_session['previous_total_evidence_strength_binned'] = df_mouse_session['total_evidence_strength_binned'].shift(1, fill_value=np.nan)
+    #             df_test_.loc[df_mouse_session.index, 'previous_total_evidence_strength_binned'] = df_mouse_session['previous_total_evidence_strength_binned']
+    #     pivot_table = df_test_.pivot_table(
+    #         index='previous_total_evidence_strength_binned',
+    #         columns='total_evidence_strength_binned',
+    #         values='first_choice_numeric',
+    #         aggfunc='mean',
+    #         observed=True
+    #     )
+    #     # plot the heatmap
+    #     sns.heatmap(
+    #         pivot_table,
+    #         cmap='coolwarm',
+    #         annot=True,
+    #         fmt=".2f",
+    #         cbar_kws={'label': 'Probability of Left Choice'},
+    #         vmin=0,
+    #         vmax=1,
+    #         annot_kws={"color": "black"},
+    #         ax=axes[ax_idx],
+    #     )
+
+    #     axes[ax_idx].set_xlabel("total_evidence_strength_binned")
+    #     axes[ax_idx].set_ylabel("previous total_evidence_strength_binned")
+    #     axes[ax_idx].set_title(f"previous first choice = {choice_value}")
+    # # rotate the y-axis labels
+    # plt.yticks(rotation=0)
+    # plt.show()
+    return
+
+
+@app.cell
+def _(df_test_aud, df_test_vis, mo, np, pd, plt, sns):
+    def add_previous_col(df, value_col, previous_col):
+        df = df.copy()
+        df[previous_col] = (
+            df
+            .groupby(["subject", "session"])[value_col]
+            .shift(1)
+        )
+        return df
+
+
+    # ---------- visual ----------
+    df_test_vis_ = df_test_vis.copy()
+    df_test_vis_["visual_stimulus_ratio"] = (
+        df_test_vis_["visual_stimulus_ratio"].round(2)
+    )
+
+    df_test_vis_ = add_previous_col(
+        df_test_vis_,
+        value_col="visual_stimulus_ratio",
+        previous_col="previous_visual_stimulus_ratio",
+    )
+
+    pivot_table_vis = df_test_vis_.pivot_table(
+        index="previous_visual_stimulus_ratio",
+        columns="visual_stimulus_ratio",
+        values="repeat_choice_numeric",
+        aggfunc="mean",
+        observed=True,
+    )
+
+
+    # ---------- auditory ----------
+    df_test_aud_ = df_test_aud.copy()
+
+    max_abs = df_test_aud_["total_evidence_strength"].abs().max()
+    bins__ = np.linspace(-max_abs, max_abs, 7)
+    centers = (bins__[:-1] + bins__[1:]) / 2
+
+    df_test_aud_["total_evidence_strength_binned"] = pd.cut(
+        df_test_aud_["total_evidence_strength"],
+        bins=bins__,
+        labels=[f"{c:.2f}" for c in centers],
+        include_lowest=True,
+    )
+
+    df_test_aud_ = add_previous_col(
+        df_test_aud_,
+        value_col="total_evidence_strength_binned",
+        previous_col="previous_total_evidence_strength_binned",
+    )
+
+    pivot_table_aud = df_test_aud_.pivot_table(
+        index="previous_total_evidence_strength_binned",
+        columns="total_evidence_strength_binned",
+        values="repeat_choice_numeric",
+        aggfunc="mean",
+        observed=True,
+    )
+
+
+    # ---------- plot ----------
+    fig_vis, ax_vis = plt.subplots(figsize=(5, 4))
+    sns.heatmap(
+        pivot_table_vis,
+        cmap="coolwarm",
+        annot=True,
+        fmt=".2f",
+        cbar_kws={"label": "Probability of repeat Choice"},
+        vmin=0,
+        vmax=1,
+        annot_kws={"color": "black"},
+        ax=ax_vis,
+    )
+    ax_vis.set_xlabel("visual stimulus ratio")
+    ax_vis.set_ylabel("previous visual stimulus ratio")
+    ax_vis.tick_params(axis="x", rotation=45)
+    ax_vis.tick_params(axis="y", rotation=0)
+    ax_vis.set_title("Visual")
+
+
+    fig_aud, ax_aud = plt.subplots(figsize=(5, 4))
+    sns.heatmap(
+        pivot_table_aud,
+        cmap="coolwarm",
+        annot=True,
+        fmt=".2f",
+        cbar_kws={"label": "Probability of repeat Choice"},
+        vmin=0,
+        vmax=1,
+        annot_kws={"color": "black"},
+        ax=ax_aud,
+    )
+    ax_aud.set_xlabel("total evidence strength binned")
+    ax_aud.set_ylabel("previous total evidence strength binned")
+    ax_aud.tick_params(axis="x", rotation=45)
+    ax_aud.tick_params(axis="y", rotation=0)
+    ax_aud.set_title("Auditory")
+
+
+    mo.hstack([fig_vis, fig_aud])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # stimulus correlation to see antibias
+    """)
+    return
+
+
+@app.cell
+def _(df_test, np):
+    df_test_copy = df_test.copy()
+    for session_2 in df_test["session"].unique():
+        df_session_2 = df_test[df_test["session"] == session_2].copy()
+
+        df_session_2["previous_correct_side"] = (
+            df_session_2["correct_side"].shift(1, fill_value=np.nan)
+        )
+        df_test_copy.loc[
+            df_session_2.index,
+            "previous_correct_side"
+        ] = df_session_2["previous_correct_side"]
+    return (df_test_copy,)
+
+
+@app.cell
+def _(df_test_copy, pd, plt, sns):
+    df_test_copy_vis = df_test_copy[
+        df_test_copy["stimulus_modality"] == "visual"
+    ]
+
+    df_test_copy_aud = df_test_copy[
+        df_test_copy["stimulus_modality"] == "auditory"
+    ]
+
+    correlation_table_vis = pd.crosstab(
+        df_test_copy_vis["previous_correct_side"],
+        df_test_copy_vis["correct_side"],
+        normalize="index",
+    )
+
+    correlation_table_aud = pd.crosstab(
+        df_test_copy_aud["previous_correct_side"],
+        df_test_copy_aud["correct_side"],
+        normalize="index",
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(9, 3.5))
+
+    # 左边：visual
+    sns.heatmap(
+        correlation_table_vis,
+        annot=True,
+        fmt=".2f",
+        cmap="coolwarm",
+        vmin=0,
+        vmax=1,
+        cbar_kws={"label": "Probability"},
+        ax=axes[0],
+    )
+
+    axes[0].set_xlabel("Current correct side")
+    axes[0].set_ylabel("Previous correct side")
+    axes[0].set_title("Visual")
+    axes[0].tick_params(axis="x", rotation=0)
+    axes[0].tick_params(axis="y", rotation=0)
+
+    # 右边：auditory
+    sns.heatmap(
+        correlation_table_aud,
+        annot=True,
+        fmt=".2f",
+        cmap="coolwarm",
+        vmin=0,
+        vmax=1,
+        cbar_kws={"label": "Probability"},
+        ax=axes[1],
+    )
+
+    axes[1].set_xlabel("Current correct side")
+    axes[1].set_ylabel("Previous correct side")
+    axes[1].set_title("Auditory")
+    axes[1].tick_params(axis="x", rotation=0)
+    axes[1].tick_params(axis="y", rotation=0)
+
+    plt.tight_layout()
+    plt.show()
     return
 
 
@@ -1726,6 +2100,14 @@ def _(
     return (hmm_model_dic,)
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## permute states order
+    """)
+    return
+
+
 @app.cell
 def _(hmm_model_dic, input_cols_noStim, np, pd, stim_col):
     from scipy.optimize import linear_sum_assignment
@@ -1777,29 +2159,29 @@ def _(hmm_model_dic, input_cols_noStim, np, pd, stim_col):
         # stimulus state
         old_stimulus_label = stim_abs.idxmax()
         old_stimulus_state = int(old_stimulus_label.replace("state", ""))
-    
+
         # remaining states
         remaining_labels = [
             f"state{i}"
             for i in range(hmm.K)
             if f"state{i}" != old_stimulus_label
         ]
-    
+
         # bias vs history dominance
         dominance = bias_abs - history_abs
-    
+
         old_bias_label = dominance.loc[remaining_labels].idxmax()
         old_history_label = dominance.loc[remaining_labels].idxmin()
-    
+
         old_bias_state = int(old_bias_label.replace("state", ""))
         old_history_state = int(old_history_label.replace("state", ""))
-    
+
         perm = [
             old_bias_state,
             old_stimulus_state,
             old_history_state,
         ]
-    
+
         hmm.permute(perm)
 
         weights_after = np.asarray(
@@ -1818,7 +2200,6 @@ def _(hmm_model_dic, input_cols_noStim, np, pd, stim_col):
         print(hmm_model_name)
         print(f"weight before reorder\n{weight_df_before}")
         print(f"permute{perm}")
-
     return
 
 
@@ -1980,12 +2361,6 @@ def _(Path, hmm_model_dic, input_cols_noStim, pd, stim_col, utils_test):
 
     state_distribution_df
     return (state_distribution_df,)
-
-
-@app.cell
-def _(hmm_model_dic):
-    hmm_model_dic['NUO001_aud_easy']['model'].observations.params.squeeze().ndim
-    return
 
 
 @app.cell

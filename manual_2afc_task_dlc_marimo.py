@@ -1192,6 +1192,7 @@ def _(behavior_utils, np, pd):
 
         return output
 
+
     def get_roi_per_mouse_sessions(
         behav_df_dic_saline,
         behav_df_dic_dcz,
@@ -1572,7 +1573,493 @@ def _(mo):
 
 
 @app.cell
-def _():
+def _(behavior_utils, np, pd):
+    def get_mean_speed(behav_df, bodypart="Center", speed_col="mean_speed"):
+        speed = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                (bodypart, speed_col),
+            ),
+            errors="coerce",
+        ).to_numpy(dtype=float)
+        speed = speed[np.isfinite(speed)]
+        if len(speed) == 0:
+            return np.nan
+        return float(np.nanmean(speed))
+
+    def get_trial_speed_by_split_col(
+        behav_df,
+        trial_df,
+        split_column="engaged",
+        split_labels=("engaged", "disengaged"),
+        bodypart="Center",
+        speed_col="mean_speed",
+    ):
+        true_label, false_label = split_labels
+        speed_values_by_split = {true_label: [], false_label: []}
+        speed_time_by_split = {true_label: 0.0, false_label: 0.0}
+        time_by_split = {true_label: 0.0, false_label: 0.0}
+
+        timestamp = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                ("timestamp", ""),
+            ),
+            errors="coerce",
+        )
+        speed = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                (bodypart, speed_col),
+            ),
+            errors="coerce",
+        )
+
+        frame_df = (
+            pd.DataFrame(
+                {
+                    "timestamp": timestamp.to_numpy(),
+                    "speed": speed.to_numpy(),
+                }
+            )
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna(subset=["timestamp"])
+            .sort_values("timestamp")
+        )
+
+        t = frame_df["timestamp"].to_numpy(dtype=float)
+        speed_values = frame_df["speed"].to_numpy(dtype=float)
+        dt = np.diff(t)
+        positive_dt = dt[np.isfinite(dt) & (dt > 0)]
+        median_dt = float(np.median(positive_dt)) if len(positive_dt) else 0.0
+
+        frame_end = np.empty_like(t)
+        if len(t) > 1:
+            frame_end[:-1] = t[1:]
+        frame_end[-1] = t[-1] + median_dt
+
+        valid_speed = np.isfinite(speed_values)
+
+        for _, trial_row in trial_df.iterrows():
+            split_label = true_label if bool(trial_row[split_column]) else false_label
+            trial_start = pd.to_numeric(
+                trial_row["TRIAL_START"],
+                errors="coerce",
+            )
+            trial_end = pd.to_numeric(
+                trial_row["TRIAL_END"],
+                errors="coerce",
+            )
+            if (
+                not np.isfinite(trial_start)
+                or not np.isfinite(trial_end)
+                or trial_end <= trial_start
+            ):
+                continue
+
+            overlap_start = np.maximum(t, float(trial_start))
+            overlap_end = np.minimum(frame_end, float(trial_end))
+            overlap = np.clip(overlap_end - overlap_start, 0, None)
+            overlap = np.where(valid_speed, overlap, 0.0)
+
+            speed_time_by_split[split_label] += float(
+                np.sum(speed_values[valid_speed] * overlap[valid_speed])
+            )
+            time_by_split[split_label] += float(np.sum(overlap[valid_speed]))
+
+        for split_label in split_labels:
+            if time_by_split[split_label] > 0:
+                speed_values_by_split[split_label].append(
+                    speed_time_by_split[split_label]
+                    / time_by_split[split_label]
+                )
+
+        return speed_values_by_split
+
+    def get_trial_speed_per_mouse_sessions(
+        behav_df_dic_saline,
+        behav_df_dic_dcz,
+        df_dic_saline,
+        df_dic_dcz,
+        behav_pair_map,
+        subjects=None,
+        bodypart="Center",
+        speed_col="mean_speed",
+        split_column="engaged",
+        split_labels=("engaged", "disengaged"),
+        difference=False,
+    ):
+        output = _empty_roi_output(
+            difference=difference,
+            by_engagement=True,
+        )
+
+        for _, pair_row in behav_pair_map.sort_values("pair_id").iterrows():
+            pair_id = pair_row["pair_id"]
+            subject = str(pair_row["subject"])
+            if subjects is not None and subject not in subjects:
+                continue
+            if (
+                pair_id not in behav_df_dic_saline
+                or pair_id not in behav_df_dic_dcz
+                or pair_id not in df_dic_saline
+                or pair_id not in df_dic_dcz
+            ):
+                continue
+
+            modality = str(pair_row.get("stimulus_modality", "")).lower()
+            has_visual = "visual" in modality
+            has_auditory = "auditory" in modality
+            if has_visual == has_auditory:
+                continue
+            modality_prefix = "vis" if has_visual else "aud"
+
+            saline_speed = get_trial_speed_by_split_col(
+                behav_df_dic_saline[pair_id],
+                df_dic_saline[pair_id],
+                split_column=split_column,
+                split_labels=split_labels,
+                bodypart=bodypart,
+                speed_col=speed_col,
+            )
+            dcz_speed = get_trial_speed_by_split_col(
+                behav_df_dic_dcz[pair_id],
+                df_dic_dcz[pair_id],
+                split_column=split_column,
+                split_labels=split_labels,
+                bodypart=bodypart,
+                speed_col=speed_col,
+            )
+
+            if difference:
+                mouse_output = _mouse_split_output(
+                    output[modality_prefix],
+                    subject,
+                    split_labels,
+                )
+                for split_label in split_labels:
+                    saline_values = np.asarray(
+                        saline_speed[split_label],
+                        dtype=float,
+                    )
+                    dcz_values = np.asarray(
+                        dcz_speed[split_label],
+                        dtype=float,
+                    )
+                    if len(saline_values) == 0 or len(dcz_values) == 0:
+                        continue
+                    mouse_output[split_label].append(
+                        float(np.nanmean(saline_values) - np.nanmean(dcz_values))
+                    )
+                continue
+
+            saline_output = _mouse_split_output(
+                output[f"{modality_prefix}_saline"],
+                subject,
+                split_labels,
+            )
+            dcz_output = _mouse_split_output(
+                output[f"{modality_prefix}_dcz"],
+                subject,
+                split_labels,
+            )
+            for split_label in split_labels:
+                saline_output[split_label].extend(saline_speed[split_label])
+                dcz_output[split_label].extend(dcz_speed[split_label])
+
+        return output
+
+    def get_speed_per_mouse_sessions(
+        behav_df_dic_saline,
+        behav_df_dic_dcz,
+        behav_pair_map,
+        df_dic_saline=None,
+        df_dic_dcz=None,
+        subjects=None,
+        bodypart="Center",
+        speed_col="mean_speed",
+        split_column=None,
+        split_labels=("engaged", "disengaged"),
+        difference=False,
+    ):
+        if split_column is not None:
+            return get_trial_speed_per_mouse_sessions(
+                behav_df_dic_saline=behav_df_dic_saline,
+                behav_df_dic_dcz=behav_df_dic_dcz,
+                df_dic_saline=df_dic_saline,
+                df_dic_dcz=df_dic_dcz,
+                behav_pair_map=behav_pair_map,
+                subjects=subjects,
+                bodypart=bodypart,
+                speed_col=speed_col,
+                split_column=split_column,
+                split_labels=split_labels,
+                difference=difference,
+            )
+
+        output = _empty_roi_output(difference=difference)
+
+        for _, pair_row in behav_pair_map.sort_values("pair_id").iterrows():
+            pair_id = pair_row["pair_id"]
+            subject = str(pair_row["subject"])
+            if subjects is not None and subject not in subjects:
+                continue
+            if (
+                pair_id not in behav_df_dic_saline
+                or pair_id not in behav_df_dic_dcz
+            ):
+                continue
+
+            modality = str(pair_row.get("stimulus_modality", "")).lower()
+            has_visual = "visual" in modality
+            has_auditory = "auditory" in modality
+            if has_visual == has_auditory:
+                continue
+            modality_prefix = "vis" if has_visual else "aud"
+
+            saline_speed = get_mean_speed(
+                behav_df_dic_saline[pair_id],
+                bodypart=bodypart,
+                speed_col=speed_col,
+            )
+            dcz_speed = get_mean_speed(
+                behav_df_dic_dcz[pair_id],
+                bodypart=bodypart,
+                speed_col=speed_col,
+            )
+
+            if difference:
+                if pd.notna(saline_speed) and pd.notna(dcz_speed):
+                    output[modality_prefix].setdefault(
+                        subject,
+                        [],
+                    ).append(float(saline_speed - dcz_speed))
+                continue
+
+            if pd.notna(saline_speed):
+                output[f"{modality_prefix}_saline"].setdefault(
+                    subject,
+                    [],
+                ).append(float(saline_speed))
+            if pd.notna(dcz_speed):
+                output[f"{modality_prefix}_dcz"].setdefault(
+                    subject,
+                    [],
+                ).append(float(dcz_speed))
+
+        return output
+
+
+    return (get_speed_per_mouse_sessions,)
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    compare_value_select,
+    compare_value_settings,
+    df_dic_dcz,
+    df_dic_saline,
+    get_speed_per_mouse_sessions,
+    hM3Dq_mice,
+    hM4Di_mice,
+):
+    compare_value_setting = compare_value_settings[compare_value_select.value]
+    split_col = compare_value_setting["split_col"]
+    split_label = compare_value_setting["split_label"]
+
+    speed_per_animal_condition_hm4 = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM4Di_mice,
+    )
+    speed_per_animal_condition_hm4_diff = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM4Di_mice,
+        difference=True,
+    )
+    speed_per_animal_condition_hm3 = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM3Dq_mice,
+    )
+    speed_per_animal_condition_hm3_diff = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM3Dq_mice,
+        difference=True,
+    )
+    speed_per_animal_condition_hm4_split_col = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM4Di_mice,
+        split_column=split_col,
+        split_labels=split_label,
+    )
+    speed_per_animal_condition_hm4_diff_split_col = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM4Di_mice,
+        split_column=split_col,
+        split_labels=split_label,
+        difference=True,
+    )
+    speed_per_animal_condition_hm3_split_col = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM3Dq_mice,
+        split_column=split_col,
+        split_labels=split_label,
+    )
+    speed_per_animal_condition_hm3_diff_split_col = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        df_dic_saline=df_dic_saline,
+        df_dic_dcz=df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM3Dq_mice,
+        split_column=split_col,
+        split_labels=split_label,
+        difference=True,
+    )
+    return (
+        speed_per_animal_condition_hm3,
+        speed_per_animal_condition_hm3_diff,
+        speed_per_animal_condition_hm3_diff_split_col,
+        speed_per_animal_condition_hm3_split_col,
+        speed_per_animal_condition_hm4,
+        speed_per_animal_condition_hm4_diff,
+        speed_per_animal_condition_hm4_diff_split_col,
+        speed_per_animal_condition_hm4_split_col,
+        split_col,
+        split_label,
+    )
+
+
+@app.cell
+def _(
+    mo,
+    plot_test,
+    speed_per_animal_condition_hm3,
+    speed_per_animal_condition_hm3_diff,
+    speed_per_animal_condition_hm4,
+    speed_per_animal_condition_hm4_diff,
+):
+    hm4_speed_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            speed_per_animal_condition_hm4,
+            "hM4Di",
+            ylabel="Session mean speed",
+            title="hM4Di: mean speed by condition",
+        )
+    )
+    hm3_speed_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            speed_per_animal_condition_hm3,
+            "hM3Dq",
+            ylabel="Session mean speed",
+            title="hM3Dq: mean speed by condition",
+        )
+    )
+    speed_condition_diff_session_fig = (
+        plot_test.plot_group_condition_values_by_mouse(
+            speed_per_animal_condition_hm3_diff,
+            speed_per_animal_condition_hm4_diff,
+            ylabel="saline - DCZ (session mean speed)",
+            title="mean speed saline - DCZ",
+        )
+    )
+
+    mo.vstack(
+        [
+            hm4_speed_condition_session_fig,
+            hm3_speed_condition_session_fig,
+            speed_condition_diff_session_fig,
+        ]
+    )
+    return
+
+
+@app.cell
+def _(
+    compare_value_select,
+    mo,
+    plot_test,
+    speed_per_animal_condition_hm3_diff_split_col,
+    speed_per_animal_condition_hm3_split_col,
+    speed_per_animal_condition_hm4_diff_split_col,
+    speed_per_animal_condition_hm4_split_col,
+    split_col,
+    split_label,
+):
+    compare_value_name = compare_value_select.value
+    hm4_speed_engagement_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            speed_per_animal_condition_hm4_split_col,
+            "hM4Di",
+            ylabel="Session mean speed",
+            title=(
+                f"hM4Di: mean speed by condition and "
+                f"{compare_value_name}"
+            ),
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    hm3_speed_engagement_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            speed_per_animal_condition_hm3_split_col,
+            "hM3Dq",
+            ylabel="Session mean speed",
+            title=(
+                f"hM3Dq: mean speed by condition and "
+                f"{compare_value_name}"
+            ),
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    speed_engagement_condition_diff_session_fig = (
+        plot_test.plot_group_condition_values_by_mouse(
+            speed_per_animal_condition_hm3_diff_split_col,
+            speed_per_animal_condition_hm4_diff_split_col,
+            ylabel="saline - DCZ (session mean speed)",
+            title=f"mean speed saline - DCZ by {compare_value_name}",
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    mo.vstack(
+        [
+            hm4_speed_engagement_condition_session_fig,
+            hm3_speed_engagement_condition_session_fig,
+            speed_engagement_condition_diff_session_fig,
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+ 
+    """)
     return
 
 
