@@ -31,12 +31,14 @@ def _():
     import matplotlib as mpl
     import numpy as np
     import pandas as pd
+    import seaborn as sns
+    from scipy import stats
     from datetime import datetime
     import behavior_utils
     import plot_test
 
     from lecilab_behavior_analysis import utils as utils
-    utils.IDIBAPS_TV_PROJECTS = "/archive/training_village/"
+    utils.IDIBAPS_TV_PROJECTS = "/storage/training_village/"
 
     from lecilab_behavior_analysis import df_transforms as dft
     from lecilab_behavior_analysis import plots
@@ -46,7 +48,7 @@ def _():
     )
 
     warnings.filterwarnings("ignore")
-    return Path, behavior_utils, mpl, np, pd, plot_test, plt, utils
+    return Path, behavior_utils, mpl, np, pd, plot_test, plt, sns, utils
 
 
 @app.cell(hide_code=True)
@@ -141,8 +143,8 @@ def _(
     behav_df_dic = {}
 
     parent_path = "/home/kudongdong/data/behavior_DLC/escape_auditory-LeciLab-2025-10-20/v2/"
-    session_data_path = "/archive/training_village/auditory_escape_data/sessions"
-    video_data_path = "/archive/training_village/auditory_escape_data/videos"
+    session_data_path = "/storage/training_village/auditory_escape_data/sessions"
+    video_data_path = "/storage/training_village/auditory_escape_data/videos"
 
     if download_button.value:
         behavior_files = utils.get_folders_from_server(
@@ -265,7 +267,25 @@ def _(mo):
 
 
 @app.cell
+def _(np):
+    def add_timestamp_from_end(behav_df, video_df):
+        behav_df[("timestamp", "")] = np.nan
+
+        n = min(len(behav_df), len(video_df))
+
+        behav_df.iloc[
+            -n:,
+            behav_df.columns.get_loc(("timestamp", "")),
+        ] = video_df["timestamp"].to_numpy()[-n:]
+
+        return behav_df
+
+    return (add_timestamp_from_end,)
+
+
+@app.cell
 def _(
+    add_timestamp_from_end,
     analyzed_video_names,
     behav_df_dic,
     behavior_utils,
@@ -276,7 +296,7 @@ def _(
     for name1 in analyzed_video_names:
         df = behav_df_dic[name1]
         df['timestamp'] = video_df_dic[name1]['timestamp']
-        df = behavior_utils.preprocess_positions(df, likelihood_thr=0.80, distance_thr=200, max_iter=100)
+        df = behavior_utils.preprocess_positions(df, likelihood_thr=0.83, distance_thr=200, max_iter=100)
         behav_df_filtered_dic[name1] = df
 
     # interpolate the positions
@@ -289,6 +309,17 @@ def _(
                     .interpolate(method="linear", limit_direction="both")
                 )
         behav_df_filtered_dic[name1] = behav_df_filtered
+
+        behav_df_filtered_dic[name1] = add_timestamp_from_end(
+            behav_df_filtered_dic[name1],
+            video_df_dic[name1],
+        )
+        behav_df_filtered_dic[name1].dropna(subset=[("timestamp", "")], inplace=True)
+
+        behav_df_filtered_dic[name1] = behavior_utils.compute_distance_speed(
+            behav_df_filtered_dic[name1],
+            window_size=5,
+        )
     return (behav_df_filtered_dic,)
 
 
@@ -305,7 +336,7 @@ def _():
     # hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
     # hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
     hM3Dq_mice = ['NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
-    hM4Di_mice = ['NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
+    hM4Di_mice = ['NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO005', 'NUO006']
     return hM3Dq_mice, hM4Di_mice
 
 
@@ -336,60 +367,7 @@ def _(behav_df_filtered_dic, behavior_utils, paired_dlc_dates, video_df_dic):
         video_pair_map,
         missing_video_pairs,
     ) = behavior_utils.split_paired_behavior_dicts(video_df_dic, paired_dlc_dates)
-    return (
-        behav_df_dic_dcz,
-        behav_df_dic_saline,
-        behav_pair_map,
-        video_df_dic_dcz,
-        video_df_dic_saline,
-    )
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_utils,
-    np,
-    video_df_dic_dcz,
-    video_df_dic_saline,
-):
-    def add_timestamp_from_end(behav_df, video_df):
-        behav_df[("timestamp", "")] = np.nan
-
-        n = min(len(behav_df), len(video_df))
-
-        behav_df.iloc[
-            -n:,
-            behav_df.columns.get_loc(("timestamp", "")),
-        ] = video_df["timestamp"].to_numpy()[-n:]
-
-        return behav_df
-
-
-    for pair_id in behav_pair_map["pair_id"].unique():
-        behav_df_dic_dcz[pair_id] = add_timestamp_from_end(
-            behav_df_dic_dcz[pair_id],
-            video_df_dic_dcz[pair_id],
-        )
-        behav_df_dic_dcz[pair_id].dropna(subset=[("timestamp", "")], inplace=True)
-
-        behav_df_dic_saline[pair_id] = add_timestamp_from_end(
-            behav_df_dic_saline[pair_id],
-            video_df_dic_saline[pair_id],
-        )
-        behav_df_dic_saline[pair_id].dropna(subset=[("timestamp", "")], inplace=True)
-
-        behav_df_dic_dcz[pair_id] = behavior_utils.compute_distance_speed(
-            behav_df_dic_dcz[pair_id],
-            window_size=5,
-        )
-        behav_df_dic_saline[pair_id] = behavior_utils.compute_distance_speed(
-            behav_df_dic_saline[pair_id],
-            window_size=5,
-        )
-    return
+    return behav_df_dic_dcz, behav_df_dic_saline, behav_pair_map
 
 
 @app.cell
@@ -407,9 +385,11 @@ def _(behav_pair_map, mo):
     return (mouse_dropdown,)
 
 
-@app.cell
-def _(behav_df_dic_saline):
-    behav_df_dic_saline['NUO003_pair_01'][('Center', 'mean_speed')]
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # plot trajectory
+    """)
     return
 
 
@@ -604,1088 +584,1223 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # save tmp svg
+    # mean spead comparison
     """)
     return
 
 
 @app.cell
-def _(Path):
-    save_behavior_svg = True
-    behavior_svg_dir = Path("/mnt/e/data/LeciLab/behavioral_data/tmp")
-    return behavior_svg_dir, save_behavior_svg
-
-
-@app.cell
 def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    mo,
-    plot_test,
-    roi_bottom,
-    roi_left,
-    roi_right,
-    roi_top,
-    save_behavior_svg,
-):
-    pair_figures = plot_test.plot_paired_behavior_figures(
-        pair_ids=behav_pair_map["pair_id"].unique(),
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        roi_left=roi_left,
-        roi_right=roi_right,
-        roi_bottom=roi_bottom,
-        roi_top=roi_top,
-        bodypart="Center",
-    )
-
-    plot_test.save_figures_svg(
-        pair_figures,
-        "paired_behavior",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-
-    mo.vstack(pair_figures)
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_saline,
+    analyzed_video_names,
+    behav_df_filtered_dic,
     behavior_utils,
-    roi_bottom,
-    roi_left,
-    roi_right,
-    roi_top,
-):
-    behavior_utils.get_roi_time_ratio(
-        behav_df_dic_saline['NUO005_pair_01'],
-        roi_left=roi_left,
-        roi_right=roi_right,
-        roi_bottom=roi_bottom,
-        roi_top=roi_top,)
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_utils,
-    roi_bottom,
-    roi_left,
-    roi_right,
-    roi_top,
-    video_df_dic_dcz,
-    video_df_dic_saline,
-):
-    roi_time_ratio_summary = behavior_utils.paired_roi_time_ratio_comparison(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        video_df_dic_saline=video_df_dic_saline,
-        video_df_dic_dcz=video_df_dic_dcz,
-        pair_map=behav_pair_map,
-        roi_left=roi_left,
-        roi_right=roi_right,
-        roi_bottom=roi_bottom,
-        roi_top=roi_top,
-        bodypart="Center",
-    )
-
-    roi_time_ratio_summary
-    return (roi_time_ratio_summary,)
-
-
-@app.cell
-def _(
-    behavior_svg_dir,
     hM3Dq_mice,
     hM4Di_mice,
-    plot_test,
-    plt,
-    roi_time_ratio_summary,
-    save_behavior_svg,
-    stats,
+    np,
+    pd,
+    session_df_dic,
 ):
-    roi_group_df = roi_time_ratio_summary.copy()
-
-    if "subject" not in roi_group_df.columns:
-        roi_group_df["subject"] = roi_group_df["pair_id"].str[:6]
+    timeBin = 10
 
 
-    def plot_roi_group(ax, df, mice, group_name):
-        group_df = df[
-            df["subject"].isin(mice)
-        ].dropna(subset=["saline", "DCZ"]).copy()
+    def build_mean_speed_dictionaries(mice):
+        ns_mean_speed_dic = {}
+        s_mean_speed_dic = {}
 
-        for _, roi_row in group_df.iterrows():
-            ax.plot(
-                [0, 1],
-                [roi_row["saline"], roi_row["DCZ"]],
-                color="gray",
-                alpha=0.4,
-            )
+        for name in sorted(analyzed_video_names):
+            if name[:6] not in mice or name not in session_df_dic:
+                continue
 
-        ax.scatter(
-            [0] * len(group_df),
-            group_df["saline"],
-            color="blue",
-            edgecolor="black",
-            label="saline",
-        )
+            behav_df_filtered = behav_df_filtered_dic[name]
+            if ("Center", "mean_speed") not in behav_df_filtered.columns:
+                behav_df_filtered = behavior_utils.compute_distance_speed(
+                    behav_df_filtered,
+                    bodyparts=["Center"],
+                )
 
-        ax.scatter(
-            [1] * len(group_df),
-            group_df["DCZ"],
-            color="red",
-            edgecolor="black",
-            label="DCZ",
-        )
+            if ("timestamp", "") in behav_df_filtered.columns:
+                timestamp = behav_df_filtered[("timestamp", "")]
+            else:
+                timestamp = behav_df_filtered["timestamp"]
 
-        if len(group_df) > 0:
-            try:
-                roi_p = stats.wilcoxon(
-                    group_df["saline"],
-                    group_df["DCZ"],
-                ).pvalue
-                p_text = f"p={roi_p:.3g}"
-            except ValueError:
-                roi_p = float("nan")
-                p_text = "p=NA"
-        else:
-            roi_p = float("nan")
-            p_text = "p=NA"
+            session_df = session_df_dic[name]
+            ns_mean_speed = []
+            s_mean_speed = []
 
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels(["saline", "DCZ"])
-        ax.set_ylabel("fraction of time in ROI")
-        ax.set_title(f"{group_name}, n={len(group_df)}, {p_text}")
-        plot_test.add_paired_significance_label(
-            ax,
-            group_df["saline"],
-            group_df["DCZ"],
-            plot_test.p_to_star(roi_p),
-        )
-        ax.grid(axis="y", alpha=0.3)
+            for trial in session_df["trial"].dropna().unique():
+                trial_row = session_df[session_df["trial"] == trial]
 
-        return group_df
+                # ---- no-sound windows
+                if "sound_not_played" not in trial_row.columns:
+                    no_sound_list = []
+                elif pd.isna(trial_row["sound_not_played"].iloc[0]):
+                    no_sound_list = []
+                else:
+                    no_sound_list = eval(
+                        trial_row["sound_not_played"].iloc[0]
+                    )
+
+                for t0 in no_sound_list:
+                    df_ns = behav_df_filtered[
+                        (timestamp >= t0)
+                        & (timestamp <= t0 + timeBin)
+                    ]["Center"].dropna()
+                    mean_speed = df_ns["mean_speed"].mean()
+                    if np.isfinite(mean_speed):
+                        ns_mean_speed.append(mean_speed)
+
+                # ---- sound window
+                if (
+                    "sound_played" not in trial_row.columns
+                    or pd.isna(trial_row["sound_played"].iloc[0])
+                ):
+                    continue
+
+                sound_play_list = eval(trial_row["sound_played"].iloc[0])
+                if not sound_play_list:
+                    continue
+
+                sound_play_start = sound_play_list[0]
+                df_s = behav_df_filtered[
+                    (timestamp >= sound_play_start)
+                    & (timestamp <= sound_play_start + timeBin)
+                ]["Center"].dropna()
+                mean_speed = df_s["mean_speed"].mean()
+                if np.isfinite(mean_speed):
+                    s_mean_speed.append(mean_speed)
+
+            ns_mean_speed_dic[name] = ns_mean_speed
+            s_mean_speed_dic[name] = s_mean_speed
+
+        return ns_mean_speed_dic, s_mean_speed_dic
 
 
-    roi_group_fig, roi_group_axes = plt.subplots(
-        1,
-        2,
-        figsize=(8, 5),
-        sharey=True,
+    ns_meanSpeed_dic_hm3, s_meanSpeed_dic_hm3 = (
+        build_mean_speed_dictionaries(hM3Dq_mice)
+    )
+    ns_meanSpeed_dic_hm4, s_meanSpeed_dic_hm4 = (
+        build_mean_speed_dictionaries(hM4Di_mice)
     )
 
-    roi_hm4_df = plot_roi_group(
-        roi_group_axes[0],
-        roi_group_df,
-        hM4Di_mice,
+
+    def mean_speed_dictionaries_to_long(ns_dic, s_dic):
+        session_names = sorted(set(ns_dic) | set(s_dic))
+        session_day = {}
+
+        for subject in sorted({name[:6] for name in session_names}):
+            subject_sessions = sorted(
+                name for name in session_names if name[:6] == subject
+            )
+            for day_index, name in enumerate(subject_sessions, start=1):
+                session_day[name] = f"day{day_index}"
+
+        rows = []
+        for condition, speed_dic in [
+            ("no_sound", ns_dic),
+            ("sound", s_dic),
+        ]:
+            for name, speeds in speed_dic.items():
+                for speed in speeds:
+                    rows.append(
+                        {
+                            "session": name,
+                            "subject": name[:6],
+                            "day": session_day[name],
+                            "cond": condition,
+                            "speed": speed,
+                        }
+                    )
+
+        return pd.DataFrame(rows)
+
+
+    df_meanSpeed_long_hm3 = mean_speed_dictionaries_to_long(
+        ns_meanSpeed_dic_hm3,
+        s_meanSpeed_dic_hm3,
+    )
+    df_meanSpeed_long_hm4 = mean_speed_dictionaries_to_long(
+        ns_meanSpeed_dic_hm4,
+        s_meanSpeed_dic_hm4,
+    )
+    return df_meanSpeed_long_hm3, df_meanSpeed_long_hm4, timeBin
+
+
+@app.cell
+def _(df_meanSpeed_long_hm3, df_meanSpeed_long_hm4, mo, plt, sns, timeBin):
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+
+    def plot_mean_speed_comparison(df, group_name):
+        df = df.copy()
+
+        day_order = sorted(
+            df["day"].unique(),
+            key=lambda x: int(x.removeprefix("day")),
+        )
+        mouse_order = sorted(df["subject"].unique())
+        cond_order = ["no_sound", "sound"]
+
+        palette = {
+            "no_sound": "#3CB371",
+            "sound": "#FA8072",
+        }
+        markers = ["o", "s", "^", "D", "P", "X", "v"]
+        mouse_markers = {
+            mouse: markers[i % len(markers)]
+            for i, mouse in enumerate(mouse_order)
+        }
+
+        # Each mouse-condition combination gets its own box
+        df["mouse_cond"] = df["subject"] + "_" + df["cond"]
+
+        hue_order = [
+            f"{mouse}_{cond}"
+            for mouse in mouse_order
+            for cond in cond_order
+        ]
+        nested_palette = {
+            f"{mouse}_{cond}": palette[cond]
+            for mouse in mouse_order
+            for cond in cond_order
+        }
+
+        fig, ax = plt.subplots(
+            figsize=(max(10, len(day_order) * 2.5), 5),
+            dpi=150,
+        )
+
+        sns.boxplot(
+            data=df,
+            x="day",
+            y="speed",
+            hue="mouse_cond",
+            order=day_order,
+            hue_order=hue_order,
+            palette=nested_palette,
+            fill=False,
+            width=0.8,
+            showfliers=False,
+            ax=ax,
+        )
+
+        # Plot each mouse separately to give it a unique marker
+        for mouse in mouse_order:
+            mouse_df = df[df["subject"] == mouse]
+
+            sns.stripplot(
+                data=mouse_df,
+                x="day",
+                y="speed",
+                hue="mouse_cond",
+                order=day_order,
+                hue_order=hue_order,
+                palette=nested_palette,
+                dodge=True,
+                jitter=0.12,
+                marker=mouse_markers[mouse],
+                size=6,
+                alpha=0.6,
+                edgecolor="black",
+                linewidth=0.4,
+                legend=False,
+                ax=ax,
+            )
+
+        # Condition color legend
+        condition_handles = [
+            Patch(
+                facecolor="none",
+                edgecolor=palette[cond],
+                linewidth=2,
+                label=cond,
+            )
+            for cond in cond_order
+        ]
+        condition_legend = ax.legend(
+            handles=condition_handles,
+            title="Condition",
+            frameon=False,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+        )
+        ax.add_artist(condition_legend)
+
+        # Mouse marker legend
+        mouse_handles = [
+            Line2D(
+                [0], [0],
+                marker=mouse_markers[mouse],
+                linestyle="none",
+                markerfacecolor="gray",
+                markeredgecolor="black",
+                markersize=7,
+                label=mouse,
+            )
+            for mouse in mouse_order
+        ]
+        ax.legend(
+            handles=mouse_handles,
+            title="Mouse",
+            frameon=False,
+            bbox_to_anchor=(1.02, 0.55),
+            loc="upper left",
+        )
+
+        ax.set_xlabel("Day")
+        ax.set_ylabel(
+            f"Mean speed per trial in first {timeBin}s (pixels/s)"
+        )
+        ax.set_title(group_name)
+
+        fig.tight_layout()
+        return fig
+
+
+    mean_speed_fig_hm3 = plot_mean_speed_comparison(
+        df_meanSpeed_long_hm3,
+        "hM3Dq",
+    )
+    mean_speed_fig_hm4 = plot_mean_speed_comparison(
+        df_meanSpeed_long_hm4,
         "hM4Di",
     )
 
-    roi_hm3_df = plot_roi_group(
-        roi_group_axes[1],
-        roi_group_df,
-        hM3Dq_mice,
+    mo.vstack([mean_speed_fig_hm3, mean_speed_fig_hm4])
+    return
+
+
+@app.cell
+def _(df_meanSpeed_long_hm3, df_meanSpeed_long_hm4, mo, plt):
+    def calculate_mouse_day_speed_diff(df_mean_speed_long):
+        condition_mean = (
+            df_mean_speed_long
+            .groupby(["subject", "day", "cond"], as_index=False)["speed"]
+            .mean()
+        )
+
+        speed_diff_df = (
+            condition_mean
+            .pivot(
+                index=["subject", "day"],
+                columns="cond",
+                values="speed",
+            )
+            .reset_index()
+        )
+
+        speed_diff_df["speed_diff"] = (
+            speed_diff_df["sound"]
+            - speed_diff_df["no_sound"]
+        )
+
+        speed_diff_df["day_number"] = (
+            speed_diff_df["day"]
+            .str.extract(r"(\d+)", expand=False)
+            .astype(int)
+        )
+
+        return speed_diff_df.sort_values(["subject", "day_number"])
+
+
+    def plot_mouse_speed_diff(speed_diff_df, group_name):
+        fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+
+        for subject, mouse_df in speed_diff_df.groupby("subject"):
+            mouse_df = mouse_df.dropna(subset=["speed_diff"])
+
+            ax.plot(
+                mouse_df["day_number"],
+                mouse_df["speed_diff"],
+                marker="o",
+                linewidth=2,
+                markersize=7,
+                label=subject,
+            )
+
+        day_numbers = sorted(speed_diff_df["day_number"].unique())
+
+        ax.axhline(0, color="black", linestyle="--", linewidth=1)
+        ax.set_xticks(day_numbers)
+        ax.set_xticklabels([f"day{day}" for day in day_numbers])
+        ax.set_xlabel("Day")
+        ax.set_ylabel("Mean speed difference (sound - no sound), pixels/s")
+        ax.set_title(group_name)
+        ax.legend(frameon=False, bbox_to_anchor=(1.02, 1), loc="upper left")
+
+        fig.tight_layout()
+        return fig
+
+
+    speed_diff_hm3 = calculate_mouse_day_speed_diff(
+        df_meanSpeed_long_hm3
+    )
+    speed_diff_hm4 = calculate_mouse_day_speed_diff(
+        df_meanSpeed_long_hm4
+    )
+
+    speed_diff_fig_hm3 = plot_mouse_speed_diff(
+        speed_diff_hm3,
         "hM3Dq",
     )
-
-    roi_group_fig.tight_layout()
-    plot_test.save_figure_svg(
-        roi_group_fig,
-        "roi_time_ratio_groups",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
+    speed_diff_fig_hm4 = plot_mouse_speed_diff(
+        speed_diff_hm4,
+        "hM4Di",
     )
-    plt.show()
+
+    mo.vstack([speed_diff_fig_hm3, speed_diff_fig_hm4])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # speed change during trials
+    """)
     return
 
 
 @app.cell
-def _(behav_df_dic_dcz, behav_df_dic_saline, behav_pair_map, behavior_utils):
-    stationary_speed_threshold = 10  # pixels/s调
-
-    stationary_time_ratio_summary = behavior_utils.paired_stationary_time_ratio_comparison(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        speed_threshold=stationary_speed_threshold,
-        pair_map=behav_pair_map,
-        bodypart="Center",
-        speed_col="mean_speed",
-    )
-
-    stationary_time_ratio_summary
-    return stationary_speed_threshold, stationary_time_ratio_summary
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    plot_test,
-    save_behavior_svg,
-    stationary_speed_threshold,
-):
-    stationary_speed_figures = plot_test.plot_paired_stationary_speed_traces(
-        pair_ids=behav_pair_map["pair_id"].unique(),
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        speed_threshold=stationary_speed_threshold,
-        bodypart="Center",
-        speed_col="mean_speed",
-    )
-
-    plot_test.save_figures_svg(
-        stationary_speed_figures,
-        "stationary_speed_trace",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-
-    stationary_speed_figures
+def _(session_df_dic):
+    session_df_dic
     return
 
 
 @app.cell
 def _(
-    behavior_svg_dir,
+    analyzed_video_names,
+    behav_df_filtered_dic,
     hM3Dq_mice,
     hM4Di_mice,
-    plot_test,
-    save_behavior_svg,
-    stationary_time_ratio_summary,
+    np,
+    pd,
+    session_df_dic,
 ):
-    stationary_group_fig, stationary_hm4_df, stationary_hm3_df = (
-        plot_test.plot_stationary_time_ratio_groups(
-            stationary_time_ratio_summary,
-            hM4Di_mice=hM4Di_mice,
-            hM3Dq_mice=hM3Dq_mice,
-        )
-    )
-    plot_test.save_figure_svg(
-        stationary_group_fig,
-        "stationary_time_ratio_groups",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-    stationary_group_fig
-    return
+    import ast as _ast
+
+    speed_change_time_bin = 15
+    pre_time_bin = 2
 
 
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    mo,
-    plot_test,
-    save_behavior_svg,
-    stationary_speed_threshold,
-):
-    speed_distribution_figures = plot_test.plot_paired_speed_distributions(
-        pair_ids=behav_pair_map["pair_id"].unique(),
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        bodypart="Center",
-        speed_col="mean_speed",
-        speed_threshold=stationary_speed_threshold,  
-        bins=60,
-        kde=True,
-    )
+    def build_speed_change_dictionaries(mice, pre_time_bin=None):
+        s_speed_change_dic = {}
+        ns_speed_change_dic = {}
 
-    plot_test.save_figures_svg(
-        speed_distribution_figures,
-        "speed_distribution",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
+        for name in sorted(analyzed_video_names):
+            if name[:6] not in mice:
+                continue
+            if name not in session_df_dic:
+                continue
 
-    mo.vstack(speed_distribution_figures)
-    return
+            behav_df = behav_df_filtered_dic[name]
+            session_df = session_df_dic[name]
 
+            if ("Center", "mean_speed") not in behav_df.columns:
+                raise KeyError(f"{name} does not contain Center mean_speed")
 
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    hM3Dq_mice,
-    hM4Di_mice,
-    mo,
-    plot_test,
-    save_behavior_svg,
-):
-    speed_acf_group_figures, hm4_acf_pair_ids, hm3_acf_pair_ids = (
-        plot_test.plot_speed_acfs_by_group(
-            pair_ids=behav_pair_map["pair_id"].unique(),
-            behav_df_dic_saline=behav_df_dic_saline,
-            behav_df_dic_dcz=behav_df_dic_dcz,
-            hM4Di_mice=hM4Di_mice,
-            hM3Dq_mice=hM3Dq_mice,
-            fps=30,
-            max_lag_sec=60,
-            bodypart="Center",
-            speed_col="mean_speed",
-        )
-    )
+            if ("timestamp", "") in behav_df.columns:
+                timestamp = behav_df[("timestamp", "")]
+            else:
+                timestamp = behav_df["timestamp"]
 
-    plot_test.save_figures_svg(
-        speed_acf_group_figures,
-        "speed_acf_group",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
+            sound_speed_by_trial = {}
+            no_sound_speed_by_trial = {}
 
-    mo.vstack(speed_acf_group_figures)
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    behavior_utils,
-    hM3Dq_mice,
-    hM4Di_mice,
-    plot_test,
-    save_behavior_svg,
-):
-    speed_acf_auc_summary = behavior_utils.paired_speed_acf_auc_comparison(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        fps=30,
-        max_lag_sec=60,
-        pair_map=behav_pair_map,
-        bodypart="Center",
-        speed_col="mean_speed",
-    )
-
-    speed_acf_auc_fig, speed_acf_auc_hm4_df, speed_acf_auc_hm3_df = (
-        plot_test.plot_speed_acf_auc_groups(
-            speed_acf_auc_summary,
-            hM4Di_mice=hM4Di_mice,
-            hM3Dq_mice=hM3Dq_mice,
-        )
-    )
-
-    plot_test.save_figure_svg(
-        speed_acf_auc_fig,
-        "speed_acf_auc_groups",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-    speed_acf_auc_fig
-    return
-
-
-@app.cell
-def _():
-    noeffec_group = ['NUO005', 'NUO008']
-    effec_group = ['NUO010', 'NUO012']
-    return
-
-
-@app.cell
-def _(behav_df_dic_dcz, behav_df_dic_saline, pd):
-    behav_df_effec = pd.DataFrame([])
-    behav_df_noeffec = pd.DataFrame([])
-    for behav_df_name_ in behav_df_dic_dcz:
-        behav_df_subject = behav_df_dic_dcz[behav_df_name_]
-        behav_df_subject[("session", "")] = behav_df_name_
-        if ("NUO005" in behav_df_name_) or ("NUO008" in behav_df_name_):
-            behav_df_noeffec = pd.concat([behav_df_noeffec, behav_df_subject])
-        else:
-            behav_df_effec = pd.concat([behav_df_effec, behav_df_subject])
-    for behav_df_name_ in behav_df_dic_saline:
-        behav_df_subject = behav_df_dic_saline[behav_df_name_]
-        behav_df_subject[("session", "")] = behav_df_name_
-        behav_df_noeffec = pd.concat([behav_df_noeffec, behav_df_subject])
-    return
-
-
-@app.cell
-def _(behav_df_dic_dcz, behav_df_dic_saline, np, pd):
-    import ssm
-
-    def iter_speed_hmm_entries(model_name):
-        if model_name == "effect":
-            for pair_id, behav_df in behav_df_dic_dcz.items():
-                if ("NUO005" in pair_id) or ("NUO008" in pair_id):
+            for _, trial_row in session_df.iterrows():
+                if pd.isna(trial_row["trial"]):
                     continue
-                yield pair_id, "DCZ", behav_df
-        else:
-            for pair_id, behav_df in behav_df_dic_dcz.items():
-                if ("NUO005" in pair_id) or ("NUO008" in pair_id):
-                    yield pair_id, "DCZ", behav_df
-            for pair_id, behav_df in behav_df_dic_saline.items():
-                yield pair_id, "saline", behav_df
 
-    def build_speed_hmm_datas_from_entries(
-        entries,
-        speed_col=("Center", "mean_speed"),
-        min_len=20,
-    ):
-        datas = []
-        data_info = []
+                trial = int(trial_row["trial"])
 
-        for pair_id, condition, behav_df in entries:
-            if behav_df.empty or speed_col not in behav_df.columns:
-                continue
+                # All no-sound trigger times in this trial
+                if (
+                    "sound_not_played" in session_df.columns
+                    and pd.notna(trial_row["sound_not_played"])
+                ):
+                    no_sound_times = _ast.literal_eval(
+                        trial_row["sound_not_played"]
+                    )
 
-            speed = pd.to_numeric(behav_df[speed_col], errors="coerce")
-            valid_speed = speed.replace([np.inf, -np.inf], np.nan).notna()
-            valid_positions = np.flatnonzero(valid_speed.to_numpy())
-            if len(valid_positions) < min_len:
-                continue
+                    for t0 in no_sound_times:
+                        window_start = (
+                            t0
+                            if pre_time_bin is None
+                            else t0 - pre_time_bin
+                        )
+                        speed = behav_df.loc[
+                            (timestamp >= window_start)
+                            & (timestamp <= t0 + speed_change_time_bin),
+                            ("Center", "mean_speed"),
+                        ]
 
-            data = speed.iloc[valid_positions].to_numpy(dtype=float).reshape(-1, 1)
-            datas.append(data)
-            data_info.append(
-                {
-                    "pair_id": pair_id,
-                    "condition": condition,
-                    "df": behav_df,
-                    "valid_positions": valid_positions,
-                }
-            )
+                        speed = pd.to_numeric(
+                            speed,
+                            errors="coerce",
+                        ).to_numpy(dtype=float)
 
-        return datas, data_info
+                        if np.isfinite(speed).sum() >= 2:
+                            no_sound_speed_by_trial.setdefault(
+                                trial,
+                                [],
+                            ).append(
+                                speed.tolist()
+                            )
 
-    def state_mean_speeds(hmm, datas):
-        state_rows = []
-        for state in range(hmm.K):
-            weighted_sum = 0.0
-            weighted_count = 0.0
-            for data in datas:
-                posterior = hmm.expected_states(data)[0]
-                state_weight = posterior[:, state]
-                weighted_sum += np.sum(state_weight * data[:, 0])
-                weighted_count += np.sum(state_weight)
+                # All sound trigger times in this trial
+                if (
+                    "sound_played" in session_df.columns
+                    and pd.notna(trial_row["sound_played"])
+                ):
+                    sound_times = _ast.literal_eval(
+                        trial_row["sound_played"]
+                    )
 
-            state_rows.append(
-                {
-                    "state": state,
-                    "mean_speed": weighted_sum / weighted_count
-                    if weighted_count > 0
-                    else np.nan,
-                    "state_weight": weighted_count,
-                }
-            )
+                    for t0 in sound_times:
+                        window_start = (
+                            t0
+                            if pre_time_bin is None
+                            else t0 - pre_time_bin
+                        )
+                        speed = behav_df.loc[
+                            (timestamp >= window_start)
+                            & (timestamp <= t0 + speed_change_time_bin),
+                            ("Center", "mean_speed"),
+                        ]
 
-        return pd.DataFrame(state_rows)
+                        speed = pd.to_numeric(
+                            speed,
+                            errors="coerce",
+                        ).to_numpy(dtype=float)
 
-    def fit_speed_hmm(datas, num_states=2, n_iters=100):
-        hmm = ssm.HMM(num_states, 1, observations="gaussian")
-        hmm_lls = hmm.fit(
-            datas,
-            method="em",
-            num_iters=n_iters,
-            tolerance=1e-4,
+                        if np.isfinite(speed).sum() >= 2:
+                            sound_speed_by_trial.setdefault(
+                                trial,
+                                [],
+                            ).append(
+                                speed.tolist()
+                            )
+
+            s_speed_change_dic[name] = sound_speed_by_trial
+            ns_speed_change_dic[name] = no_sound_speed_by_trial
+
+        return s_speed_change_dic, ns_speed_change_dic
+
+
+    s_speed_change_dic_hm3_prebin, ns_speed_change_dic_hm3_prebin = (
+        build_speed_change_dictionaries(
+            hM3Dq_mice,
+            pre_time_bin=pre_time_bin,
         )
-
-        state_summary_before = state_mean_speeds(hmm, datas)
-        perm = [
-            int(state)
-            for state in state_summary_before.sort_values("mean_speed")[
-                "state"
-            ].to_list()
-        ]
-        hmm.permute(perm)
-
-        state_summary_after = state_mean_speeds(hmm, datas)
-        log_likelihood = sum(float(hmm.log_probability(data)) for data in datas)
-
-        return hmm, log_likelihood, hmm_lls, perm, state_summary_after
-
-    def add_hmm_states_to_dfs(hmm, datas, data_info, model_name):
-        state_rows = []
-        for data, info in zip(datas, data_info):
-            posterior = hmm.expected_states(data)[0]
-            states = np.argmax(posterior, axis=1)
-            behav_df = info["df"]
-
-            behav_df[("speed_hmm_state", "")] = np.nan
-            behav_df[("speed_hmm_model", "")] = None
-            state_col_loc = behav_df.columns.get_loc(("speed_hmm_state", ""))
-            model_col_loc = behav_df.columns.get_loc(("speed_hmm_model", ""))
-
-            behav_df.iloc[info["valid_positions"], state_col_loc] = states
-            behav_df.iloc[info["valid_positions"], model_col_loc] = model_name
-
-            state_rows.append(
-                {
-                    "model": model_name,
-                    "pair_id": info["pair_id"],
-                    "condition": info["condition"],
-                    "n_valid_frames": len(states),
-                    "state0_frames": int(np.sum(states == 0)),
-                    "state1_frames": int(np.sum(states == 1)),
-                    "state1_fraction": float(np.mean(states == 1)),
-                }
-            )
-
-        return pd.DataFrame(state_rows)
-
-    hmm_speed_models = {}
-    hmm_speed_rows = []
-    hmm_speed_state_summaries = []
-
-    for model_name in ["effect", "noeffect"]:
-        entries = list(iter_speed_hmm_entries(model_name))
-        datas, data_info = build_speed_hmm_datas_from_entries(entries)
-        if not datas:
-            hmm_speed_rows.append(
-                {
-                    "model": model_name,
-                    "n_sequences": 0,
-                    "n_frames": 0,
-                    "log_likelihood": np.nan,
-                    "state0_mean_speed": np.nan,
-                    "state1_mean_speed": np.nan,
-                    "state_permutation": None,
-                    "status": "no valid speed data",
-                }
-            )
-            continue
-
-        hmm, ll, hmm_lls, perm, state_summary = fit_speed_hmm(datas)
-        state_summary_by_df = add_hmm_states_to_dfs(
-            hmm,
-            datas,
-            data_info,
-            model_name,
-        )
-        hmm_speed_state_summaries.append(state_summary_by_df)
-        hmm_speed_models[model_name] = {
-            "model": hmm,
-            "datas": datas,
-            "data_info": data_info,
-            "log_likelihood": ll,
-            "hmm_lls": hmm_lls,
-            "state_permutation": perm,
-            "state_summary": state_summary,
-            "state_summary_by_df": state_summary_by_df,
-        }
-
-        hmm_speed_rows.append(
-            {
-                "model": model_name,
-                "n_sequences": len(datas),
-                "n_frames": sum(len(data) for data in datas),
-                "log_likelihood": ll,
-                "state0_mean_speed": state_summary.loc[
-                    state_summary["state"] == 0,
-                    "mean_speed",
-                ].iloc[0],
-                "state1_mean_speed": state_summary.loc[
-                    state_summary["state"] == 1,
-                    "mean_speed",
-                ].iloc[0],
-                "state_permutation": perm,
-                "status": "ok",
-            }
-        )
-
-    hmm_effec = hmm_speed_models.get("effect", {}).get("model")
-    hmm_noeffec = hmm_speed_models.get("noeffect", {}).get("model")
-    hmm_speed_summary = pd.DataFrame(hmm_speed_rows)
-    hmm_speed_state_summary = (
-        pd.concat(hmm_speed_state_summaries, ignore_index=True)
-        if hmm_speed_state_summaries
-        else pd.DataFrame()
     )
-    hmm_speed_summary
-    return hmm_effec, hmm_noeffec
+
+    s_speed_change_dic_hm4_prebin, ns_speed_change_dic_hm4_prebin = (
+        build_speed_change_dictionaries(
+            hM4Di_mice,
+            pre_time_bin=pre_time_bin,
+        )
+    )
+    return (
+        ns_speed_change_dic_hm3_prebin,
+        ns_speed_change_dic_hm4_prebin,
+        pre_time_bin,
+        s_speed_change_dic_hm3_prebin,
+        s_speed_change_dic_hm4_prebin,
+    )
 
 
 @app.cell
 def _(
-    behavior_svg_dir,
-    hmm_effec,
-    hmm_noeffec,
-    plot_test,
+    mo,
+    np,
+    ns_speed_change_dic_hm3_prebin,
+    ns_speed_change_dic_hm4_prebin,
+    pd,
     plt,
-    save_behavior_svg,
+    pre_time_bin,
+    s_speed_change_dic_hm3_prebin,
+    s_speed_change_dic_hm4_prebin,
 ):
-    import utils_test
+    # speed change trial by trial
+    trial_speed_time_bin = 15
+    trial_speed_fps = 30
+    trial_speed_grid = np.arange(-pre_time_bin, trial_speed_time_bin, 0.01)
 
-    hmm_transition_fig, hmm_transition_axes = plt.subplots(
-        1,
-        2,
-        figsize=(7, 3),
+
+    def organize_mouse_day_traces(sound_dic, no_sound_dic):
+        organized = {}
+        all_names = sorted(set(sound_dic) | set(no_sound_dic))
+
+        for mouse in sorted({name[:6] for name in all_names}):
+            mouse_names = sorted(
+                name for name in all_names if name[:6] == mouse
+            )
+            dates = sorted({name.rsplit("_", 2)[-2] for name in mouse_names})
+            date_to_day = {
+                date: day for day, date in enumerate(dates, start=1)
+            }
+
+            organized[mouse] = {}
+            for name in mouse_names:
+                date = name.rsplit("_", 2)[-2]
+                day = date_to_day[date]
+                organized[mouse].setdefault(day, [])
+
+                sound_by_trial = sound_dic.get(name, {})
+                no_sound_by_trial = no_sound_dic.get(name, {})
+                trials = sorted(set(sound_by_trial) | set(no_sound_by_trial))
+                for trial in trials:
+                    organized[mouse][day].append(
+                        {
+                            "session": name,
+                            "trial": trial,
+                            "sound": sound_by_trial.get(trial, []),
+                            "no_sound": no_sound_by_trial.get(trial, []),
+                        }
+                    )
+
+        return organized
+
+
+    def resample_trial_speed(speed_trace):
+        speed = np.asarray(speed_trace, dtype=float)
+        raw_time = np.arange(len(speed)) / trial_speed_fps - pre_time_bin
+        valid = np.isfinite(speed)
+        if valid.sum() < 2:
+            return None
+
+        raw_time = raw_time[valid]
+        speed = speed[valid]
+        interpolated = np.full(trial_speed_grid.shape, np.nan)
+        inside = (
+            (trial_speed_grid >= raw_time[0])
+            & (trial_speed_grid <= raw_time[-1])
+        )
+        interpolated[inside] = np.interp(
+            trial_speed_grid[inside],
+            raw_time,
+            speed,
+        )
+        return interpolated
+
+
+    def resample_day_trials(day_trials):
+        resampled_trials = []
+        for trial_data in day_trials:
+            resampled_trial = {
+                "session": trial_data["session"],
+                "trial": trial_data["trial"],
+            }
+            for condition in ["sound", "no_sound"]:
+                traces = [
+                    resample_trial_speed(trace)
+                    for trace in trial_data[condition]
+                ]
+                resampled_trial[condition] = [
+                    trace for trace in traces if trace is not None
+                ]
+            resampled_trials.append(resampled_trial)
+        return resampled_trials
+
+
+    def mean_trial_trace(traces):
+        if not traces:
+            return None
+        return (
+            pd.DataFrame(np.vstack(traces))
+            .mean(axis=0, skipna=True)
+            .to_numpy()
+        )
+
+
+    def plot_mouse_trial_grid(
+        sound_dic,
+        no_sound_dic,
+        group_name,
+        value_label="Mean speed",
+        metric_name="speed",
+        y_limits=None,
+        horizontal_reference=None,
+    ):
+        organized = organize_mouse_day_traces(sound_dic, no_sound_dic)
+        mice = sorted(organized)
+        all_days = sorted({
+            day
+            for mouse_data in organized.values()
+            for day in mouse_data
+        })
+
+        if not mice or not all_days:
+            empty_fig, empty_ax = plt.subplots(figsize=(6, 3))
+            empty_ax.text(
+                0.5,
+                0.5,
+                f"No trial {metric_name} data for {group_name}",
+                ha="center",
+                va="center",
+                transform=empty_ax.transAxes,
+            )
+            empty_ax.set_axis_off()
+            return empty_fig
+
+        resampled_data = {}
+        mini_counts = {}
+        mouse_ylimits = {}
+        for mouse in mice:
+            resampled_data[mouse] = {}
+            mouse_values = []
+            for day in all_days:
+                day_trials = resample_day_trials(
+                    organized[mouse].get(day, [])
+                )
+                resampled_data[mouse][day] = day_trials
+                for trial_data in day_trials:
+                    mouse_values.extend(trial_data["sound"])
+                    mouse_values.extend(trial_data["no_sound"])
+
+            mini_counts[mouse] = max(
+                1,
+                max(
+                    len(resampled_data[mouse][day])
+                    for day in all_days
+                ),
+            )
+            finite_values = np.concatenate([
+                trace[np.isfinite(trace)]
+                for trace in mouse_values
+                if np.isfinite(trace).any()
+            ]) if mouse_values else np.array([])
+            if y_limits is None:
+                ymax = (
+                    np.nanquantile(finite_values, 0.99) * 1.05
+                    if finite_values.size
+                    else 1.0
+                )
+                mouse_ylimits[mouse] = (0, ymax)
+            else:
+                mouse_ylimits[mouse] = y_limits
+
+        row_heights = [
+            mini_counts[mouse] * 0.28 + 2.0 for mouse in mice
+        ]
+        fig = plt.figure(
+            figsize=(max(8, 3.6 * len(all_days)), sum(row_heights)),
+            dpi=150,
+        )
+        outer_grid = fig.add_gridspec(
+            len(mice),
+            len(all_days),
+            height_ratios=row_heights,
+            wspace=0.22,
+            hspace=0.30,
+        )
+
+        for mouse_row, mouse in enumerate(mice):
+            n_mini = mini_counts[mouse]
+            ymin, ymax = mouse_ylimits[mouse]
+
+            for day_col, day in enumerate(all_days):
+                inner_grid = outer_grid[mouse_row, day_col].subgridspec(
+                    n_mini + 1,
+                    1,
+                    height_ratios=[0.28] * n_mini + [2.0],
+                    hspace=0.04,
+                )
+                day_trials = resampled_data[mouse][day]
+                sound_traces = [
+                    trace
+                    for trial_data in day_trials
+                    for trace in trial_data["sound"]
+                ]
+                no_sound_traces = [
+                    trace
+                    for trial_data in day_trials
+                    for trace in trial_data["no_sound"]
+                ]
+
+                for trial_index in range(n_mini):
+                    trial_ax = fig.add_subplot(inner_grid[trial_index, 0])
+                    if trial_index == 0:
+                        trial_ax.set_title(f"day{day}", fontsize=10)
+                    if trial_index >= len(day_trials):
+                        trial_ax.set_axis_off()
+                        continue
+
+                    trial_data = day_trials[trial_index]
+                    for trace in trial_data["no_sound"]:
+                        trial_ax.plot(
+                            trial_speed_grid,
+                            trace,
+                            color="steelblue",
+                            linewidth=0.8,
+                        )
+                    for trace in trial_data["sound"]:
+                        trial_ax.plot(
+                            trial_speed_grid,
+                            trace,
+                            color="firebrick",
+                            linewidth=0.8,
+                        )
+
+                    trial_ax.axvline(
+                        0,
+                        color="black",
+                        linestyle="--",
+                        linewidth=0.5,
+                    )
+                    if horizontal_reference is not None:
+                        trial_ax.axhline(
+                            horizontal_reference,
+                            color="black",
+                            linestyle="--",
+                            linewidth=0.5,
+                        )
+                    trial_ax.set_xlim(-pre_time_bin, trial_speed_time_bin)
+                    trial_ax.set_ylim(ymin, ymax)
+                    trial_ax.set_xticks([])
+                    trial_ax.set_yticks([])
+                    for spine in trial_ax.spines.values():
+                        spine.set_linewidth(0.4)
+
+                    if day_col == 0:
+                        trial_ax.set_ylabel(
+                            f"T{trial_data['trial']}",
+                            rotation=0,
+                            ha="right",
+                            va="center",
+                            fontsize=6,
+                        )
+
+                summary_ax = fig.add_subplot(inner_grid[-1, 0])
+                for trace in no_sound_traces:
+                    summary_ax.plot(
+                        trial_speed_grid,
+                        trace,
+                        color="lightsteelblue",
+                        linewidth=0.8,
+                        alpha=0.25,
+                    )
+                for trace in sound_traces:
+                    summary_ax.plot(
+                        trial_speed_grid,
+                        trace,
+                        color="lightcoral",
+                        linewidth=0.8,
+                        alpha=0.25,
+                    )
+
+                no_sound_mean = mean_trial_trace(no_sound_traces)
+                sound_mean = mean_trial_trace(sound_traces)
+                if no_sound_mean is not None:
+                    summary_ax.plot(
+                        trial_speed_grid,
+                        no_sound_mean,
+                        color="steelblue",
+                        linewidth=2.5,
+                        label=f"no sound (n={len(no_sound_traces)})",
+                    )
+                if sound_mean is not None:
+                    summary_ax.plot(
+                        trial_speed_grid,
+                        sound_mean,
+                        color="firebrick",
+                        linewidth=2.5,
+                        label=f"sound (n={len(sound_traces)})",
+                    )
+
+                summary_ax.axvline(
+                    0,
+                    color="black",
+                    linestyle="--",
+                    linewidth=1,
+                )
+                if horizontal_reference is not None:
+                    summary_ax.axhline(
+                        horizontal_reference,
+                        color="black",
+                        linestyle="--",
+                        linewidth=1,
+                    )
+                summary_ax.set_xlim(-pre_time_bin, trial_speed_time_bin)
+                summary_ax.set_ylim(ymin, ymax)
+                summary_ax.set_xlabel("Time from trigger (s)", fontsize=8)
+                if day_col == 0:
+                    summary_ax.set_ylabel(
+                        f"{mouse}\n{value_label}",
+                        fontsize=8,
+                    )
+                else:
+                    summary_ax.set_yticklabels([])
+                summary_ax.tick_params(labelsize=7)
+                if sound_traces or no_sound_traces:
+                    summary_ax.legend(fontsize=6, frameon=False)
+
+        fig.suptitle(
+            f"{group_name}: trial-by-trial {metric_name}",
+            fontsize=14,
+            y=1.0,
+        )
+        return fig
+
+
+    speed_trial_fig_hm3 = plot_mouse_trial_grid(
+        s_speed_change_dic_hm3_prebin,
+        ns_speed_change_dic_hm3_prebin,
+        "hM3Dq",
+        value_label="Mean speed",
+        metric_name="speed",
+    )
+    speed_trial_fig_hm4 = plot_mouse_trial_grid(
+        s_speed_change_dic_hm4_prebin,
+        ns_speed_change_dic_hm4_prebin,
+        "hM4Di",
+        value_label="Mean speed",
+        metric_name="speed",
     )
 
-    if hmm_effec is not None:
-        utils_test.plot_transition_matrix(
-            hmm_effec,
-            title="effect speed HMM",
-            ax=hmm_transition_axes[0],
-            cmap="gray",
-        )
-    else:
-        hmm_transition_axes[0].set_title("effect speed HMM missing")
-        hmm_transition_axes[0].axis("off")
+    mo.vstack([speed_trial_fig_hm3, speed_trial_fig_hm4])
+    return (plot_mouse_trial_grid,)
 
-    if hmm_noeffec is not None:
-        utils_test.plot_transition_matrix(
-            hmm_noeffec,
-            title="no-effect speed HMM",
-            ax=hmm_transition_axes[1],
-            cmap="gray",
-        )
-    else:
-        hmm_transition_axes[1].set_title("no-effect speed HMM missing")
-        hmm_transition_axes[1].axis("off")
 
-    hmm_transition_fig.tight_layout()
-    plot_test.save_figure_svg(
-        hmm_transition_fig,
-        "speed_hmm_model_transition_matrix",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-    hmm_transition_fig
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # compare trial number
+    """)
     return
 
 
 @app.cell
 def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
     mo,
-    plot_test,
-    save_behavior_svg,
+    ns_speed_change_dic_hm3_prebin,
+    ns_speed_change_dic_hm4_prebin,
+    pd,
+    plt,
+    s_speed_change_dic_hm3_prebin,
+    s_speed_change_dic_hm4_prebin,
 ):
+    from matplotlib.lines import Line2D as _Line2D
+    from matplotlib.ticker import MaxNLocator as _MaxNLocator
 
-    hmm_speed_transition_graph_fig_dic = (
-        plot_test.plot_paired_speed_hmm_transition_graphs(
-            pair_ids=behav_pair_map["pair_id"].unique(),
-            behav_df_dic_saline=behav_df_dic_saline,
-            behav_df_dic_dcz=behav_df_dic_dcz,
-            state_col=("speed_hmm_state", ""),
-            K=2,
+
+    def build_trial_count_table(sound_dic, no_sound_dic):
+        rows = []
+        all_names = sorted(set(sound_dic) | set(no_sound_dic))
+
+        for mouse in sorted({name[:6] for name in all_names}):
+            mouse_names = sorted(
+                name for name in all_names if name[:6] == mouse
+            )
+            dates = sorted({name.rsplit("_", 2)[-2] for name in mouse_names})
+            date_to_day = {
+                date: day for day, date in enumerate(dates, start=1)
+            }
+            counts_by_day = {
+                day: {"sound": 0, "no_sound": 0}
+                for day in date_to_day.values()
+            }
+
+            for name in mouse_names:
+                date = name.rsplit("_", 2)[-2]
+                day = date_to_day[date]
+                counts_by_day[day]["sound"] += len(
+                    sound_dic.get(name, {})
+                )
+                counts_by_day[day]["no_sound"] += len(
+                    no_sound_dic.get(name, {})
+                )
+
+            for day, counts in counts_by_day.items():
+                rows.append(
+                    {
+                        "subject": mouse,
+                        "day": day,
+                        "sound": counts["sound"],
+                        "no_sound": counts["no_sound"],
+                        "total": counts["sound"] + counts["no_sound"],
+                    }
+                )
+
+        return pd.DataFrame(rows)
+
+
+    def plot_trial_counts(trial_count_df, group_name):
+        fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+        if trial_count_df.empty:
+            ax.text(
+                0.5,
+                0.5,
+                f"No trial-count data for {group_name}",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            return fig
+
+        markers = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
+        mice = sorted(trial_count_df["subject"].unique())
+        mouse_markers = {
+            mouse: markers[index % len(markers)]
+            for index, mouse in enumerate(mice)
+        }
+        conditions = [
+            ("sound", "firebrick", "sound"),
+            ("no_sound", "steelblue", "no sound"),
+            ("total", "black", "sound + no sound"),
+        ]
+
+        for mouse in mice:
+            mouse_df = trial_count_df[
+                trial_count_df["subject"] == mouse
+            ].sort_values("day")
+            for column, color, _ in conditions:
+                ax.plot(
+                    mouse_df["day"],
+                    mouse_df[column],
+                    color=color,
+                    marker=mouse_markers[mouse],
+                    markerfacecolor=color,
+                    markeredgecolor="black",
+                    linewidth=1.8,
+                    markersize=7,
+                )
+
+        condition_handles = [
+            _Line2D([0], [0], color=color, linewidth=2, label=label)
+            for _, color, label in conditions
+        ]
+        condition_legend = ax.legend(
+            handles=condition_handles,
+            title="Trial type",
+            frameon=False,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
         )
+        ax.add_artist(condition_legend)
+
+        mouse_handles = [
+            _Line2D(
+                [0],
+                [0],
+                color="gray",
+                marker=mouse_markers[mouse],
+                markerfacecolor="gray",
+                markeredgecolor="black",
+                linestyle="none",
+                markersize=7,
+                label=mouse,
+            )
+            for mouse in mice
+        ]
+        ax.legend(
+            handles=mouse_handles,
+            title="Mouse",
+            frameon=False,
+            bbox_to_anchor=(1.02, 0.58),
+            loc="upper left",
+        )
+
+        days = sorted(trial_count_df["day"].unique())
+        ax.set_xticks(days)
+        ax.set_xticklabels([f"day{day}" for day in days])
+        ax.yaxis.set_major_locator(_MaxNLocator(integer=True))
+        ax.set_xlabel("Day")
+        ax.set_ylabel("Number of trials")
+        ax.set_title(group_name)
+        ax.grid(alpha=0.25)
+        fig.tight_layout()
+        return fig
+
+
+    trial_count_df_hm3 = build_trial_count_table(
+        s_speed_change_dic_hm3_prebin,
+        ns_speed_change_dic_hm3_prebin,
+    )
+    trial_count_df_hm4 = build_trial_count_table(
+        s_speed_change_dic_hm4_prebin,
+        ns_speed_change_dic_hm4_prebin,
+    )
+    trial_count_fig_hm3 = plot_trial_counts(
+        trial_count_df_hm3,
+        "hM3Dq",
+    )
+    trial_count_fig_hm4 = plot_trial_counts(
+        trial_count_df_hm4,
+        "hM4Di",
     )
 
-    plot_test.save_figures_svg(
-        hmm_speed_transition_graph_fig_dic,
-        "speed_hmm_pair_transition_graph",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
+    mo.vstack([trial_count_fig_hm3, trial_count_fig_hm4])
+    return
 
-    mo.vstack(list(hmm_speed_transition_graph_fig_dic.values()))
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # x position change during trials
+    """)
     return
 
 
 @app.cell
 def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behavior_svg_dir,
-    hmm_effec,
-    hmm_noeffec,
+    analyzed_video_names,
+    behav_df_filtered_dic,
+    hM3Dq_mice,
+    hM4Di_mice,
+    np,
+    pd,
+    pre_time_bin,
+    session_df_dic,
+):
+    import ast as _ast
+
+    x_position_time_bin = 15
+
+
+    def build_x_position_dictionaries(mice, pre_time_bin=None):
+        s_x_position_dic = {}
+        ns_x_position_dic = {}
+
+        for name in sorted(analyzed_video_names):
+            if name[:6] not in mice or name not in session_df_dic:
+                continue
+
+            behav_df = behav_df_filtered_dic[name]
+            session_df = session_df_dic[name]
+
+            if ("Center", "x") not in behav_df.columns:
+                raise KeyError(f"{name} does not contain Center x position")
+
+            if ("timestamp", "") in behav_df.columns:
+                timestamp = behav_df[("timestamp", "")]
+            else:
+                timestamp = behav_df["timestamp"]
+
+            sound_x_by_trial = {}
+            no_sound_x_by_trial = {}
+
+            for _, trial_row in session_df.iterrows():
+                if pd.isna(trial_row["trial"]):
+                    continue
+
+                trial = int(trial_row["trial"])
+
+                if (
+                    "sound_not_played" in session_df.columns
+                    and pd.notna(trial_row["sound_not_played"])
+                ):
+                    no_sound_times = _ast.literal_eval(
+                        trial_row["sound_not_played"]
+                    )
+                    for t0 in no_sound_times:
+                        window_start = (
+                            t0
+                            if pre_time_bin is None
+                            else t0 - pre_time_bin
+                        )
+                        x_position = behav_df.loc[
+                            (timestamp >= window_start)
+                            & (timestamp <= t0 + x_position_time_bin),
+                            ("Center", "x"),
+                        ]
+                        x_position = pd.to_numeric(
+                            x_position,
+                            errors="coerce",
+                        ).to_numpy(dtype=float)
+                        if np.isfinite(x_position).sum() >= 2:
+                            no_sound_x_by_trial.setdefault(
+                                trial,
+                                [],
+                            ).append(
+                                x_position.tolist()
+                            )
+
+                if (
+                    "sound_played" in session_df.columns
+                    and pd.notna(trial_row["sound_played"])
+                ):
+                    sound_times = _ast.literal_eval(
+                        trial_row["sound_played"]
+                    )
+                    for t0 in sound_times:
+                        window_start = (
+                            t0
+                            if pre_time_bin is None
+                            else t0 - pre_time_bin
+                        )
+                        x_position = behav_df.loc[
+                            (timestamp >= window_start)
+                            & (timestamp <= t0 + x_position_time_bin),
+                            ("Center", "x"),
+                        ]
+                        x_position = pd.to_numeric(
+                            x_position,
+                            errors="coerce",
+                        ).to_numpy(dtype=float)
+                        if np.isfinite(x_position).sum() >= 2:
+                            sound_x_by_trial.setdefault(
+                                trial,
+                                [],
+                            ).append(
+                                x_position.tolist()
+                            )
+
+            s_x_position_dic[name] = sound_x_by_trial
+            ns_x_position_dic[name] = no_sound_x_by_trial
+
+        return s_x_position_dic, ns_x_position_dic
+
+
+    s_x_position_dic_hm3_prebin, ns_x_position_dic_hm3_prebin = (
+        build_x_position_dictionaries(
+            hM3Dq_mice,
+            pre_time_bin=pre_time_bin,
+        )
+    )
+    s_x_position_dic_hm4_prebin, ns_x_position_dic_hm4_prebin = (
+        build_x_position_dictionaries(
+            hM4Di_mice,
+            pre_time_bin=pre_time_bin,
+        )
+    )
+    return (
+        ns_x_position_dic_hm3_prebin,
+        ns_x_position_dic_hm4_prebin,
+        s_x_position_dic_hm3_prebin,
+        s_x_position_dic_hm4_prebin,
+    )
+
+
+@app.cell
+def _(
     mo,
-    plot_test,
-    save_behavior_svg,
+    ns_x_position_dic_hm3_prebin,
+    ns_x_position_dic_hm4_prebin,
+    plot_mouse_trial_grid,
+    s_x_position_dic_hm3_prebin,
+    s_x_position_dic_hm4_prebin,
 ):
-    hmm_speed_posterior_figures = (
-        plot_test.plot_speed_hmm_posteriors_for_behavior_dicts(
-            behav_df_dic_saline=behav_df_dic_saline,
-            behav_df_dic_dcz=behav_df_dic_dcz,
-            hmm_effec=hmm_effec,
-            hmm_noeffec=hmm_noeffec,
-            speed_col=("Center", "mean_speed"),
-            speed_quantiles=(0.01, 0.99),
-        )
+    x_position_trial_fig_hm3 = plot_mouse_trial_grid(
+        s_x_position_dic_hm3_prebin,
+        ns_x_position_dic_hm3_prebin,
+        "hM3Dq",
+        value_label="X position (pixels)",
+        metric_name="x position",
+        y_limits=(0, 640),
+        horizontal_reference=364,
+    )
+    x_position_trial_fig_hm4 = plot_mouse_trial_grid(
+        s_x_position_dic_hm4_prebin,
+        ns_x_position_dic_hm4_prebin,
+        "hM4Di",
+        value_label="X position (pixels)",
+        metric_name="x position",
+        y_limits=(0, 640),
+        horizontal_reference=364,
     )
 
-    plot_test.save_figures_svg(
-        hmm_speed_posterior_figures,
-        "speed_hmm_posterior",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-
-    mo.vstack(hmm_speed_posterior_figures)
-    return (hmm_speed_posterior_figures,)
-
-
-@app.cell
-def _(hmm_speed_posterior_figures, plt):
-    posterior_fig_idx = 0
-    frame_start = 1000
-    frame_window = 100
-    frame_end = frame_start + frame_window
-
-    source_fig = hmm_speed_posterior_figures[posterior_fig_idx]
-    source_ax = source_fig.axes[0]
-
-    posterior_30_frame_fig, posterior_30_frame_ax = plt.subplots(
-        1,
-        1,
-        figsize=(8, 2.5),
-        dpi=120,
-    )
-
-    for line in source_ax.lines:
-        x = line.get_xdata()
-        y = line.get_ydata()
-
-        mask = (x >= frame_start) & (x < frame_end)
-
-        posterior_30_frame_ax.plot(
-            x[mask],
-            y[mask],
-            color=line.get_color(),
-            linewidth=line.get_linewidth(),
-            alpha=line.get_alpha() if line.get_alpha() is not None else 1,
-            label=line.get_label(),
-        )
-
-    posterior_30_frame_ax.set_ylim(source_ax.get_ylim())
-    posterior_30_frame_ax.set_xlim(frame_start, frame_end - 1)
-    posterior_30_frame_ax.set_yticks([0, 0.5, 1])
-    posterior_30_frame_ax.set_xlabel("frame #")
-    posterior_30_frame_ax.set_ylabel("p(state)")
-    posterior_30_frame_ax.set_title(
-        source_ax.get_title()
-        + f" | frames {frame_start}-{frame_end - 1}"
-    )
-    posterior_30_frame_ax.legend(frameon=False, loc="upper right")
-    posterior_30_frame_ax.grid(alpha=0.25)
-
-    plt.tight_layout()
-    posterior_30_frame_fig
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    mo,
-    plot_test,
-    save_behavior_svg,
-    stationary_speed_threshold,
-):
-    state_speed_distribution_figures = plot_test.plot_paired_state_speed_distributions(
-        pair_ids=behav_pair_map["pair_id"].unique(),
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        bodypart="Center",
-        speed_col="mean_speed",
-        state_col=("speed_hmm_state", ""),
-        states=(0, 1),
-        speed_threshold=stationary_speed_threshold,
-        bins=60,
-        kde=True,
-    )
-
-    plot_test.save_figures_svg(
-        state_speed_distribution_figures,
-        "state_speed_distribution",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-
-    mo.vstack(state_speed_distribution_figures)
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    plot_test,
-    save_behavior_svg,
-):
-    (
-        speed_hmm_state_fraction_fig,
-        speed_hmm_state_fraction_summary,
-        noeffec_group_state_fraction_df,
-        effec_group_state_fraction_df,
-    ) = plot_test.plot_speed_hmm_state_fraction_comparison(
-        pair_ids=behav_pair_map["pair_id"].unique(),
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        state_col=("speed_hmm_state", ""),
-        K=2,
-        states=(0, 1),
-        figsize=(8, 7),
-    )
-
-    plot_test.save_figure_svg(
-        speed_hmm_state_fraction_fig,
-        "speed_hmm_state_fraction_groups",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-        subfolder="speed_hmm_state_fraction_groups",
-    )
-
-    speed_hmm_state_fraction_fig
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    mo,
-    plot_test,
-    save_behavior_svg,
-):
-    hmm_speed_transition_fig_dic = (
-        plot_test.plot_paired_speed_hmm_transition_matrices(
-            pair_ids=behav_pair_map["pair_id"].unique(),
-            behav_df_dic_saline=behav_df_dic_saline,
-            behav_df_dic_dcz=behav_df_dic_dcz,
-            state_col=("speed_hmm_state", ""),
-            K=2,
-        )
-    )
-
-    plot_test.save_figures_svg(
-        hmm_speed_transition_fig_dic,
-        "speed_hmm_pair_transition_matrix",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-
-    mo.vstack(list(hmm_speed_transition_fig_dic.values()))
-    return (hmm_speed_transition_fig_dic,)
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    hmm_speed_transition_fig_dic,
-    plot_test,
-    save_behavior_svg,
-):
-    (
-        speed_hmm_switch_probability_fig,
-        speed_hmm_switch_probability_summary,
-        noeffec_group_switch_df,
-        effec_group_switch_df,
-    ) = plot_test.plot_speed_hmm_switch_probability_comparison(
-        pair_ids=behav_pair_map["pair_id"].unique(),
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        transition_fig_dic=hmm_speed_transition_fig_dic,
-        K=2,
-        figsize=(8, 7),
-    )
-
-    plot_test.save_figure_svg(
-        speed_hmm_switch_probability_fig,
-        "speed_hmm_switch_probability_groups",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-        subfolder="speed_hmm_switch_probability_groups",
-    )
-
-    speed_hmm_switch_probability_fig
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    plot_test,
-    save_behavior_svg,
-):
-    speed_hmm_switch_rate_summary_df = plot_test.speed_hmm_switch_rate_summary(
-        pair_ids=behav_pair_map["pair_id"].unique(),
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        fps=30,
-        state_col=("speed_hmm_state", ""),
-        K=2,
-    )
-
-    (
-        speed_hmm_switch_rate_distribution_fig,
-        _speed_hmm_switch_rate_distribution_df,
-    ) = plot_test.plot_speed_hmm_switch_rate_distribution(
-        speed_hmm_switch_rate_summary_df,
-        states=(0, 1),
-    )
-
-    plot_test.save_figure_svg(
-        speed_hmm_switch_rate_distribution_fig,
-        "speed_hmm_switch_rate_by_session",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-        subfolder="speed_hmm_switch_rate_by_session",
-    )
-
-    speed_hmm_switch_rate_distribution_fig
-    return (speed_hmm_switch_rate_summary_df,)
-
-
-@app.cell
-def _(
-    behavior_svg_dir,
-    plot_test,
-    save_behavior_svg,
-    speed_hmm_switch_rate_summary_df,
-):
-    (
-        speed_hmm_state_switch_rate_fig,
-        _speed_hmm_state_switch_rate_plot_df,
-    ) = plot_test.plot_speed_hmm_state_switch_rate_groups(
-        speed_hmm_switch_rate_summary_df,
-        states=(0, 1),
-    )
-
-    plot_test.save_figure_svg(
-        speed_hmm_state_switch_rate_fig,
-        "speed_hmm_state_switch_rate_groups",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-        subfolder="speed_hmm_state_switch_rate",
-    )
-    speed_hmm_state_switch_rate_fig
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    mo,
-    plot_test,
-    save_behavior_svg,
-):
-    hmm_state_xy_heatmap_fig_dic = (
-        plot_test.plot_paired_speed_hmm_state_xy_heatmaps(
-            pair_ids=behav_pair_map["pair_id"].unique(),
-            behav_df_dic_saline=behav_df_dic_saline,
-            behav_df_dic_dcz=behav_df_dic_dcz,
-            bodypart="Center",
-            state_col=("speed_hmm_state", ""),
-            states=(0, 1),
-            xbins=40,
-            ybins=40,
-            extent=(0, 640, 0, 480),
-            normalize=True,
-            difference=True,
-        )
-    )
-
-    plot_test.save_figures_svg(
-        hmm_state_xy_heatmap_fig_dic,
-        "speed_hmm_state_xy_heatmap",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-
-    mo.vstack(list(hmm_state_xy_heatmap_fig_dic.values()))
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    mo,
-    plot_test,
-    save_behavior_svg,
-):
-    hmm_state_occupancy_diff_fig_dic = (
-        plot_test.plot_paired_speed_hmm_state_occupancy_diff_heatmaps(
-            pair_ids=behav_pair_map["pair_id"].unique(),
-            behav_df_dic_saline=behav_df_dic_saline,
-            behav_df_dic_dcz=behav_df_dic_dcz,
-            bodypart="Center",
-            state_col=("speed_hmm_state", ""),
-            timestamp_col=("timestamp", ""),
-            states=(0, 1),
-            xbins=40,
-            ybins=40,
-            extent=(0, 640, 0, 480),
-            normalize=True,
-        )
-    )
-
-    plot_test.save_figures_svg(
-        hmm_state_occupancy_diff_fig_dic,
-        "speed_hmm_state_occupancy_diff_heatmap",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-
-    mo.vstack(list(hmm_state_occupancy_diff_fig_dic.values()))
-    return
-
-
-@app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    behavior_svg_dir,
-    mo,
-    plot_test,
-    save_behavior_svg,
-):
-
-    condition_state_occupancy_diff_fig_dic = (
-        plot_test.plot_paired_speed_hmm_condition_state_occupancy_diff_heatmaps(
-            pair_ids=behav_pair_map["pair_id"].unique(),
-            behav_df_dic_saline=behav_df_dic_saline,
-            behav_df_dic_dcz=behav_df_dic_dcz,
-            bodypart="Center",
-            state_col=("speed_hmm_state", ""),
-            timestamp_col=("timestamp", ""),
-            state_a=1,
-            state_b=0,
-            xbins=40,
-            ybins=40,
-            extent=(0, 640, 0, 480),
-            normalize=True,
-        )
-    )
-
-    plot_test.save_figures_svg(
-        condition_state_occupancy_diff_fig_dic,
-        "speed_hmm_condition_state_occupancy_diff_heatmap",
-        save_dir=behavior_svg_dir,
-        enabled=save_behavior_svg,
-    )
-
-    mo.vstack(list(condition_state_occupancy_diff_fig_dic.values()))
+    mo.vstack([x_position_trial_fig_hm3, x_position_trial_fig_hm4])
     return
 
 
