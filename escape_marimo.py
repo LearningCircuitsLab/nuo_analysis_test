@@ -388,6 +388,105 @@ def _(behav_pair_map, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    # cut sound play and not play df
+    """)
+    return
+
+
+@app.cell
+def _(
+    analyzed_video_names,
+    behav_df_filtered_dic,
+    hM3Dq_mice,
+    hM4Di_mice,
+    pd,
+    session_df_dic,
+):
+    import ast as _ast
+
+    def get_event_times(value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            value = _ast.literal_eval(value)
+        try:
+            if pd.isna(value):
+                return []
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return [value]
+
+    def build_behavior_window_dataframes(mice, time_bin=15):
+        s_behav_df_dic = {}
+        ns_behav_df_dic = {}
+
+        for name in sorted(analyzed_video_names):
+            if name[:6] not in mice or name not in session_df_dic:
+                continue
+
+            behav_df = behav_df_filtered_dic[name]
+            session_df = session_df_dic[name]
+
+            if ("timestamp", "") in behav_df.columns:
+                timestamp = behav_df[("timestamp", "")]
+            else:
+                timestamp = behav_df["timestamp"]
+            timestamp = pd.to_numeric(timestamp, errors="coerce")
+
+            sound_by_trial = {}
+            no_sound_by_trial = {}
+
+            for _, trial_row in session_df.iterrows():
+                trial = trial_row["trial"]
+
+                if "sound_not_played" in session_df.columns:
+                    no_sound_times = get_event_times(
+                        trial_row["sound_not_played"]
+                    )
+                    for t0 in no_sound_times:
+                        mask = (timestamp >= t0) & (timestamp <= t0 + time_bin)
+                        window_df = behav_df.loc[mask].copy()
+                        if not window_df.empty:
+                            window_df.attrs["trigger_time"] = float(t0)
+                            no_sound_by_trial.setdefault(trial, []).append(
+                                window_df
+                            )
+
+                if "sound_played" in session_df.columns:
+                    sound_times = get_event_times(trial_row["sound_played"])
+                    for t0 in sound_times:
+                        mask = (timestamp >= t0) & (timestamp <= t0 + time_bin)
+                        window_df = behav_df.loc[mask].copy()
+                        if not window_df.empty:
+                            window_df.attrs["trigger_time"] = float(t0)
+                            sound_by_trial.setdefault(trial, []).append(window_df)
+
+            s_behav_df_dic[name] = sound_by_trial
+            ns_behav_df_dic[name] = no_sound_by_trial
+
+        return s_behav_df_dic, ns_behav_df_dic
+
+    s_behav_df_dic_hm3, ns_behav_df_dic_hm3 = (
+        build_behavior_window_dataframes(hM3Dq_mice)
+    )
+    s_behav_df_dic_hm4, ns_behav_df_dic_hm4 = (
+        build_behavior_window_dataframes(hM4Di_mice)
+    )
+    return (
+        ns_behav_df_dic_hm3,
+        ns_behav_df_dic_hm4,
+        s_behav_df_dic_hm3,
+        s_behav_df_dic_hm4,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     # plot trajectory
     """)
     return
@@ -584,371 +683,158 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # mean spead comparison
+    # mean speed comparison
     """)
     return
 
 
 @app.cell
 def _(
-    analyzed_video_names,
-    behav_df_filtered_dic,
-    behavior_utils,
-    hM3Dq_mice,
-    hM4Di_mice,
+    build_subject_day_difference,
+    difference_summary_method,
+    mo,
     np,
+    ns_behav_df_dic_hm3,
+    ns_behav_df_dic_hm4,
     pd,
-    session_df_dic,
+    plot_ratio_boxplot,
+    plot_subject_day_difference,
+    ratio_dictionaries_to_long,
+    s_behav_df_dic_hm3,
+    s_behav_df_dic_hm4,
 ):
-    timeBin = 10
-
-
-    def build_mean_speed_dictionaries(mice):
-        ns_mean_speed_dic = {}
-        s_mean_speed_dic = {}
-
-        for name in sorted(analyzed_video_names):
-            if name[:6] not in mice or name not in session_df_dic:
-                continue
-
-            behav_df_filtered = behav_df_filtered_dic[name]
-            if ("Center", "mean_speed") not in behav_df_filtered.columns:
-                behav_df_filtered = behavior_utils.compute_distance_speed(
-                    behav_df_filtered,
-                    bodyparts=["Center"],
-                )
-
-            if ("timestamp", "") in behav_df_filtered.columns:
-                timestamp = behav_df_filtered[("timestamp", "")]
-            else:
-                timestamp = behav_df_filtered["timestamp"]
-
-            session_df = session_df_dic[name]
-            ns_mean_speed = []
-            s_mean_speed = []
-
-            for trial in session_df["trial"].dropna().unique():
-                trial_row = session_df[session_df["trial"] == trial]
-
-                # ---- no-sound windows
-                if "sound_not_played" not in trial_row.columns:
-                    no_sound_list = []
-                elif pd.isna(trial_row["sound_not_played"].iloc[0]):
-                    no_sound_list = []
-                else:
-                    no_sound_list = eval(
-                        trial_row["sound_not_played"].iloc[0]
+    def build_mean_speed_dictionary(behav_df_dic, time_bin):
+        mean_speed_dic = {}
+        for name, trial_dic in behav_df_dic.items():
+            mean_speed_dic[name] = {}
+            for trial, window_df_list in trial_dic.items():
+                trace_means = []
+                for window_df in window_df_list:
+                    if ("Center", "mean_speed") not in window_df.columns:
+                        raise KeyError(
+                            f"{name}, trial {trial} does not contain "
+                            "Center mean_speed"
+                        )
+                    if ("timestamp", "") in window_df.columns:
+                        timestamp = window_df[("timestamp", "")]
+                    else:
+                        timestamp = window_df["timestamp"]
+                    timestamp = pd.to_numeric(timestamp, errors="coerce")
+                    trigger_time = window_df.attrs.get("trigger_time")
+                    if trigger_time is None:
+                        valid_timestamp = timestamp.dropna()
+                        if valid_timestamp.empty:
+                            continue
+                        trigger_time = valid_timestamp.iloc[0]
+                    time_mask = (
+                        (timestamp >= trigger_time)
+                        & (timestamp <= trigger_time + time_bin)
                     )
+                    speed_trace = pd.to_numeric(
+                        window_df.loc[
+                            time_mask,
+                            ("Center", "mean_speed"),
+                        ],
+                        errors="coerce",
+                    ).to_numpy(dtype=float)
+                    if np.isfinite(speed_trace).any():
+                        trace_means.append(float(np.nanmean(speed_trace)))
+                if trace_means:
+                    mean_speed_dic[name][trial] = trace_means
+        return mean_speed_dic
 
-                for t0 in no_sound_list:
-                    df_ns = behav_df_filtered[
-                        (timestamp >= t0)
-                        & (timestamp <= t0 + timeBin)
-                    ]["Center"].dropna()
-                    mean_speed = df_ns["mean_speed"].mean()
-                    if np.isfinite(mean_speed):
-                        ns_mean_speed.append(mean_speed)
+    mean_speed_time_bins = range(1, 16)
+    mean_speed_difference_figs_hm3 = {}
+    mean_speed_difference_figs_hm4 = {}
 
-                # ---- sound window
-                if (
-                    "sound_played" not in trial_row.columns
-                    or pd.isna(trial_row["sound_played"].iloc[0])
-                ):
-                    continue
-
-                sound_play_list = eval(trial_row["sound_played"].iloc[0])
-                if not sound_play_list:
-                    continue
-
-                sound_play_start = sound_play_list[0]
-                df_s = behav_df_filtered[
-                    (timestamp >= sound_play_start)
-                    & (timestamp <= sound_play_start + timeBin)
-                ]["Center"].dropna()
-                mean_speed = df_s["mean_speed"].mean()
-                if np.isfinite(mean_speed):
-                    s_mean_speed.append(mean_speed)
-
-            ns_mean_speed_dic[name] = ns_mean_speed
-            s_mean_speed_dic[name] = s_mean_speed
-
-        return ns_mean_speed_dic, s_mean_speed_dic
-
-
-    ns_meanSpeed_dic_hm3, s_meanSpeed_dic_hm3 = (
-        build_mean_speed_dictionaries(hM3Dq_mice)
-    )
-    ns_meanSpeed_dic_hm4, s_meanSpeed_dic_hm4 = (
-        build_mean_speed_dictionaries(hM4Di_mice)
-    )
-
-
-    def mean_speed_dictionaries_to_long(ns_dic, s_dic):
-        session_names = sorted(set(ns_dic) | set(s_dic))
-        session_day = {}
-
-        for subject in sorted({name[:6] for name in session_names}):
-            subject_sessions = sorted(
-                name for name in session_names if name[:6] == subject
-            )
-            for day_index, name in enumerate(subject_sessions, start=1):
-                session_day[name] = f"day{day_index}"
-
-        rows = []
-        for condition, speed_dic in [
-            ("no_sound", ns_dic),
-            ("sound", s_dic),
-        ]:
-            for name, speeds in speed_dic.items():
-                for speed in speeds:
-                    rows.append(
-                        {
-                            "session": name,
-                            "subject": name[:6],
-                            "day": session_day[name],
-                            "cond": condition,
-                            "speed": speed,
-                        }
-                    )
-
-        return pd.DataFrame(rows)
-
-
-    df_meanSpeed_long_hm3 = mean_speed_dictionaries_to_long(
-        ns_meanSpeed_dic_hm3,
-        s_meanSpeed_dic_hm3,
-    )
-    df_meanSpeed_long_hm4 = mean_speed_dictionaries_to_long(
-        ns_meanSpeed_dic_hm4,
-        s_meanSpeed_dic_hm4,
-    )
-    return df_meanSpeed_long_hm3, df_meanSpeed_long_hm4, timeBin
-
-
-@app.cell
-def _(df_meanSpeed_long_hm3, df_meanSpeed_long_hm4, mo, plt, sns, timeBin):
-    from matplotlib.lines import Line2D
-    from matplotlib.patches import Patch
-
-
-    def plot_mean_speed_comparison(df, group_name):
-        df = df.copy()
-
-        day_order = sorted(
-            df["day"].unique(),
-            key=lambda x: int(x.removeprefix("day")),
+    for mean_speed_time_bin in mean_speed_time_bins:
+        s_mean_speed_dic_hm3 = build_mean_speed_dictionary(
+            s_behav_df_dic_hm3,
+            time_bin=mean_speed_time_bin,
         )
-        mouse_order = sorted(df["subject"].unique())
-        cond_order = ["no_sound", "sound"]
+        ns_mean_speed_dic_hm3 = build_mean_speed_dictionary(
+            ns_behav_df_dic_hm3,
+            time_bin=mean_speed_time_bin,
+        )
+        s_mean_speed_dic_hm4 = build_mean_speed_dictionary(
+            s_behav_df_dic_hm4,
+            time_bin=mean_speed_time_bin,
+        )
+        ns_mean_speed_dic_hm4 = build_mean_speed_dictionary(
+            ns_behav_df_dic_hm4,
+            time_bin=mean_speed_time_bin,
+        )
 
-        palette = {
-            "no_sound": "#3CB371",
-            "sound": "#FA8072",
-        }
-        markers = ["o", "s", "^", "D", "P", "X", "v"]
-        mouse_markers = {
-            mouse: markers[i % len(markers)]
-            for i, mouse in enumerate(mouse_order)
-        }
+        df_mean_speed_time_bin_hm3 = ratio_dictionaries_to_long(
+            ns_mean_speed_dic_hm3,
+            s_mean_speed_dic_hm3,
+        )
+        df_mean_speed_time_bin_hm4 = ratio_dictionaries_to_long(
+            ns_mean_speed_dic_hm4,
+            s_mean_speed_dic_hm4,
+        )
 
-        # Each mouse-condition combination gets its own box
-        df["mouse_cond"] = df["subject"] + "_" + df["cond"]
+        if mean_speed_time_bin == 15:
+            df_mean_speed_hm3 = df_mean_speed_time_bin_hm3
+            df_mean_speed_hm4 = df_mean_speed_time_bin_hm4
 
-        hue_order = [
-            f"{mouse}_{cond}"
-            for mouse in mouse_order
-            for cond in cond_order
+        df_mean_speed_difference_hm3 = build_subject_day_difference(
+            df_mean_speed_time_bin_hm3,
+            summary_method=difference_summary_method,
+        )
+        df_mean_speed_difference_hm4 = build_subject_day_difference(
+            df_mean_speed_time_bin_hm4,
+            summary_method=difference_summary_method,
+        )
+        mean_speed_difference_figs_hm3[mean_speed_time_bin] = (
+            plot_subject_day_difference(
+                df_mean_speed_difference_hm3,
+                f"hM3Dq: first {mean_speed_time_bin}s",
+                "Mean speed: sound - no sound (pixels/s)",
+                summary_method=difference_summary_method,
+                y_limits=None,
+                figsize=(5, 3.5),
+            )
+        )
+        mean_speed_difference_figs_hm4[mean_speed_time_bin] = (
+            plot_subject_day_difference(
+                df_mean_speed_difference_hm4,
+                f"hM4Di: first {mean_speed_time_bin}s",
+                "Mean speed: sound - no sound (pixels/s)",
+                summary_method=difference_summary_method,
+                y_limits=None,
+                figsize=(5, 3.5),
+            )
+        )
+
+    mean_speed_fig_hm3 = plot_ratio_boxplot(
+        df_mean_speed_hm3,
+        "hM3Dq: first 15s",
+        "Mean speed (pixels/s)",
+        y_limits=None,
+    )
+    mean_speed_fig_hm4 = plot_ratio_boxplot(
+        df_mean_speed_hm4,
+        "hM4Di: first 15s",
+        "Mean speed (pixels/s)",
+        y_limits=None,
+    )
+
+    difference_figure_rows = [
+        mo.hstack(
+            [
+                mean_speed_difference_figs_hm3[time_bin],
+                mean_speed_difference_figs_hm4[time_bin],
+            ]
+        )
+        for time_bin in mean_speed_time_bins
+    ]
+    mo.vstack(
+        [
+            mo.hstack([mean_speed_fig_hm3, mean_speed_fig_hm4]),
+            *difference_figure_rows,
         ]
-        nested_palette = {
-            f"{mouse}_{cond}": palette[cond]
-            for mouse in mouse_order
-            for cond in cond_order
-        }
-
-        fig, ax = plt.subplots(
-            figsize=(max(10, len(day_order) * 2.5), 5),
-            dpi=150,
-        )
-
-        sns.boxplot(
-            data=df,
-            x="day",
-            y="speed",
-            hue="mouse_cond",
-            order=day_order,
-            hue_order=hue_order,
-            palette=nested_palette,
-            fill=False,
-            width=0.8,
-            showfliers=False,
-            ax=ax,
-        )
-
-        # Plot each mouse separately to give it a unique marker
-        for mouse in mouse_order:
-            mouse_df = df[df["subject"] == mouse]
-
-            sns.stripplot(
-                data=mouse_df,
-                x="day",
-                y="speed",
-                hue="mouse_cond",
-                order=day_order,
-                hue_order=hue_order,
-                palette=nested_palette,
-                dodge=True,
-                jitter=0.12,
-                marker=mouse_markers[mouse],
-                size=6,
-                alpha=0.6,
-                edgecolor="black",
-                linewidth=0.4,
-                legend=False,
-                ax=ax,
-            )
-
-        # Condition color legend
-        condition_handles = [
-            Patch(
-                facecolor="none",
-                edgecolor=palette[cond],
-                linewidth=2,
-                label=cond,
-            )
-            for cond in cond_order
-        ]
-        condition_legend = ax.legend(
-            handles=condition_handles,
-            title="Condition",
-            frameon=False,
-            bbox_to_anchor=(1.02, 1),
-            loc="upper left",
-        )
-        ax.add_artist(condition_legend)
-
-        # Mouse marker legend
-        mouse_handles = [
-            Line2D(
-                [0], [0],
-                marker=mouse_markers[mouse],
-                linestyle="none",
-                markerfacecolor="gray",
-                markeredgecolor="black",
-                markersize=7,
-                label=mouse,
-            )
-            for mouse in mouse_order
-        ]
-        ax.legend(
-            handles=mouse_handles,
-            title="Mouse",
-            frameon=False,
-            bbox_to_anchor=(1.02, 0.55),
-            loc="upper left",
-        )
-
-        ax.set_xlabel("Day")
-        ax.set_ylabel(
-            f"Mean speed per trial in first {timeBin}s (pixels/s)"
-        )
-        ax.set_title(group_name)
-
-        fig.tight_layout()
-        return fig
-
-
-    mean_speed_fig_hm3 = plot_mean_speed_comparison(
-        df_meanSpeed_long_hm3,
-        "hM3Dq",
     )
-    mean_speed_fig_hm4 = plot_mean_speed_comparison(
-        df_meanSpeed_long_hm4,
-        "hM4Di",
-    )
-
-    mo.vstack([mean_speed_fig_hm3, mean_speed_fig_hm4])
-    return
-
-
-@app.cell
-def _(df_meanSpeed_long_hm3, df_meanSpeed_long_hm4, mo, plt):
-    def calculate_mouse_day_speed_diff(df_mean_speed_long):
-        condition_mean = (
-            df_mean_speed_long
-            .groupby(["subject", "day", "cond"], as_index=False)["speed"]
-            .mean()
-        )
-
-        speed_diff_df = (
-            condition_mean
-            .pivot(
-                index=["subject", "day"],
-                columns="cond",
-                values="speed",
-            )
-            .reset_index()
-        )
-
-        speed_diff_df["speed_diff"] = (
-            speed_diff_df["sound"]
-            - speed_diff_df["no_sound"]
-        )
-
-        speed_diff_df["day_number"] = (
-            speed_diff_df["day"]
-            .str.extract(r"(\d+)", expand=False)
-            .astype(int)
-        )
-
-        return speed_diff_df.sort_values(["subject", "day_number"])
-
-
-    def plot_mouse_speed_diff(speed_diff_df, group_name):
-        fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
-
-        for subject, mouse_df in speed_diff_df.groupby("subject"):
-            mouse_df = mouse_df.dropna(subset=["speed_diff"])
-
-            ax.plot(
-                mouse_df["day_number"],
-                mouse_df["speed_diff"],
-                marker="o",
-                linewidth=2,
-                markersize=7,
-                label=subject,
-            )
-
-        day_numbers = sorted(speed_diff_df["day_number"].unique())
-
-        ax.axhline(0, color="black", linestyle="--", linewidth=1)
-        ax.set_xticks(day_numbers)
-        ax.set_xticklabels([f"day{day}" for day in day_numbers])
-        ax.set_xlabel("Day")
-        ax.set_ylabel("Mean speed difference (sound - no sound), pixels/s")
-        ax.set_title(group_name)
-        ax.legend(frameon=False, bbox_to_anchor=(1.02, 1), loc="upper left")
-
-        fig.tight_layout()
-        return fig
-
-
-    speed_diff_hm3 = calculate_mouse_day_speed_diff(
-        df_meanSpeed_long_hm3
-    )
-    speed_diff_hm4 = calculate_mouse_day_speed_diff(
-        df_meanSpeed_long_hm4
-    )
-
-    speed_diff_fig_hm3 = plot_mouse_speed_diff(
-        speed_diff_hm3,
-        "hM3Dq",
-    )
-    speed_diff_fig_hm4 = plot_mouse_speed_diff(
-        speed_diff_hm4,
-        "hM4Di",
-    )
-
-    mo.vstack([speed_diff_fig_hm3, speed_diff_fig_hm4])
     return
 
 
@@ -957,12 +843,6 @@ def _(mo):
     mo.md(r"""
     # speed change during trials
     """)
-    return
-
-
-@app.cell
-def _(session_df_dic):
-    session_df_dic
     return
 
 
@@ -1464,6 +1344,521 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## stationary time ratio
+    """)
+    return
+
+
+@app.cell
+def _(
+    behavior_utils,
+    ns_behav_df_dic_hm3,
+    ns_behav_df_dic_hm4,
+    pd,
+    s_behav_df_dic_hm3,
+    s_behav_df_dic_hm4,
+):
+    stationary_speed_threshold = 10
+
+    def build_stationary_time_ratio_dictionary(behav_df_dic, time_bin):
+        def stationary_ratio(window_df):
+            if ("timestamp", "") in window_df.columns:
+                timestamp = window_df[("timestamp", "")]
+            else:
+                timestamp = window_df["timestamp"]
+            timestamp = pd.to_numeric(timestamp, errors="coerce")
+            trigger_time = window_df.attrs.get("trigger_time")
+            if trigger_time is None:
+                valid_timestamp = timestamp.dropna()
+                if valid_timestamp.empty:
+                    return float("nan")
+                trigger_time = valid_timestamp.iloc[0]
+            time_mask = (
+                (timestamp >= trigger_time)
+                & (timestamp <= trigger_time + time_bin)
+            )
+            return behavior_utils.get_stationary_time_ratio(
+                window_df.loc[time_mask],
+                speed_threshold=stationary_speed_threshold,
+            )
+
+        return {
+            name: {
+                trial: [
+                    stationary_ratio(window_df)
+                    for window_df in window_df_list
+                ]
+                for trial, window_df_list in trial_dic.items()
+            }
+            for name, trial_dic in behav_df_dic.items()
+        }
+
+    stationary_time_bins = range(1, 16)
+    s_stationary_time_ratio_by_time_bin_hm3 = {}
+    ns_stationary_time_ratio_by_time_bin_hm3 = {}
+    s_stationary_time_ratio_by_time_bin_hm4 = {}
+    ns_stationary_time_ratio_by_time_bin_hm4 = {}
+
+    for _stationary_time_bin in stationary_time_bins:
+        s_stationary_time_ratio_by_time_bin_hm3[_stationary_time_bin] = (
+            build_stationary_time_ratio_dictionary(
+                s_behav_df_dic_hm3,
+                time_bin=_stationary_time_bin,
+            )
+        )
+        ns_stationary_time_ratio_by_time_bin_hm3[_stationary_time_bin] = (
+            build_stationary_time_ratio_dictionary(
+                ns_behav_df_dic_hm3,
+                time_bin=_stationary_time_bin,
+            )
+        )
+        s_stationary_time_ratio_by_time_bin_hm4[_stationary_time_bin] = (
+            build_stationary_time_ratio_dictionary(
+                s_behav_df_dic_hm4,
+                time_bin=_stationary_time_bin,
+            )
+        )
+        ns_stationary_time_ratio_by_time_bin_hm4[_stationary_time_bin] = (
+            build_stationary_time_ratio_dictionary(
+                ns_behav_df_dic_hm4,
+                time_bin=_stationary_time_bin,
+            )
+        )
+
+    s_stationary_time_ratio_dic_hm3 = (
+        s_stationary_time_ratio_by_time_bin_hm3[15]
+    )
+    ns_stationary_time_ratio_dic_hm3 = (
+        ns_stationary_time_ratio_by_time_bin_hm3[15]
+    )
+    s_stationary_time_ratio_dic_hm4 = (
+        s_stationary_time_ratio_by_time_bin_hm4[15]
+    )
+    ns_stationary_time_ratio_dic_hm4 = (
+        ns_stationary_time_ratio_by_time_bin_hm4[15]
+    )
+    return (
+        ns_stationary_time_ratio_by_time_bin_hm3,
+        ns_stationary_time_ratio_by_time_bin_hm4,
+        ns_stationary_time_ratio_dic_hm3,
+        ns_stationary_time_ratio_dic_hm4,
+        s_stationary_time_ratio_by_time_bin_hm3,
+        s_stationary_time_ratio_by_time_bin_hm4,
+        s_stationary_time_ratio_dic_hm3,
+        s_stationary_time_ratio_dic_hm4,
+        stationary_time_bins,
+    )
+
+
+@app.cell
+def _(
+    mo,
+    ns_stationary_time_ratio_by_time_bin_hm3,
+    ns_stationary_time_ratio_by_time_bin_hm4,
+    ns_stationary_time_ratio_dic_hm3,
+    ns_stationary_time_ratio_dic_hm4,
+    pd,
+    plt,
+    s_stationary_time_ratio_by_time_bin_hm3,
+    s_stationary_time_ratio_by_time_bin_hm4,
+    s_stationary_time_ratio_dic_hm3,
+    s_stationary_time_ratio_dic_hm4,
+    sns,
+    stationary_time_bins,
+):
+    from matplotlib.lines import Line2D as _Line2D
+    from matplotlib.patches import Patch as _Patch
+
+    def ratio_dictionaries_to_long(no_sound_dic, sound_dic):
+        session_names = sorted(set(no_sound_dic) | set(sound_dic))
+        session_day = {}
+
+        for subject in sorted({name[:6] for name in session_names}):
+            subject_sessions = sorted(
+                name for name in session_names if name[:6] == subject
+            )
+            dates = sorted(
+                {name.rsplit("_", 2)[-2] for name in subject_sessions}
+            )
+            date_to_day = {
+                date: f"day{day}"
+                for day, date in enumerate(dates, start=1)
+            }
+            for name in subject_sessions:
+                date = name.rsplit("_", 2)[-2]
+                session_day[name] = date_to_day[date]
+
+        rows = []
+        for condition, ratio_dic in [
+            ("no_sound", no_sound_dic),
+            ("sound", sound_dic),
+        ]:
+            for name, trial_dic in ratio_dic.items():
+                for trial, ratios in trial_dic.items():
+                    for event_index, ratio in enumerate(ratios):
+                        rows.append(
+                            {
+                                "session": name,
+                                "subject": name[:6],
+                                "day": session_day[name],
+                                "condition": condition,
+                                "trial": trial,
+                                "event_index": event_index,
+                                "ratio": ratio,
+                            }
+                        )
+
+        ratio_long_df = pd.DataFrame(rows)
+        if not ratio_long_df.empty:
+            ratio_long_df = ratio_long_df.dropna(subset=["ratio"])
+        return ratio_long_df
+
+    def plot_ratio_boxplot(
+        ratio_long_df,
+        group_name,
+        ylabel,
+        y_limits=(-0.05, 1.05),
+    ):
+        fig, ax = plt.subplots(figsize=(9, 5), dpi=150)
+        if ratio_long_df.empty:
+            ax.text(
+                0.5,
+                0.5,
+                f"No ratio data for {group_name}",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            return fig
+
+        day_order = sorted(
+            ratio_long_df["day"].unique(),
+            key=lambda day: int(day.removeprefix("day")),
+        )
+        condition_order = ["no_sound", "sound"]
+        palette = {
+            "no_sound": "steelblue",
+            "sound": "firebrick",
+        }
+        mice = sorted(ratio_long_df["subject"].unique())
+        markers = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
+        mouse_markers = {
+            mouse: markers[index % len(markers)]
+            for index, mouse in enumerate(mice)
+        }
+
+        sns.boxplot(
+            data=ratio_long_df,
+            x="day",
+            y="ratio",
+            hue="condition",
+            order=day_order,
+            hue_order=condition_order,
+            palette=palette,
+            fill=False,
+            width=0.65,
+            gap=0.12,
+            showfliers=False,
+            ax=ax,
+        )
+
+        for mouse in mice:
+            sns.stripplot(
+                data=ratio_long_df[
+                    ratio_long_df["subject"] == mouse
+                ],
+                x="day",
+                y="ratio",
+                hue="condition",
+                order=day_order,
+                hue_order=condition_order,
+                palette=palette,
+                dodge=True,
+                jitter=0.12,
+                marker=mouse_markers[mouse],
+                size=6,
+                alpha=0.7,
+                edgecolor="black",
+                linewidth=0.4,
+                legend=False,
+                ax=ax,
+            )
+
+        condition_handles = [
+            _Patch(
+                facecolor="none",
+                edgecolor=palette[condition],
+                linewidth=2,
+                label=condition.replace("_", " "),
+            )
+            for condition in condition_order
+        ]
+        condition_legend = ax.legend(
+            handles=condition_handles,
+            title="Condition",
+            frameon=False,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+        )
+        ax.add_artist(condition_legend)
+
+        mouse_handles = [
+            _Line2D(
+                [0],
+                [0],
+                marker=mouse_markers[mouse],
+                linestyle="none",
+                markerfacecolor="gray",
+                markeredgecolor="black",
+                markersize=7,
+                label=mouse,
+            )
+            for mouse in mice
+        ]
+        ax.legend(
+            handles=mouse_handles,
+            title="Mouse",
+            frameon=False,
+            bbox_to_anchor=(1.02, 0.58),
+            loc="upper left",
+        )
+
+        ax.set_xlabel("Day")
+        ax.set_ylabel(ylabel)
+        ax.set_title(group_name)
+        if y_limits is not None:
+            ax.set_ylim(*y_limits)
+        ax.grid(axis="y", alpha=0.25)
+        fig.tight_layout()
+        return fig
+
+    def build_subject_day_difference(
+        ratio_long_df,
+        summary_method="mean",
+    ):
+        if summary_method not in {"mean", "median"}:
+            raise ValueError(
+                "summary_method must be either 'mean' or 'median'"
+            )
+        if ratio_long_df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "subject",
+                    "day",
+                    "no_sound",
+                    "sound",
+                    "difference",
+                ]
+            )
+
+        condition_summary = (
+            ratio_long_df.groupby(
+                ["subject", "day", "condition"],
+                as_index=False,
+            )["ratio"]
+            .agg(summary_method)
+            .pivot(
+                index=["subject", "day"],
+                columns="condition",
+                values="ratio",
+            )
+            .reset_index()
+        )
+        if not {"sound", "no_sound"}.issubset(condition_summary.columns):
+            return pd.DataFrame(
+                columns=[
+                    "subject",
+                    "day",
+                    "no_sound",
+                    "sound",
+                    "difference",
+                ]
+            )
+
+        condition_summary = condition_summary.dropna(
+            subset=["sound", "no_sound"]
+        )
+        condition_summary["difference"] = (
+            condition_summary["sound"] - condition_summary["no_sound"]
+        )
+        condition_summary["day_number"] = condition_summary[
+            "day"
+        ].str.removeprefix("day").astype(int)
+        return condition_summary
+
+    def plot_subject_day_difference(
+        difference_df,
+        group_name,
+        ylabel,
+        summary_method="mean",
+        y_limits=(-1.05, 1.05),
+        figsize=(8, 5),
+    ):
+        if summary_method not in {"mean", "median"}:
+            raise ValueError(
+                "summary_method must be either 'mean' or 'median'"
+            )
+        fig, ax = plt.subplots(figsize=figsize, dpi=150)
+        if difference_df.empty:
+            ax.text(
+                0.5,
+                0.5,
+                f"No paired sound/no-sound data for {group_name}",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            return fig
+
+        mice = sorted(difference_df["subject"].unique())
+        markers = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
+        colors = sns.color_palette("tab10", n_colors=len(mice))
+
+        for index, mouse in enumerate(mice):
+            mouse_df = difference_df[
+                difference_df["subject"] == mouse
+            ].sort_values("day_number")
+            ax.plot(
+                mouse_df["day_number"],
+                mouse_df["difference"],
+                color=colors[index],
+                marker=markers[index % len(markers)],
+                markeredgecolor="black",
+                linewidth=1.8,
+                markersize=7,
+                alpha=0.8,
+                label=mouse,
+            )
+
+        daily_summary = (
+            difference_df.groupby("day_number", as_index=False)["difference"]
+            .agg(summary_method)
+            .sort_values("day_number")
+        )
+        ax.plot(
+            daily_summary["day_number"],
+            daily_summary["difference"],
+            color="black",
+            marker="o",
+            markerfacecolor="white",
+            markeredgecolor="black",
+            linewidth=3.5,
+            markersize=8,
+            label=f"{summary_method.capitalize()} across mice",
+            zorder=5,
+        )
+
+        days = sorted(difference_df["day_number"].unique())
+        ax.set_xticks(days)
+        ax.set_xticklabels([f"day{day}" for day in days])
+        ax.axhline(0, color="gray", linestyle="--", linewidth=1)
+        if y_limits is not None:
+            ax.set_ylim(*y_limits)
+        ax.set_xlabel("Day")
+        ax.set_ylabel(ylabel)
+        ax.set_title(group_name)
+        ax.grid(axis="y", alpha=0.25)
+        ax.legend(
+            title="Mouse",
+            frameon=False,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+        )
+        fig.tight_layout()
+        return fig
+
+    df_stationary_time_ratio_hm3 = ratio_dictionaries_to_long(
+        ns_stationary_time_ratio_dic_hm3,
+        s_stationary_time_ratio_dic_hm3,
+    )
+    df_stationary_time_ratio_hm4 = ratio_dictionaries_to_long(
+        ns_stationary_time_ratio_dic_hm4,
+        s_stationary_time_ratio_dic_hm4,
+    )
+
+    stationary_time_ratio_fig_hm3 = plot_ratio_boxplot(
+        df_stationary_time_ratio_hm3,
+        "hM3Dq: first 15s",
+        "Stationary time ratio",
+    )
+    stationary_time_ratio_fig_hm4 = plot_ratio_boxplot(
+        df_stationary_time_ratio_hm4,
+        "hM4Di: first 15s",
+        "Stationary time ratio",
+    )
+
+    difference_summary_method = "mean"  # Change to "median" if needed.
+
+    stationary_time_ratio_difference_figs_hm3 = {}
+    stationary_time_ratio_difference_figs_hm4 = {}
+    for _stationary_time_bin in stationary_time_bins:
+        df_stationary_time_bin_hm3 = ratio_dictionaries_to_long(
+            ns_stationary_time_ratio_by_time_bin_hm3[_stationary_time_bin],
+            s_stationary_time_ratio_by_time_bin_hm3[_stationary_time_bin],
+        )
+        df_stationary_time_bin_hm4 = ratio_dictionaries_to_long(
+            ns_stationary_time_ratio_by_time_bin_hm4[_stationary_time_bin],
+            s_stationary_time_ratio_by_time_bin_hm4[_stationary_time_bin],
+        )
+        df_stationary_difference_hm3 = build_subject_day_difference(
+            df_stationary_time_bin_hm3,
+            summary_method=difference_summary_method,
+        )
+        df_stationary_difference_hm4 = build_subject_day_difference(
+            df_stationary_time_bin_hm4,
+            summary_method=difference_summary_method,
+        )
+        stationary_time_ratio_difference_figs_hm3[_stationary_time_bin] = (
+            plot_subject_day_difference(
+                df_stationary_difference_hm3,
+                f"hM3Dq: first {_stationary_time_bin}s",
+                "Stationary time ratio: sound - no sound",
+                summary_method=difference_summary_method,
+                figsize=(5, 3.5),
+            )
+        )
+        stationary_time_ratio_difference_figs_hm4[_stationary_time_bin] = (
+            plot_subject_day_difference(
+                df_stationary_difference_hm4,
+                f"hM4Di: first {_stationary_time_bin}s",
+                "Stationary time ratio: sound - no sound",
+                summary_method=difference_summary_method,
+                figsize=(5, 3.5),
+            )
+        )
+
+    stationary_difference_figure_rows = [
+        mo.hstack(
+            [
+                stationary_time_ratio_difference_figs_hm3[time_bin],
+                stationary_time_ratio_difference_figs_hm4[time_bin],
+            ]
+        )
+        for time_bin in stationary_time_bins
+    ]
+
+    mo.vstack(
+        [
+            mo.hstack(
+                [stationary_time_ratio_fig_hm3, stationary_time_ratio_fig_hm4]
+            ),
+            *stationary_difference_figure_rows,
+        ]
+    )
+    return (
+        build_subject_day_difference,
+        difference_summary_method,
+        plot_ratio_boxplot,
+        plot_subject_day_difference,
+        ratio_dictionaries_to_long,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     # compare trial number
     """)
     return
@@ -1801,6 +2196,249 @@ def _(
     )
 
     mo.vstack([x_position_trial_fig_hm3, x_position_trial_fig_hm4])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## trigger zone time ratio
+    """)
+    return
+
+
+@app.cell
+def _(
+    np,
+    ns_behav_df_dic_hm3,
+    ns_behav_df_dic_hm4,
+    pd,
+    s_behav_df_dic_hm3,
+    s_behav_df_dic_hm4,
+):
+    trigger_zone_x_threshold = 364
+
+    def get_trigger_zone_time_ratio(behav_df, time_bin):
+        if ("timestamp", "") in behav_df.columns:
+            timestamp = behav_df[("timestamp", "")]
+        else:
+            timestamp = behav_df["timestamp"]
+        timestamp = pd.to_numeric(timestamp, errors="coerce")
+        trigger_time = behav_df.attrs.get("trigger_time")
+        if trigger_time is None:
+            valid_timestamp = timestamp.dropna()
+            if valid_timestamp.empty:
+                return np.nan
+            trigger_time = valid_timestamp.iloc[0]
+        time_mask = (
+            (timestamp >= trigger_time)
+            & (timestamp <= trigger_time + time_bin)
+        )
+        x = pd.to_numeric(
+            behav_df.loc[time_mask, ("Center", "x")],
+            errors="coerce",
+        ).to_numpy()
+        timestamp = timestamp.loc[time_mask].to_numpy()
+
+        common_length = min(len(x), len(timestamp))
+        x = x[:common_length]
+        timestamp = timestamp[:common_length]
+
+        valid_time = np.isfinite(timestamp)
+        x = x[valid_time]
+        timestamp = timestamp[valid_time]
+        if len(timestamp) < 2:
+            return np.nan
+
+        dt = np.diff(timestamp)
+        positive_dt = dt[np.isfinite(dt) & (dt > 0)]
+        last_dt = np.median(positive_dt) if len(positive_dt) else 0.0
+        time_per_frame = np.diff(
+            np.append(timestamp, timestamp[-1] + last_dt)
+        )
+        time_per_frame = np.where(
+            np.isfinite(time_per_frame),
+            time_per_frame,
+            0.0,
+        )
+        time_per_frame = np.clip(time_per_frame, a_min=0, a_max=None)
+        total_time = time_per_frame.sum()
+        if total_time <= 0:
+            return np.nan
+
+        in_trigger_zone = np.isfinite(x) & (x > trigger_zone_x_threshold)
+        return float(time_per_frame[in_trigger_zone].sum() / total_time)
+
+    def build_trigger_zone_time_ratio_dictionary(behav_df_dic, time_bin):
+        return {
+            name: {
+                trial: [
+                    get_trigger_zone_time_ratio(window_df, time_bin=time_bin)
+                    for window_df in window_df_list
+                ]
+                for trial, window_df_list in trial_dic.items()
+            }
+            for name, trial_dic in behav_df_dic.items()
+        }
+
+    trigger_zone_time_bins = range(1, 16)
+    s_trigger_zone_time_ratio_by_time_bin_hm3 = {}
+    ns_trigger_zone_time_ratio_by_time_bin_hm3 = {}
+    s_trigger_zone_time_ratio_by_time_bin_hm4 = {}
+    ns_trigger_zone_time_ratio_by_time_bin_hm4 = {}
+
+    for _trigger_zone_time_bin in trigger_zone_time_bins:
+        s_trigger_zone_time_ratio_by_time_bin_hm3[_trigger_zone_time_bin] = (
+            build_trigger_zone_time_ratio_dictionary(
+                s_behav_df_dic_hm3,
+                time_bin=_trigger_zone_time_bin,
+            )
+        )
+        ns_trigger_zone_time_ratio_by_time_bin_hm3[_trigger_zone_time_bin] = (
+            build_trigger_zone_time_ratio_dictionary(
+                ns_behav_df_dic_hm3,
+                time_bin=_trigger_zone_time_bin,
+            )
+        )
+        s_trigger_zone_time_ratio_by_time_bin_hm4[_trigger_zone_time_bin] = (
+            build_trigger_zone_time_ratio_dictionary(
+                s_behav_df_dic_hm4,
+                time_bin=_trigger_zone_time_bin,
+            )
+        )
+        ns_trigger_zone_time_ratio_by_time_bin_hm4[_trigger_zone_time_bin] = (
+            build_trigger_zone_time_ratio_dictionary(
+                ns_behav_df_dic_hm4,
+                time_bin=_trigger_zone_time_bin,
+            )
+        )
+
+    s_trigger_zone_time_ratio_dic_hm3 = (
+        s_trigger_zone_time_ratio_by_time_bin_hm3[15]
+    )
+    ns_trigger_zone_time_ratio_dic_hm3 = (
+        ns_trigger_zone_time_ratio_by_time_bin_hm3[15]
+    )
+    s_trigger_zone_time_ratio_dic_hm4 = (
+        s_trigger_zone_time_ratio_by_time_bin_hm4[15]
+    )
+    ns_trigger_zone_time_ratio_dic_hm4 = (
+        ns_trigger_zone_time_ratio_by_time_bin_hm4[15]
+    )
+    return (
+        ns_trigger_zone_time_ratio_by_time_bin_hm3,
+        ns_trigger_zone_time_ratio_by_time_bin_hm4,
+        ns_trigger_zone_time_ratio_dic_hm3,
+        ns_trigger_zone_time_ratio_dic_hm4,
+        s_trigger_zone_time_ratio_by_time_bin_hm3,
+        s_trigger_zone_time_ratio_by_time_bin_hm4,
+        s_trigger_zone_time_ratio_dic_hm3,
+        s_trigger_zone_time_ratio_dic_hm4,
+        trigger_zone_time_bins,
+    )
+
+
+@app.cell
+def _(
+    build_subject_day_difference,
+    difference_summary_method,
+    mo,
+    ns_trigger_zone_time_ratio_by_time_bin_hm3,
+    ns_trigger_zone_time_ratio_by_time_bin_hm4,
+    ns_trigger_zone_time_ratio_dic_hm3,
+    ns_trigger_zone_time_ratio_dic_hm4,
+    plot_ratio_boxplot,
+    plot_subject_day_difference,
+    ratio_dictionaries_to_long,
+    s_trigger_zone_time_ratio_by_time_bin_hm3,
+    s_trigger_zone_time_ratio_by_time_bin_hm4,
+    s_trigger_zone_time_ratio_dic_hm3,
+    s_trigger_zone_time_ratio_dic_hm4,
+    trigger_zone_time_bins,
+):
+    df_trigger_zone_time_ratio_hm3 = ratio_dictionaries_to_long(
+        ns_trigger_zone_time_ratio_dic_hm3,
+        s_trigger_zone_time_ratio_dic_hm3,
+    )
+    df_trigger_zone_time_ratio_hm4 = ratio_dictionaries_to_long(
+        ns_trigger_zone_time_ratio_dic_hm4,
+        s_trigger_zone_time_ratio_dic_hm4,
+    )
+
+    trigger_zone_time_ratio_fig_hm3 = plot_ratio_boxplot(
+        df_trigger_zone_time_ratio_hm3,
+        "hM3Dq: first 15s",
+        "Trigger-zone time ratio (x > 364)",
+    )
+    trigger_zone_time_ratio_fig_hm4 = plot_ratio_boxplot(
+        df_trigger_zone_time_ratio_hm4,
+        "hM4Di: first 15s",
+        "Trigger-zone time ratio (x > 364)",
+    )
+
+    trigger_zone_time_ratio_difference_figs_hm3 = {}
+    trigger_zone_time_ratio_difference_figs_hm4 = {}
+    for _trigger_zone_time_bin in trigger_zone_time_bins:
+        df_trigger_zone_time_bin_hm3 = ratio_dictionaries_to_long(
+            ns_trigger_zone_time_ratio_by_time_bin_hm3[
+                _trigger_zone_time_bin
+            ],
+            s_trigger_zone_time_ratio_by_time_bin_hm3[_trigger_zone_time_bin],
+        )
+        df_trigger_zone_time_bin_hm4 = ratio_dictionaries_to_long(
+            ns_trigger_zone_time_ratio_by_time_bin_hm4[
+                _trigger_zone_time_bin
+            ],
+            s_trigger_zone_time_ratio_by_time_bin_hm4[_trigger_zone_time_bin],
+        )
+        df_trigger_zone_difference_hm3 = build_subject_day_difference(
+            df_trigger_zone_time_bin_hm3,
+            summary_method=difference_summary_method,
+        )
+        df_trigger_zone_difference_hm4 = build_subject_day_difference(
+            df_trigger_zone_time_bin_hm4,
+            summary_method=difference_summary_method,
+        )
+        trigger_zone_time_ratio_difference_figs_hm3[
+            _trigger_zone_time_bin
+        ] = plot_subject_day_difference(
+            df_trigger_zone_difference_hm3,
+            f"hM3Dq: first {_trigger_zone_time_bin}s",
+            "Trigger-zone time ratio: sound - no sound",
+            summary_method=difference_summary_method,
+            figsize=(5, 3.5),
+        )
+        trigger_zone_time_ratio_difference_figs_hm4[
+            _trigger_zone_time_bin
+        ] = plot_subject_day_difference(
+            df_trigger_zone_difference_hm4,
+            f"hM4Di: first {_trigger_zone_time_bin}s",
+            "Trigger-zone time ratio: sound - no sound",
+            summary_method=difference_summary_method,
+            figsize=(5, 3.5),
+        )
+
+    trigger_zone_difference_figure_rows = [
+        mo.hstack(
+            [
+                trigger_zone_time_ratio_difference_figs_hm3[time_bin],
+                trigger_zone_time_ratio_difference_figs_hm4[time_bin],
+            ]
+        )
+        for time_bin in trigger_zone_time_bins
+    ]
+
+    mo.vstack(
+        [
+            mo.hstack(
+                [
+                    trigger_zone_time_ratio_fig_hm3,
+                    trigger_zone_time_ratio_fig_hm4,
+                ]
+            ),
+            *trigger_zone_difference_figure_rows,
+        ]
+    )
     return
 
 

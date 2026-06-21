@@ -192,13 +192,7 @@ def _(
 
 
     df_all = pd.read_csv(local_path / Path(f"{mouse}.csv"), sep=";")
-    return df_all, local_path, mouse
-
-
-@app.cell
-def _(local_path):
-    local_path
-    return
+    return df_all, mouse
 
 
 @app.cell
