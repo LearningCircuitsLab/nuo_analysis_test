@@ -743,7 +743,7 @@ def _(
                     mean_speed_dic[name][trial] = trace_means
         return mean_speed_dic
 
-    mean_speed_time_bins = range(1, 16)
+    mean_speed_time_bins = range(1, 16, 2)
     mean_speed_difference_figs_hm3 = {}
     mean_speed_difference_figs_hm4 = {}
 
@@ -858,8 +858,8 @@ def _(
 ):
     import ast as _ast
 
-    speed_change_time_bin = 15
-    pre_time_bin = 2
+    speed_change_time_bin = 1
+    pre_time_bin = 1
 
 
     def build_speed_change_dictionaries(mice, pre_time_bin=None):
@@ -1001,7 +1001,7 @@ def _(
     s_speed_change_dic_hm4_prebin,
 ):
     # speed change trial by trial
-    trial_speed_time_bin = 15
+    trial_speed_time_bin = 1
     trial_speed_fps = 30
     trial_speed_grid = np.arange(-pre_time_bin, trial_speed_time_bin, 0.01)
 
@@ -1393,7 +1393,7 @@ def _(
             for name, trial_dic in behav_df_dic.items()
         }
 
-    stationary_time_bins = range(1, 16)
+    stationary_time_bins = range(1, 16, 2)
     s_stationary_time_ratio_by_time_bin_hm3 = {}
     ns_stationary_time_ratio_by_time_bin_hm3 = {}
     s_stationary_time_ratio_by_time_bin_hm4 = {}
@@ -2281,7 +2281,7 @@ def _(
             for name, trial_dic in behav_df_dic.items()
         }
 
-    trigger_zone_time_bins = range(1, 16)
+    trigger_zone_time_bins = range(1, 16, 2)
     s_trigger_zone_time_ratio_by_time_bin_hm3 = {}
     ns_trigger_zone_time_ratio_by_time_bin_hm3 = {}
     s_trigger_zone_time_ratio_by_time_bin_hm4 = {}

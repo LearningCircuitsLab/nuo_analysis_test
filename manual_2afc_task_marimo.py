@@ -1034,7 +1034,7 @@ def _(
         output_per_mouse_dic_hm3,
         "hM3Dq",
         ylabel=compare_y_label,
-        title=f"hM4Di: {compare_y_label}",
+        title=f"hM3Di: {compare_y_label}",
     )
     condition_diff_session_fig = plot_test.plot_group_condition_values_by_mouse(
         output_per_mouse_dic_hm3_diff,
@@ -1048,6 +1048,68 @@ def _(
             hm3_condition_session_fig,
             condition_diff_session_fig,
         ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # compare the trial with time
+    """)
+    return
+
+
+@app.cell
+def _(df_test_selected_upd, mo, plots, plt, utils):
+    trial_time_figures = []
+
+    for subject, df_mouse in df_test_selected_upd.groupby("subject", sort=True):
+        df_mouse = utils.add_time_from_session_start(df_mouse.copy())
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        for ax, modality in zip(axes, ["visual", "auditory"]):
+            df_modality = df_mouse[
+                df_mouse["stimulus_modality"] == modality
+            ]
+
+            for observation, color in [
+                ("saline", "steelblue"),
+                ("dcz", "firebrick"),
+            ]:
+                df_observation = df_modality[
+                    df_modality["observations"].str.contains(
+                        observation,
+                        case=False,
+                        na=False,
+                    )
+                ]
+
+                if df_observation.empty:
+                    continue
+
+                collection_start = len(ax.collections)
+                plots.plot_trial_time_of_start(
+                    df_observation,
+                    ax=ax,
+                )
+
+                for collection in ax.collections[collection_start:]:
+                    collection.set_facecolor(color)
+                    collection.set_edgecolor(color)
+
+            ax.scatter([], [], color="steelblue", s=16, label="saline")
+            ax.scatter([], [], color="firebrick", s=16, label="DCZ")
+            ax.set_title(modality.capitalize())
+            ax.legend(frameon=False)
+
+        fig.suptitle(str(subject))
+        fig.tight_layout()
+        trial_time_figures.append(fig)
+
+    mo.vstack(trial_time_figures) if trial_time_figures else mo.md(
+        "No paired saline/DCZ sessions to plot."
     )
     return
 

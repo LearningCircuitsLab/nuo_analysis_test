@@ -5273,6 +5273,21 @@ def plot_paired_speed_hmm_state_xy_heatmaps(
     return fig_dic
 
 
+def _point_offsets_away_from_center(n_points, width):
+    if n_points <= 0:
+        return np.array([])
+
+    n_left = (n_points + 1) // 2
+    n_right = n_points // 2
+    left_offsets = -np.linspace(width * 0.25, width * 0.45, n_left)
+    right_offsets = np.linspace(width * 0.25, width * 0.45, n_right)
+
+    offsets = np.empty(n_points, dtype=float)
+    offsets[0::2] = left_offsets
+    offsets[1::2] = right_offsets
+    return offsets
+
+
 def plot_condition_session_values_by_mouse(
     output_per_mouse_dic,
     group_name,
@@ -5397,6 +5412,19 @@ def plot_condition_session_values_by_mouse(
             for median in boxplot["medians"]:
                 median.set_color("black")
                 median.set_linewidth(1.1)
+            point_offsets = _point_offsets_away_from_center(
+                len(session_values),
+                session_span,
+            )
+            ax.scatter(
+                mouse_x + point_offsets,
+                session_values,
+                color=mouse_colors[mouse],
+                edgecolor="none",
+                alpha=0.35,
+                s=24,
+                zorder=3,
+            )
             ax.scatter(
                 mouse_x,
                 session_values.mean(),
@@ -5551,6 +5579,19 @@ def plot_group_condition_values_by_mouse(
                 median.set_color("black")
                 median.set_linewidth(1.1)
 
+            point_offsets = _point_offsets_away_from_center(
+                len(session_values),
+                box_width,
+            )
+            ax.scatter(
+                mouse_x + point_offsets,
+                session_values,
+                color=mouse_colors[mouse],
+                edgecolor="none",
+                alpha=0.35,
+                s=24,
+                zorder=3,
+            )
             ax.scatter(
                 mouse_x,
                 session_values.mean(),

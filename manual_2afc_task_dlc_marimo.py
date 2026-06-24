@@ -46,7 +46,18 @@ def _():
     from scipy.optimize import minimize
 
     warnings.filterwarnings("ignore")
-    return Path, behavior_utils, dft, np, pd, plot_test, plt, utils, utils_test
+    return (
+        Path,
+        behavior_utils,
+        dft,
+        np,
+        pd,
+        plot_test,
+        plots,
+        plt,
+        utils,
+        utils_test,
+    )
 
 
 @app.cell
@@ -471,18 +482,39 @@ def _(add_number_of_pokes, df_test, dft, hM3Dq_mice, hM4Di_mice, pd):
         if df.empty:
             return df.copy()
 
-        subject_dfs = []
-        for _, df_subject in df.groupby("subject", sort=False):
-            df_subject = dft.add_trial_duration_column_to_df(df_subject)
-            df_subject = dft.add_engagement_column(
-                df_subject,
+        session_dfs = []
+
+        for (_, _), df_session in df.groupby(
+            ["subject", "session"],
+            sort=False,
+        ):
+            df_session = dft.add_trial_duration_column_to_df(
+                df_session
+            )
+
+            df_session = dft.add_engagement_column(
+                df_session,
                 engagement_sd_criteria=2,
             )
-            df_subject = dft.calculate_time_between_trials_and_reaction_time(dft.add_day_column_to_df(
-                add_number_of_pokes(df_subject, port_number=2)
-            ))
-            subject_dfs.append(df_subject)
-        return pd.concat(subject_dfs).sort_index()
+
+            df_session = add_number_of_pokes(
+                df_session,
+                port_number=2,
+            )
+
+            df_session = dft.add_day_column_to_df(
+                df_session
+            )
+
+            df_session = (
+                dft.calculate_time_between_trials_and_reaction_time(
+                    df_session
+                )
+            )
+
+            session_dfs.append(df_session)
+
+        return pd.concat(session_dfs).sort_index()
 
     df_test_upd = add_trial_variables_by_subject(df_test_upd)
     # df_test_upd = df_test_upd[
@@ -1351,6 +1383,14 @@ def _(
     )
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## condition select
+    """)
+    return
+
+
 @app.cell
 def _(mo):
     compare_value_settings = {
@@ -1373,12 +1413,19 @@ def _(mo):
 
 
 @app.cell
+def _(compare_value_select, compare_value_settings):
+    _compare_value_setting = compare_value_settings[compare_value_select.value]
+    compare_value_name = compare_value_select.value
+    split_col = _compare_value_setting["split_col"]
+    split_label = _compare_value_setting["split_label"]
+    return compare_value_name, split_col, split_label
+
+
+@app.cell
 def _(
     behav_df_dic_dcz,
     behav_df_dic_saline,
     behav_pair_map,
-    compare_value_select,
-    compare_value_settings,
     df_dic_dcz,
     df_dic_saline,
     get_roi_per_mouse_sessions,
@@ -1388,11 +1435,9 @@ def _(
     roi_left,
     roi_right,
     roi_top,
+    split_col,
+    split_label,
 ):
-    compare_value_setting = compare_value_settings[compare_value_select.value]
-    split_col = compare_value_setting["split_col"]
-    split_label = compare_value_setting["split_label"]
-
     roi_per_animal_condition_hm4_split_col = get_roi_per_mouse_sessions(
         behav_df_dic_saline=behav_df_dic_saline,
         behav_df_dic_dcz=behav_df_dic_dcz,
@@ -1456,8 +1501,6 @@ def _(
         roi_per_animal_condition_hm3_split_col,
         roi_per_animal_condition_hm4_diff_split_col,
         roi_per_animal_condition_hm4_split_col,
-        split_col,
-        split_label,
     )
 
 
@@ -1507,7 +1550,7 @@ def _(
 
 @app.cell
 def _(
-    compare_value_select,
+    compare_value_name,
     mo,
     plot_test,
     roi_per_animal_condition_hm3_diff_split_col,
@@ -1517,7 +1560,6 @@ def _(
     split_col,
     split_label,
 ):
-    compare_value_name = compare_value_select.value
     hm4_roi_engagement_condition_session_fig = (
         plot_test.plot_condition_session_values_by_mouse(
             roi_per_animal_condition_hm4_split_col,
@@ -1574,6 +1616,20 @@ def _(mo):
 
 @app.cell
 def _(behavior_utils, np, pd):
+    def _empty_speed_output(difference=False):
+        condition_keys = (
+            ["vis", "aud"]
+            if difference
+            else ["vis_saline", "vis_dcz", "aud_saline", "aud_dcz"]
+        )
+        return {condition_key: {} for condition_key in condition_keys}
+
+    def _mouse_speed_split_output(condition_dict, subject, split_labels):
+        return condition_dict.setdefault(
+            subject,
+            {split_label: [] for split_label in split_labels},
+        )
+
     def get_mean_speed(behav_df, bodypart="Center", speed_col="mean_speed"):
         speed = pd.to_numeric(
             behavior_utils.get_behavior_column(
@@ -1689,10 +1745,7 @@ def _(behavior_utils, np, pd):
         split_labels=("engaged", "disengaged"),
         difference=False,
     ):
-        output = _empty_roi_output(
-            difference=difference,
-            by_engagement=True,
-        )
+        output = _empty_speed_output(difference=difference)
 
         for _, pair_row in behav_pair_map.sort_values("pair_id").iterrows():
             pair_id = pair_row["pair_id"]
@@ -1732,7 +1785,7 @@ def _(behavior_utils, np, pd):
             )
 
             if difference:
-                mouse_output = _mouse_split_output(
+                mouse_output = _mouse_speed_split_output(
                     output[modality_prefix],
                     subject,
                     split_labels,
@@ -1753,12 +1806,12 @@ def _(behavior_utils, np, pd):
                     )
                 continue
 
-            saline_output = _mouse_split_output(
+            saline_output = _mouse_speed_split_output(
                 output[f"{modality_prefix}_saline"],
                 subject,
                 split_labels,
             )
-            dcz_output = _mouse_split_output(
+            dcz_output = _mouse_speed_split_output(
                 output[f"{modality_prefix}_dcz"],
                 subject,
                 split_labels,
@@ -1797,7 +1850,7 @@ def _(behavior_utils, np, pd):
                 difference=difference,
             )
 
-        output = _empty_roi_output(difference=difference)
+        output = _empty_speed_output(difference=difference)
 
         for _, pair_row in behav_pair_map.sort_values("pair_id").iterrows():
             pair_id = pair_row["pair_id"]
@@ -1858,18 +1911,14 @@ def _(
     behav_df_dic_dcz,
     behav_df_dic_saline,
     behav_pair_map,
-    compare_value_select,
-    compare_value_settings,
     df_dic_dcz,
     df_dic_saline,
     get_speed_per_mouse_sessions,
     hM3Dq_mice,
     hM4Di_mice,
+    split_col,
+    split_label,
 ):
-    compare_value_setting = compare_value_settings[compare_value_select.value]
-    split_col = compare_value_setting["split_col"]
-    split_label = compare_value_setting["split_label"]
-
     speed_per_animal_condition_hm4 = get_speed_per_mouse_sessions(
         behav_df_dic_saline=behav_df_dic_saline,
         behav_df_dic_dcz=behav_df_dic_dcz,
@@ -1947,8 +1996,6 @@ def _(
         speed_per_animal_condition_hm4_diff,
         speed_per_animal_condition_hm4_diff_split_col,
         speed_per_animal_condition_hm4_split_col,
-        split_col,
-        split_label,
     )
 
 
@@ -1998,7 +2045,7 @@ def _(
 
 @app.cell
 def _(
-    compare_value_select,
+    compare_value_name,
     mo,
     plot_test,
     speed_per_animal_condition_hm3_diff_split_col,
@@ -2008,7 +2055,6 @@ def _(
     split_col,
     split_label,
 ):
-    compare_value_name = compare_value_select.value
     hm4_speed_engagement_condition_session_fig = (
         plot_test.plot_condition_session_values_by_mouse(
             speed_per_animal_condition_hm4_split_col,
@@ -2058,8 +2104,453 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
- 
+    # compare the trial with time
     """)
+    return
+
+
+@app.cell
+def _(
+    df_dic_dcz,
+    df_dic_saline,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    pd,
+    plots,
+    plt,
+    utils,
+):
+    _point_color_column = "previous_correct"
+
+    _point_colors = {
+        ("saline", True): "steelblue",
+        ("saline", False): "limegreen",
+        ("dcz", True): "firebrick",
+        ("dcz", False): "gold",
+    }
+
+    _paired_ids = set(df_dic_saline) & set(df_dic_dcz)
+    _paired_frames = [
+        condition_dic[pair_id]
+        for pair_id in sorted(_paired_ids)
+        for condition_dic in (df_dic_saline, df_dic_dcz)
+    ]
+
+    _df_test_paired = (
+        pd.concat(_paired_frames, ignore_index=True)
+        if _paired_frames
+        else pd.DataFrame(columns=["subject"])
+    )
+
+    _trial_time_figures = []
+
+    for _subject, _df_mouse in _df_test_paired.groupby("subject"):
+        _group_label = (
+            "hM3Dq"
+            if _subject in hM3Dq_mice
+            else "hM4Di"
+            if _subject in hM4Di_mice
+            else "unknown"
+        )
+        _df_mouse = utils.add_time_from_session_start(
+            _df_mouse.copy()
+        )
+        _fig, _axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        for _ax, _modality in zip(
+            _axes,
+            ("visual", "auditory"),
+        ):
+            _df_modality = _df_mouse[
+                _df_mouse["stimulus_modality"] == _modality
+            ]
+
+            for _observation in ("saline", "dcz"):
+                _df_plot = _df_modality[
+                    _df_modality["observations"].str.contains(
+                        _observation,
+                        case=False,
+                        na=False,
+                    )
+                ].dropna(
+                    subset=[
+                        _point_color_column,
+                        "time_from_start",
+                        "trial",
+                    ]
+                )
+
+                if _df_plot.empty:
+                    continue
+
+                plots.plot_trial_time_of_start(
+                    _df_plot,
+                    ax=_ax,
+                )
+
+                _colors = [
+                    _point_colors[
+                        (_observation, bool(value))
+                    ]
+                    for value in _df_plot[_point_color_column]
+                ]
+
+                # plot_trial_time_of_start 新生成的 scatter
+                _scatter = _ax.collections[-1]
+                _scatter.set_facecolors(_colors)
+                _scatter.set_edgecolors(_colors)
+
+            # 自动生成四个 legend 项
+            for (_observation, _value), _color in _point_colors.items():
+                _ax.scatter(
+                    [],
+                    [],
+                    color=_color,
+                    s=16,
+                    label=(
+                        f"{_observation} "
+                        f"{_point_color_column}={_value}"
+                    ),
+                )
+
+            _ax.set_title(_modality.capitalize())
+            _ax.legend(frameon=False)
+
+        _fig.suptitle(f"{_subject} ({_group_label})")
+        _fig.tight_layout()
+        _trial_time_figures.append(_fig)
+
+    mo.vstack(_trial_time_figures) if _trial_time_figures else mo.md(
+        "No paired saline/DCZ sessions to plot."
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## generate roi out trials
+    """)
+    return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behavior_utils,
+    df_dic_dcz,
+    df_dic_saline,
+    np,
+    pd,
+    roi_bottom,
+    roi_left,
+    roi_right,
+    roi_top,
+):
+    for _trial_dic, _behav_dic in [
+        (df_dic_saline, behav_df_dic_saline),
+        (df_dic_dcz, behav_df_dic_dcz),
+    ]:
+        for _pair_id in set(_trial_dic) & set(_behav_dic):
+            _trial_df = _trial_dic[_pair_id].copy()
+            _behav_df = _behav_dic[_pair_id]
+
+            _timestamp = pd.to_numeric(
+                behavior_utils.get_behavior_column(
+                    _behav_df,
+                    ("timestamp", ""),
+                ),
+                errors="coerce",
+            ).to_numpy()
+
+            _x = pd.to_numeric(
+                behavior_utils.get_behavior_column(
+                    _behav_df,
+                    ("Center", "x"),
+                ),
+                errors="coerce",
+            ).to_numpy()
+
+            _y = pd.to_numeric(
+                behavior_utils.get_behavior_column(
+                    _behav_df,
+                    ("Center", "y"),
+                ),
+                errors="coerce",
+            ).to_numpy()
+
+            _valid_xy = np.isfinite(_x) & np.isfinite(_y)
+
+            _outside_roi = _valid_xy & (
+                (_x < roi_left)
+                | (_x > roi_right)
+                | (_y < roi_bottom)
+                | (_y > roi_top)
+            )
+
+            _trial_starts = pd.to_numeric(
+                _trial_df["TRIAL_START"],
+                errors="coerce",
+            ).to_numpy()
+
+            _trial_ends = pd.to_numeric(
+                _trial_df["TRIAL_END"],
+                errors="coerce",
+            ).to_numpy()
+
+            _trial_df["roi_out"] = [
+                bool(
+                    _outside_roi[
+                        (_timestamp >= _start)
+                        & (_timestamp <= _end)
+                    ].any()
+                )
+                for _start, _end in zip(
+                    _trial_starts,
+                    _trial_ends,
+                )
+            ]
+
+            # 明确写回原来的字典
+            _trial_dic[_pair_id] = _trial_df
+    return
+
+
+@app.cell
+def _(
+    df_dic_dcz,
+    df_dic_saline,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    pd,
+    plots,
+    plt,
+    utils,
+):
+    _point_color_column = "roi_out"
+
+    _point_colors = {
+        ("saline", False): "steelblue",
+        ("saline", True): "limegreen",
+        ("dcz", False): "firebrick",
+        ("dcz", True): "gold",
+    }
+
+    _paired_ids = set(df_dic_saline) & set(df_dic_dcz)
+    _paired_frames = [
+        condition_dic[pair_id]
+        for pair_id in sorted(_paired_ids)
+        for condition_dic in (df_dic_saline, df_dic_dcz)
+    ]
+
+    _df_test_paired = (
+        pd.concat(_paired_frames, ignore_index=True)
+        if _paired_frames
+        else pd.DataFrame(columns=["subject"])
+    )
+
+    _trial_time_figures = []
+
+    for _subject, _df_mouse in _df_test_paired.groupby("subject"):
+        _group_label = (
+            "hM3Dq"
+            if _subject in hM3Dq_mice
+            else "hM4Di"
+            if _subject in hM4Di_mice
+            else "unknown"
+        )
+        _df_mouse = utils.add_time_from_session_start(
+            _df_mouse.copy()
+        )
+        _fig, _axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        for _ax, _modality in zip(
+            _axes,
+            ("visual", "auditory"),
+        ):
+            _df_modality = _df_mouse[
+                _df_mouse["stimulus_modality"] == _modality
+            ]
+
+            for _observation in ("saline", "dcz"):
+                _df_plot = _df_modality[
+                    _df_modality["observations"].str.contains(
+                        _observation,
+                        case=False,
+                        na=False,
+                    )
+                ].dropna(
+                    subset=[
+                        _point_color_column,
+                        "time_from_start",
+                        "trial",
+                    ]
+                )
+
+                if _df_plot.empty:
+                    continue
+
+                plots.plot_trial_time_of_start(
+                    _df_plot,
+                    ax=_ax,
+                )
+
+                _colors = [
+                    _point_colors[
+                        (_observation, bool(value))
+                    ]
+                    for value in _df_plot[_point_color_column]
+                ]
+
+                # plot_trial_time_of_start 新生成的 scatter
+                _scatter = _ax.collections[-1]
+                _scatter.set_facecolors(_colors)
+                _scatter.set_edgecolors(_colors)
+
+            # 自动生成四个 legend 项
+            for (_observation, _value), _color in _point_colors.items():
+                _ax.scatter(
+                    [],
+                    [],
+                    color=_color,
+                    s=16,
+                    label=(
+                        f"{_observation} "
+                        f"{_point_color_column}={_value}"
+                    ),
+                )
+
+            _ax.set_title(_modality.capitalize())
+            _ax.legend(frameon=False)
+
+        _fig.suptitle(f"{_subject} ({_group_label})")
+        _fig.tight_layout()
+        _trial_time_figures.append(_fig)
+
+    mo.vstack(_trial_time_figures) if _trial_time_figures else mo.md(
+        "No paired saline/DCZ sessions to plot."
+    )
+    return
+
+
+@app.cell
+def _(
+    df_dic_dcz,
+    df_dic_saline,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    pd,
+    plots,
+    plt,
+    utils,
+):
+    _point_color_column = "engaged"
+
+    _point_colors = {
+        ("saline", True): "steelblue",
+        ("saline", False): "limegreen",
+        ("dcz", True): "firebrick",
+        ("dcz", False): "gold",
+    }
+
+    _paired_ids = set(df_dic_saline) & set(df_dic_dcz)
+    _paired_frames = [
+        condition_dic[pair_id]
+        for pair_id in sorted(_paired_ids)
+        for condition_dic in (df_dic_saline, df_dic_dcz)
+    ]
+
+    _df_test_paired = (
+        pd.concat(_paired_frames, ignore_index=True)
+        if _paired_frames
+        else pd.DataFrame(columns=["subject"])
+    )
+
+    _trial_time_figures = []
+
+    for _subject, _df_mouse in _df_test_paired.groupby("subject"):
+        _group_label = (
+            "hM3Dq"
+            if _subject in hM3Dq_mice
+            else "hM4Di"
+            if _subject in hM4Di_mice
+            else "unknown"
+        )
+        _df_mouse = utils.add_time_from_session_start(
+            _df_mouse.copy()
+        )
+        _fig, _axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        for _ax, _modality in zip(
+            _axes,
+            ("visual", "auditory"),
+        ):
+            _df_modality = _df_mouse[
+                _df_mouse["stimulus_modality"] == _modality
+            ]
+
+            for _observation in ("saline", "dcz"):
+                _df_plot = _df_modality[
+                    _df_modality["observations"].str.contains(
+                        _observation,
+                        case=False,
+                        na=False,
+                    )
+                ].dropna(
+                    subset=[
+                        _point_color_column,
+                        "time_from_start",
+                        "trial",
+                    ]
+                )
+
+                if _df_plot.empty:
+                    continue
+
+                plots.plot_trial_time_of_start(
+                    _df_plot,
+                    ax=_ax,
+                )
+
+                _colors = [
+                    _point_colors[
+                        (_observation, bool(value))
+                    ]
+                    for value in _df_plot[_point_color_column]
+                ]
+
+                # plot_trial_time_of_start 新生成的 scatter
+                _scatter = _ax.collections[-1]
+                _scatter.set_facecolors(_colors)
+                _scatter.set_edgecolors(_colors)
+
+            # 自动生成四个 legend 项
+            for (_observation, _value), _color in _point_colors.items():
+                _ax.scatter(
+                    [],
+                    [],
+                    color=_color,
+                    s=16,
+                    label=(
+                        f"{_observation} "
+                        f"{_point_color_column}={_value}"
+                    ),
+                )
+
+            _ax.set_title(_modality.capitalize())
+            _ax.legend(frameon=False)
+
+        _fig.suptitle(f"{_subject} ({_group_label})")
+        _fig.tight_layout()
+        _trial_time_figures.append(_fig)
+
+    mo.vstack(_trial_time_figures) if _trial_time_figures else mo.md(
+        "No paired saline/DCZ sessions to plot."
+    )
     return
 
 
