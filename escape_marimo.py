@@ -858,7 +858,7 @@ def _(
 ):
     import ast as _ast
 
-    speed_change_time_bin = 1
+    speed_change_time_bin = 15
     pre_time_bin = 1
 
 
@@ -1001,7 +1001,7 @@ def _(
     s_speed_change_dic_hm4_prebin,
 ):
     # speed change trial by trial
-    trial_speed_time_bin = 1
+    trial_speed_time_bin = 15
     trial_speed_fps = 30
     trial_speed_grid = np.arange(-pre_time_bin, trial_speed_time_bin, 0.01)
 

@@ -1447,6 +1447,12 @@ def _(plot_metric_by_date):
 
 
 @app.cell
+def _(df_test_selected_hm3):
+    df_test_selected_hm3[df_test_selected_hm3['subject'] == 'NUO010' or df_test_selected_hm3['subject'] == 'NUO012']
+    return
+
+
+@app.cell
 def _(
     df_test_selected_hm3,
     df_test_selected_hm4,
@@ -1454,12 +1460,16 @@ def _(
     plot_group,
     plot_metric_by_date,
 ):
+    hm3_sub_performance_fig_aud = plot_group(df_test_selected_hm3[(df_test_selected_hm3["subject"].isin(["NUO010", "NUO012", "NUO008"])) & (df_test_selected_hm3['stimulus_modality']=='auditory')], "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date)
+    hm3_sub_performance_fig_aud.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_sub_performance_fig_aud.svg", format="svg", bbox_inches="tight")
     mo.vstack(
         [
             plot_group(df_test_selected_hm4, "hM4Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date), 
-            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date)
+            plot_group(df_test_selected_hm3, "hM3Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date),
+            hm3_sub_performance_fig_aud
         ]
     )
+
     return
 
 

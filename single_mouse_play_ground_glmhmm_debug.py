@@ -321,23 +321,10 @@ def _(df_options, df_selector, pd):
         df_test = pd.DataFrame()
 
     stim_col = "model_stimulus"
-    df_test
-    for session_1 in df_test["session"].unique():
-        df_session_1 = df_test[df_test["session"] == session_1].copy()
-
-        repeat_choice_numeric = (
-            df_session_1["previous_first_choice"]
-            == df_session_1["first_choice"]
-        ).astype(int)
-
-        df_test.loc[
-            df_session_1.index,
-            "repeat_choice_numeric"
-        ] = repeat_choice_numeric
 
     df_test_vis = df_test[df_test['stimulus_modality'] == 'visual']
     df_test_aud = df_test[df_test['stimulus_modality'] == 'auditory']
-    return df_test, df_test_aud, df_test_vis, stim_col
+    return df_test, stim_col
 
 
 @app.cell(hide_code=True)
@@ -454,71 +441,71 @@ def _(mo):
 
 
 @app.cell
-def _():
-    # for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
-    #     plt.figure(figsize=(5, 5), dpi=150)
+def _(df_test, plt, sns, stim_col, utils_test):
+    for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
+        plt.figure(figsize=(5, 5), dpi=150)
 
-    #     if "vis" in stage_name__:
-    #         # x_col = "visual_stimulus_ratio"
-    #         valueType = "discrete"
-    #     else:
-    #         # x_col = "total_evidence_strength"
-    #         valueType = "continue"
+        if "vis" in stage_name__:
+            # x_col = "visual_stimulus_ratio"
+            valueType = "discrete"
+        else:
+            # x_col = "total_evidence_strength"
+            valueType = "continue"
 
-    #     if "easy" in stage_name__:
-    #         bins = 2
-    #     else:
-    #         bins = 6
+        if "easy" in stage_name__:
+            bins = 2
+        else:
+            bins = 6
 
 
-    #     for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
-    #         color_palette = sns.color_palette(
-    #             "colorblind",
-    #             df_stage__['subject'].nunique()
-    #         )
+        for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
+            color_palette = sns.color_palette(
+                "colorblind",
+                df_stage__['subject'].nunique()
+            )
 
-    #     for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
-    #         df_stage__.groupby('subject'),
-    #         sns.color_palette("colorblind", df_stage__['subject'].nunique())
-    #     ):
-    #         utils_test.psychometric_plot_easy_logistic(
-    #             df_mouse_psycurve,
-    #             x=stim_col,
-    #             y="first_choice_numeric",
-    #             valueType = valueType,
-    #             bins = bins,
-    #             point_kwargs={
-    #                 "color": color,
-    #                 "label": "",
-    #                 "alpha": 0.3,
-    #             },
-    #             line_kwargs={
-    #                 "color": color,
-    #                 "label": mouse_name_psycurve,
-    #                 "alpha": 0.3,
-    #             },
-    #         )
+        for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
+            df_stage__.groupby('subject'),
+            sns.color_palette("colorblind", df_stage__['subject'].nunique())
+        ):
+            utils_test.psychometric_plot_easy_logistic(
+                df_mouse_psycurve,
+                x=stim_col,
+                y="first_choice_numeric",
+                valueType = valueType,
+                bins = bins,
+                point_kwargs={
+                    "color": color,
+                    "label": "",
+                    "alpha": 0.3,
+                },
+                line_kwargs={
+                    "color": color,
+                    "label": mouse_name_psycurve,
+                    "alpha": 0.3,
+                },
+            )
 
-    #     utils_test.psychometric_plot_easy_logistic(
-    #         df_stage__,
-    #         x=stim_col,
-    #         valueType = valueType,
-    #         bins = bins,
-    #         y="first_choice_numeric",
-    #         point_kwargs={
-    #             "color": "black",
-    #             "label": "",
-    #         },
-    #         line_kwargs={
-    #             "color": "black",
-    #             "label": "All mice",
-    #         },
-    #     )
+        utils_test.psychometric_plot_easy_logistic(
+            df_stage__,
+            x=stim_col,
+            valueType = valueType,
+            bins = bins,
+            y="first_choice_numeric",
+            point_kwargs={
+                "color": "black",
+                "label": "",
+            },
+            line_kwargs={
+                "color": "black",
+                "label": "All mice",
+            },
+        )
 
-    #     plt.title(stage_name__)
-    #     plt.legend(frameon=False)
-    #     plt.tight_layout()
-    #     plt.show()
+        plt.title(stage_name__)
+        plt.legend(frameon=False)
+        plt.tight_layout()
+        plt.show()
     return
 
 
@@ -595,70 +582,70 @@ def _():
 
 
 @app.cell
-def _(df_test, plt, sns, stim_col, utils_test):
-    for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
-        plt.figure(figsize=(5, 5), dpi=150)
+def _():
+    # for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
+    #     plt.figure(figsize=(5, 5), dpi=150)
 
-        if "vis" in stage_name__:
-            valueType = "discrete"
-        else:
-            valueType = "continue"
+    #     if "vis" in stage_name__:
+    #         valueType = "discrete"
+    #     else:
+    #         valueType = "continue"
 
-        if "easy" in stage_name__:
-            bins = 2
-        else:
-            bins = 6
+    #     if "easy" in stage_name__:
+    #         bins = 2
+    #     else:
+    #         bins = 6
 
 
-        for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
-            color_palette = sns.color_palette(
-                "colorblind",
-                df_stage__['subject'].nunique()
-            )
+    #     for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
+    #         color_palette = sns.color_palette(
+    #             "colorblind",
+    #             df_stage__['subject'].nunique()
+    #         )
 
-        for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
-            df_stage__.groupby('subject'),
-            sns.color_palette("colorblind", df_stage__['subject'].nunique())
-        ):
-            utils_test.psychometric_plot_easy_logistic(
-                df_mouse_psycurve,
-                x=stim_col,
-                y="repeat_choice_numeric",
-                valueType = valueType,
-                bins = bins,
-                point_kwargs={
-                    "color": color,
-                    "label": "",
-                    "alpha": 0.6,
-                },
-                line_kwargs={
-                    "color": color,
-                    "label": "",
-                    "alpha": 0,
-                },
-            )
+    #     for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
+    #         df_stage__.groupby('subject'),
+    #         sns.color_palette("colorblind", df_stage__['subject'].nunique())
+    #     ):
+    #         utils_test.psychometric_plot_easy_logistic(
+    #             df_mouse_psycurve,
+    #             x=stim_col,
+    #             y="repeat_choice_numeric",
+    #             valueType = valueType,
+    #             bins = bins,
+    #             point_kwargs={
+    #                 "color": color,
+    #                 "label": "",
+    #                 "alpha": 0.6,
+    #             },
+    #             line_kwargs={
+    #                 "color": color,
+    #                 "label": "",
+    #                 "alpha": 0,
+    #             },
+    #         )
 
-        utils_test.psychometric_plot_easy_logistic(
-            df_stage__,
-            x=stim_col,
-            valueType = valueType,
-            bins = bins,
-            y="repeat_choice_numeric",
-            point_kwargs={
-                "color": "black",
-                "label": "",
-            },
-            line_kwargs={
-                "color": color,
-                "label": "",
-                "alpha": 0,
-            },
-        )
+    #     utils_test.psychometric_plot_easy_logistic(
+    #         df_stage__,
+    #         x=stim_col,
+    #         valueType = valueType,
+    #         bins = bins,
+    #         y="repeat_choice_numeric",
+    #         point_kwargs={
+    #             "color": "black",
+    #             "label": "",
+    #         },
+    #         line_kwargs={
+    #             "color": color,
+    #             "label": "",
+    #             "alpha": 0,
+    #         },
+    #     )
 
-        plt.title(stage_name__)
-        plt.legend(frameon=False)
-        plt.tight_layout()
-        plt.show()
+    #     plt.title(stage_name__)
+    #     plt.legend(frameon=False)
+    #     plt.tight_layout()
+    #     plt.show()
     return
 
 
@@ -741,195 +728,312 @@ def _(mo):
 
 
 @app.cell
-def _():
-    # fig, axes = plt.subplots(1, 2, figsize=(15, 6))
-    # for ax_idx, (choice_value, df_test_) in enumerate(
-    #     df_test[df_test['stimulus_modality'] == 'visual'].groupby('previous_first_choice')
-    # ):
-    #     df_test_ = df_test_.copy()
-    #     df_test_['visual_stimulus_ratio'] = df_test_['visual_stimulus_ratio'].apply(lambda x: round(x, 2))
-    #     for mouse in df_test_['subject'].unique():
-    #         for session in df_test_[df_test_.subject == mouse]['session'].unique():
-    #             df_mouse_session = df_test_[np.logical_and(df_test_['subject'] == mouse, df_test_['session'] == session)]
-    #             df_mouse_session['previous_visual_stimulus_ratio'] = df_mouse_session['visual_stimulus_ratio'].shift(1, fill_value=np.nan)
-    #             df_test_.loc[df_mouse_session.index, 'previous_visual_stimulus_ratio'] = df_mouse_session['previous_visual_stimulus_ratio']
-    #     pivot_table = df_test_.pivot_table(
-    #         index='previous_visual_stimulus_ratio',
-    #         columns='visual_stimulus_ratio',
-    #         values='first_choice_numeric',
-    #         aggfunc='mean',
-    #         observed=True
-    #     )
-    #     # plot the heatmap
-    #     sns.heatmap(
-    #         pivot_table,
-    #         cmap='coolwarm',
-    #         annot=True,
-    #         fmt=".2f",
-    #         cbar_kws={'label': 'Probability of Left Choice'},
-    #         vmin=0,
-    #         vmax=1,
-    #         annot_kws={"color": "black"},
-    #         ax=axes[ax_idx],
-    #     )
+def _(mo):
+    heatmap_dataset_selector = mo.ui.dropdown(
+        options=["hard", "easy", "all"],
+        value="hard",
+        label="Dataset",
+    )
+    heatmap_value_selector = mo.ui.dropdown(
+        options=["previous_same_choice_numeric", "roa_choice_numeric"],
+        value="previous_same_choice_numeric",
+        label="Heatmap value",
+    )
+    heatmap_condition_selector = mo.ui.dropdown(
+        options=["previous_correct", "None"],
+        value="previous_correct",
+        label="Row condition",
+    )
 
-    #     axes[ax_idx].set_xlabel("Visual Stimulus Ratio")
-    #     axes[ax_idx].set_ylabel("Previous Visual Stimulus Ratio")
-    #     axes[ax_idx].set_title(f"previous first choice = {choice_value}")
-    # # rotate the y-axis labels
-    # plt.yticks(rotation=0)
-    # plt.show()
-    return
+    mo.hstack(
+        [
+            heatmap_dataset_selector,
+            heatmap_value_selector,
+            heatmap_condition_selector,
+        ]
+    )
+    return (
+        heatmap_condition_selector,
+        heatmap_dataset_selector,
+        heatmap_value_selector,
+    )
 
 
 @app.cell
-def _():
-    # fig, axes = plt.subplots(1, 2, figsize=(15, 6))
-    # for ax_idx, (choice_value, df_test_) in enumerate(
-    #     df_test[df_test['stimulus_modality'] == 'auditory'].groupby('previous_first_choice')
-    # ):
-    #     df_test_ = df_test_.copy()
-    #     bins_=6
-    #     bin_groups = pd.cut(df_test_['total_evidence_strength'], bins=bins_)
-    #     labels = df_test_['total_evidence_strength'].groupby(bin_groups).mean()
-    #     df_test_['total_evidence_strength_binned'] = pd.cut(df_test_['total_evidence_strength'], bins=bins_, labels=labels).astype(float)
-    #     df_test_['total_evidence_strength_binned'] = df_test_['total_evidence_strength_binned'].apply(lambda x: round(x, 2))
-    #     for mouse in df_test_['subject'].unique():
-    #         for session in df_test_[df_test_.subject == mouse]['session'].unique():
-    #             df_mouse_session = df_test_[np.logical_and(df_test_['subject'] == mouse, df_test_['session'] == session)]
-    #             df_mouse_session['previous_total_evidence_strength_binned'] = df_mouse_session['total_evidence_strength_binned'].shift(1, fill_value=np.nan)
-    #             df_test_.loc[df_mouse_session.index, 'previous_total_evidence_strength_binned'] = df_mouse_session['previous_total_evidence_strength_binned']
-    #     pivot_table = df_test_.pivot_table(
-    #         index='previous_total_evidence_strength_binned',
-    #         columns='total_evidence_strength_binned',
-    #         values='first_choice_numeric',
-    #         aggfunc='mean',
-    #         observed=True
-    #     )
-    #     # plot the heatmap
-    #     sns.heatmap(
-    #         pivot_table,
-    #         cmap='coolwarm',
-    #         annot=True,
-    #         fmt=".2f",
-    #         cbar_kws={'label': 'Probability of Left Choice'},
-    #         vmin=0,
-    #         vmax=1,
-    #         annot_kws={"color": "black"},
-    #         ax=axes[ax_idx],
-    #     )
-
-    #     axes[ax_idx].set_xlabel("total_evidence_strength_binned")
-    #     axes[ax_idx].set_ylabel("previous total_evidence_strength_binned")
-    #     axes[ax_idx].set_title(f"previous first choice = {choice_value}")
-    # # rotate the y-axis labels
-    # plt.yticks(rotation=0)
-    # plt.show()
-    return
-
-
-@app.cell
-def _(df_test_aud, df_test_vis, mo, np, pd, plt, sns):
+def _(
+    df_test,
+    df_test_aud_easy,
+    df_test_aud_hard,
+    df_test_vis_easy,
+    df_test_vis_hard,
+    heatmap_condition_selector,
+    heatmap_dataset_selector,
+    heatmap_value_selector,
+    mo,
+    pd,
+    plt,
+    sns,
+):
     def add_previous_col(df, value_col, previous_col):
         df = df.copy()
-        df[previous_col] = (
-            df
-            .groupby(["subject", "session"])[value_col]
-            .shift(1)
-        )
+        group_cols = [
+            _col for _col in ["subject", "session"]
+            if _col in df.columns
+        ]
+        if group_cols:
+            df[previous_col] = (
+                df
+                .groupby(group_cols, sort=False)[value_col]
+                .shift(1)
+            )
+        else:
+            df[previous_col] = df[value_col].shift(1)
+
         return df
 
+    def bool_mask(series, value):
+        text_values = series.astype(str).str.lower()
+        if value:
+            return (
+                series.eq(True)
+                | series.eq(1)
+                | text_values.isin(["true", "1"])
+            )
 
-    # ---------- visual ----------
-    df_test_vis_ = df_test_vis.copy()
-    df_test_vis_["visual_stimulus_ratio"] = (
-        df_test_vis_["visual_stimulus_ratio"].round(2)
-    )
+        return (
+            series.eq(False)
+            | series.eq(0)
+            | text_values.isin(["false", "0"])
+        )
 
-    df_test_vis_ = add_previous_col(
-        df_test_vis_,
-        value_col="visual_stimulus_ratio",
-        previous_col="previous_visual_stimulus_ratio",
-    )
+    def make_pivot_table(
+        df,
+        modality,
+        value_col,
+        condition_col=None,
+        condition_value=None,
+    ):
+        if value_col not in df.columns:
+            return pd.DataFrame()
 
-    pivot_table_vis = df_test_vis_.pivot_table(
-        index="previous_visual_stimulus_ratio",
-        columns="visual_stimulus_ratio",
-        values="repeat_choice_numeric",
-        aggfunc="mean",
-        observed=True,
-    )
+        if condition_col is not None:
+            if condition_col not in df.columns:
+                return pd.DataFrame()
 
+            df_plot = df[
+                bool_mask(df[condition_col], condition_value)
+            ].copy()
+        else:
+            df_plot = df.copy()
 
-    # ---------- auditory ----------
-    df_test_aud_ = df_test_aud.copy()
+        if df_plot.empty:
+            return pd.DataFrame()
 
-    max_abs = df_test_aud_["total_evidence_strength"].abs().max()
-    bins__ = np.linspace(-max_abs, max_abs, 7)
-    centers = (bins__[:-1] + bins__[1:]) / 2
+        df_plot[value_col] = (
+            pd.to_numeric(df_plot[value_col], errors="coerce")
+            .astype(float)
+        )
+        df_plot = df_plot.dropna(subset=[value_col])
+        if df_plot.empty:
+            return pd.DataFrame()
 
-    df_test_aud_["total_evidence_strength_binned"] = pd.cut(
-        df_test_aud_["total_evidence_strength"],
-        bins=bins__,
-        labels=[f"{c:.2f}" for c in centers],
-        include_lowest=True,
-    )
+        if modality == "visual":
+            stim_col_plot = "visual_stimulus_ratio"
+            previous_stim_col = "previous_visual_stimulus_ratio"
+            if stim_col_plot not in df_plot.columns:
+                return pd.DataFrame()
 
-    df_test_aud_ = add_previous_col(
-        df_test_aud_,
-        value_col="total_evidence_strength_binned",
-        previous_col="previous_total_evidence_strength_binned",
-    )
+            df_plot[stim_col_plot] = df_plot[stim_col_plot].round(2)
+            df_plot = add_previous_col(
+                df_plot,
+                value_col=stim_col_plot,
+                previous_col=previous_stim_col,
+            )
 
-    pivot_table_aud = df_test_aud_.pivot_table(
-        index="previous_total_evidence_strength_binned",
-        columns="total_evidence_strength_binned",
-        values="repeat_choice_numeric",
-        aggfunc="mean",
-        observed=True,
-    )
+        else:
+            stim_col_plot = "total_evidence_strength_binned"
+            previous_stim_col = "previous_total_evidence_strength_binned"
+            if "total_evidence_strength" not in df_plot.columns:
+                return pd.DataFrame()
 
+            df_plot["total_evidence_strength"] = pd.to_numeric(
+                df_plot["total_evidence_strength"],
+                errors="coerce",
+            )
+            df_plot = df_plot.dropna(subset=["total_evidence_strength"])
+            if df_plot.empty:
+                return pd.DataFrame()
 
-    # ---------- plot ----------
-    fig_vis, ax_vis = plt.subplots(figsize=(5, 4))
-    sns.heatmap(
-        pivot_table_vis,
-        cmap="coolwarm",
-        annot=True,
-        fmt=".2f",
-        cbar_kws={"label": "Probability of repeat Choice"},
-        vmin=0,
-        vmax=1,
-        annot_kws={"color": "black"},
-        ax=ax_vis,
-    )
-    ax_vis.set_xlabel("visual stimulus ratio")
-    ax_vis.set_ylabel("previous visual stimulus ratio")
-    ax_vis.tick_params(axis="x", rotation=45)
-    ax_vis.tick_params(axis="y", rotation=0)
-    ax_vis.set_title("Visual")
+            _n_bins = 2 if dataset_choice == "easy" else 6
+            bin_groups = pd.cut(
+                df_plot["total_evidence_strength"],
+                bins=_n_bins,
+            )
+            labels = (
+                df_plot["total_evidence_strength"]
+                .groupby(bin_groups, observed=False)
+                .mean()
+            )
+            fallback_labels = pd.Series(
+                [interval.mid for interval in labels.index],
+                index=labels.index,
+            )
+            labels = labels.fillna(fallback_labels)
 
+            df_plot[stim_col_plot] = (
+                bin_groups
+                .map(labels)
+                .astype(float)
+                .round(2)
+            )
 
-    fig_aud, ax_aud = plt.subplots(figsize=(5, 4))
-    sns.heatmap(
-        pivot_table_aud,
-        cmap="coolwarm",
-        annot=True,
-        fmt=".2f",
-        cbar_kws={"label": "Probability of repeat Choice"},
-        vmin=0,
-        vmax=1,
-        annot_kws={"color": "black"},
-        ax=ax_aud,
-    )
-    ax_aud.set_xlabel("total evidence strength binned")
-    ax_aud.set_ylabel("previous total evidence strength binned")
-    ax_aud.tick_params(axis="x", rotation=45)
-    ax_aud.tick_params(axis="y", rotation=0)
-    ax_aud.set_title("Auditory")
+            df_plot = add_previous_col(
+                df_plot,
+                value_col=stim_col_plot,
+                previous_col=previous_stim_col,
+            )
 
+        return (
+            df_plot
+            .pivot_table(
+                index=previous_stim_col,
+                columns=stim_col_plot,
+                values=value_col,
+                aggfunc="mean",
+                observed=True,
+            )
+            .astype(float)
+        )
 
-    mo.hstack([fig_vis, fig_aud])
+    def plot_heatmap(table, ax, title, xlabel, ylabel, value_col):
+        if table.empty:
+            ax.text(
+                0.5,
+                0.5,
+                "No data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            ax.set_title(title)
+            return
+
+        sns.heatmap(
+            table,
+            cmap="coolwarm",
+            annot=True,
+            fmt=".2f",
+            cbar_kws={"label": f"Mean {value_col}"},
+            vmin=0,
+            vmax=1,
+            annot_kws={"color": "black"},
+            ax=ax,
+        )
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.tick_params(axis="x", rotation=45)
+        ax.tick_params(axis="y", rotation=0)
+        ax.set_title(title)
+
+    dataset_choice = heatmap_dataset_selector.value
+    value_col = heatmap_value_selector.value
+    condition_col = heatmap_condition_selector.value
+
+    dataset_map = {
+        "hard": {
+            "Visual": df_test_vis_hard,
+            "Auditory": df_test_aud_hard,
+        },
+        "easy": {
+            "Visual": df_test_vis_easy,
+            "Auditory": df_test_aud_easy,
+        },
+        "all": {
+            "Visual": df_test[
+                df_test["stimulus_modality"] == "visual"
+            ],
+            "Auditory": df_test[
+                df_test["stimulus_modality"] == "auditory"
+            ],
+        },
+    }
+
+    figures = []
+    condition_col = None if condition_col == "None" else condition_col
+    condition_values = [None] if condition_col is None else [True, False]
+
+    for condition_value in condition_values:
+        fig, axes = plt.subplots(
+            1,
+            2,
+            figsize=(10, 4),
+            constrained_layout=True,
+        )
+
+        visual_table = make_pivot_table(
+            dataset_map[dataset_choice]["Visual"],
+            modality="visual",
+            value_col=value_col,
+            condition_col=condition_col,
+            condition_value=condition_value,
+        )
+        auditory_table = make_pivot_table(
+            dataset_map[dataset_choice]["Auditory"],
+            modality="auditory",
+            value_col=value_col,
+            condition_col=condition_col,
+            condition_value=condition_value,
+        )
+
+        if condition_col is None:
+            visual_title = "Visual"
+            auditory_title = "Auditory"
+        else:
+            visual_title = f"Visual | {condition_col} = {condition_value}"
+            auditory_title = f"Auditory | {condition_col} = {condition_value}"
+
+        plot_heatmap(
+            visual_table,
+            axes[0],
+            title=visual_title,
+            xlabel="visual stimulus ratio",
+            ylabel="previous visual stimulus ratio",
+            value_col=value_col,
+        )
+        plot_heatmap(
+            auditory_table,
+            axes[1],
+            title=auditory_title,
+            xlabel="total evidence strength binned",
+            ylabel="previous total evidence strength binned",
+            value_col=value_col,
+        )
+
+        figures.append(fig)
+
+    if condition_col is None:
+        _heatmap_output = mo.vstack(
+            [
+                mo.md(f"## {dataset_choice}: mean `{value_col}`"),
+                figures[0],
+            ]
+        )
+    else:
+        _heatmap_output = mo.vstack(
+            [
+                mo.md(
+                    f"## {dataset_choice}: mean `{value_col}` "
+                    f"by `{condition_col}`"
+                ),
+                mo.md(f"### {condition_col} = True"),
+                figures[0],
+                mo.md(f"### {condition_col} = False"),
+                figures[1],
+            ]
+        )
+
+    _heatmap_output
     return
 
 
@@ -1697,7 +1801,7 @@ def _(mo):
         start=1,
         stop=6,
         step=1,
-        value=3,
+        value=2,
         label="Number of states",
     )
     glmhmm_n_iters = mo.ui.number(
@@ -1865,7 +1969,7 @@ def _(
 
         _save_dir = Path(r"E:\data\LeciLab\behavioral_data\tmp")
         if not _save_dir.is_absolute() and str(_save_dir).startswith("E:\\"):
-            _save_dir = Path("/mnt/e/data/LeciLab/behavioral_data/tmp")
+            _save_dir = Path("/mnt/e/data/LeciLab/b ehavioral_data/tmp")
         _save_dir.mkdir(parents=True, exist_ok=True)
         _save_path = _save_dir / f"{_plot_title}.svg"
         fig__.savefig(_save_path, format="svg", bbox_inches="tight")
@@ -2867,11 +2971,9 @@ def _(hmm_model_dic, mo, np, pd, plt):
             _unique_mice = sorted(state_info["mouse"].astype(str).unique())
             _unique_states = sorted(state_info["state"].unique())
 
-            _mouse_cmap = plt.get_cmap(
-                "tab20" if len(_unique_mice) > 10 else "tab10"
-            )
+            _mouse_cmap = plt.get_cmap("tab20")
             _mouse_colors = {
-                _mouse: _mouse_cmap(_idx % _mouse_cmap.N)
+                _mouse: _mouse_cmap(_idx)
                 for _idx, _mouse in enumerate(_unique_mice)
             }
 

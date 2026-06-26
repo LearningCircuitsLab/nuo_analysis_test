@@ -492,10 +492,10 @@ def _(add_number_of_pokes, df_test, dft, hM3Dq_mice, hM4Di_mice, pd):
                 df_session
             )
 
-            df_session = dft.add_engagement_column(
-                df_session,
-                engagement_sd_criteria=2,
-            )
+            # df_session = dft.add_engagement_column(
+            #     df_session,
+            #     engagement_sd_criteria=2,
+            # )
 
             df_session = add_number_of_pokes(
                 df_session,
@@ -517,6 +517,21 @@ def _(add_number_of_pokes, df_test, dft, hM3Dq_mice, hM4Di_mice, pd):
         return pd.concat(session_dfs).sort_index()
 
     df_test_upd = add_trial_variables_by_subject(df_test_upd)
+    df_test_upd = (
+        pd.concat(
+            [
+                dft.add_engagement_column(
+                    df_subject,
+                    engagement_sd_criteria=2,
+                )
+                for _, df_subject in df_test_upd.groupby(
+                    "subject",
+                    sort=False,
+                )
+            ]
+        ).sort_index()
+    )
+
     # df_test_upd = df_test_upd[
     #     df_test_upd['year_month_day'].isin(
     #         ['2026-05-22', '2026-05-20']
@@ -955,6 +970,60 @@ def _(
             window_size=5,
         )
     return df_dic_dcz, df_dic_saline
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## extract video frame
+    """)
+    return
+
+
+@app.cell
+def _(behav_pair_map):
+    behav_pair_map
+    return
+
+
+@app.cell
+def _(utils, utils_test):
+    utils_test.rsync_specific_file(
+        file_path="/home/kudongdong/data/training_village/2afc/image/NUO010/video2img/frame0.jpg",
+        local_path="/mnt/e/data/LeciLab/behavioral_data/tmp/processing/video/",
+        credentials=utils.get_idibaps_cluster_credentials(),
+    )
+    return
+
+
+@app.cell
+def _(np):
+    from PIL import Image
+    import plotly.express as px
+
+    img = np.asarray(
+        Image.open(
+            "/mnt/e/data/LeciLab/behavioral_data/tmp/processing/video/frame0.jpg"
+        )
+    )
+
+    fig = px.imshow(img, origin="upper")
+    fig.show()
+    return
+
+
+@app.cell
+def _():
+    zone_xy_1 = [135, 175]
+    zone_xy_2 = [291, 110]
+    zone_xy_3 = [351, 110]
+    zone_xy_4 = [500, 175]
+    zone_xy_5 = [500, 447]
+    zone_xy_6 = [135, 447]
+    port_xy_1 = [269, 111]
+    port_xy_2 = [322, 105]
+    port_xy_3 = [380, 113]
+    return
 
 
 @app.cell
@@ -2552,6 +2621,376 @@ def _(
         "No paired saline/DCZ sessions to plot."
     )
     return
+
+
+@app.cell
+def _(df_dic_dcz, df_dic_saline, pd, plots, plt, utils):
+    _point_color_column = "engaged"
+
+    _point_colors = {
+        ("saline", True): "steelblue",
+        ("saline", False): "limegreen",
+        ("dcz", True): "firebrick",
+        ("dcz", False): "gold",
+    }
+
+    _selected_subjects = ["NUO010", "NUO012"]
+
+    _paired_ids = set(df_dic_saline) & set(df_dic_dcz)
+    _paired_frames = [
+        condition_dic[pair_id]
+        for pair_id in sorted(_paired_ids)
+        for condition_dic in (df_dic_saline, df_dic_dcz)
+    ]
+
+    _df_test_paired = (
+        pd.concat(_paired_frames, ignore_index=True)
+        if _paired_frames
+        else pd.DataFrame(columns=["subject"])
+    )
+
+    _df_mouse = _df_test_paired[
+        _df_test_paired["subject"].isin(_selected_subjects)
+    ].copy()
+
+    _df_mouse = utils.add_time_from_session_start(_df_mouse)
+
+    _fig, _axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    for _ax, _modality in zip(
+        _axes,
+        ("visual", "auditory"),
+    ):
+        _df_modality = _df_mouse[
+            _df_mouse["stimulus_modality"] == _modality
+        ]
+
+        for _observation in ("saline", "dcz"):
+            _df_plot = _df_modality[
+                _df_modality["observations"].str.contains(
+                    _observation,
+                    case=False,
+                    na=False,
+                )
+            ].dropna(
+                subset=[
+                    _point_color_column,
+                    "time_from_start",
+                    "trial",
+                ]
+            )
+
+            if _df_plot.empty:
+                continue
+
+            plots.plot_trial_time_of_start(
+                _df_plot,
+                ax=_ax,
+            )
+
+            _colors = [
+                _point_colors[
+                    (_observation, bool(value))
+                ]
+                for value in _df_plot[_point_color_column]
+            ]
+
+            _scatter = _ax.collections[-1]
+            _scatter.set_facecolors(_colors)
+            _scatter.set_edgecolors(_colors)
+
+        for (_observation, _value), _color in _point_colors.items():
+            _ax.scatter(
+                [],
+                [],
+                color=_color,
+                s=16,
+                label=(
+                    f"{_observation} "
+                    f"{_point_color_column}={_value}"
+                ),
+            )
+
+        _ax.set_title(_modality.capitalize())
+        _ax.legend(frameon=False)
+
+    _fig.suptitle("NUO010 + NUO012")
+    _fig.tight_layout()
+    # _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/trials_start_across_time_engaged_nuo010nuo012.png")
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## venn plot of disengaged trials
+    """)
+    return
+
+
+@app.cell
+def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
+    def _get_trial_sets_for_venn(df):
+        if df.empty:
+            return {
+                "previous_correct = False": set(),
+                "engaged = False": set(),
+                "roi_out = True": set(),
+            }
+
+        if "trial" in df.columns:
+            trial_ids = df["trial"]
+        else:
+            trial_ids = pd.Series(df.index, index=df.index)
+
+        condition_masks = {
+            "previous_correct = False": (
+                df["previous_correct"].eq(False)
+                if "previous_correct" in df.columns
+                else pd.Series(False, index=df.index)
+            ),
+            "engaged = False": (
+                df["engaged"].eq(False)
+                if "engaged" in df.columns
+                else pd.Series(False, index=df.index)
+            ),
+            "roi_out = True": (
+                df["roi_out"].eq(True)
+                if "roi_out" in df.columns
+                else pd.Series(False, index=df.index)
+            ),
+        }
+
+        return {
+            label: set(trial_ids[mask].dropna().tolist())
+            for label, mask in condition_masks.items()
+        }
+
+    _hm3_mice = {str(_mouse) for _mouse in hM3Dq_mice}
+    _hm4_mice = {str(_mouse) for _mouse in hM4Di_mice}
+    venn_disengaged_trial_sets = {}
+    venn_disengaged_trial_metadata = {}
+    _venn_disengaged_trial_rows = []
+
+    for _pair_id in sorted(set(df_dic_saline) & set(df_dic_dcz)):
+        venn_disengaged_trial_sets[_pair_id] = {}
+        _pair_df = pd.concat(
+            [
+                df_dic_saline[_pair_id],
+                df_dic_dcz[_pair_id],
+            ],
+            ignore_index=True,
+        )
+
+        _subjects = (
+            _pair_df["subject"].dropna().astype(str).unique()
+            if "subject" in _pair_df.columns
+            else []
+        )
+        _subject = _subjects[0] if len(_subjects) else "unknown"
+        _mouse_group = (
+            "hM3Dq"
+            if _subject in _hm3_mice
+            else "hM4Di"
+            if _subject in _hm4_mice
+            else "unknown"
+        )
+        _modalities = (
+            _pair_df["stimulus_modality"].dropna().astype(str)
+            if "stimulus_modality" in _pair_df.columns
+            else []
+        )
+        _modality_label = (
+            _modalities.iloc[0]
+            if len(_modalities)
+            else "unknown modality"
+        )
+        venn_disengaged_trial_metadata[_pair_id] = {
+            "subject": _subject,
+            "mouse_group": _mouse_group,
+            "modality": _modality_label,
+        }
+
+        for _condition_name, _condition_dic in {
+            "saline": df_dic_saline,
+            "dcz": df_dic_dcz,
+        }.items():
+            _trial_sets = _get_trial_sets_for_venn(
+                _condition_dic[_pair_id]
+            )
+            venn_disengaged_trial_sets[_pair_id][
+                _condition_name
+            ] = _trial_sets
+
+            _previous_incorrect = _trial_sets[
+                "previous_correct = False"
+            ]
+            _disengaged = _trial_sets["engaged = False"]
+            _roi_out = _trial_sets["roi_out = True"]
+
+            _venn_disengaged_trial_rows.append(
+                {
+                    "pair_id": _pair_id,
+                    "subject": _subject,
+                    "mouse_group": _mouse_group,
+                    "modality": _modality_label,
+                    "condition": _condition_name,
+                    "previous_correct_false": len(
+                        _previous_incorrect
+                    ),
+                    "engaged_false": len(_disengaged),
+                    "roi_out_true": len(_roi_out),
+                    "previous_false_and_disengaged": len(
+                        _previous_incorrect & _disengaged
+                    ),
+                    "previous_false_and_roi_out": len(
+                        _previous_incorrect & _roi_out
+                    ),
+                    "disengaged_and_roi_out": len(
+                        _disengaged & _roi_out
+                    ),
+                    "all_three": len(
+                        _previous_incorrect & _disengaged & _roi_out
+                    ),
+                }
+            )
+
+    venn_disengaged_trial_summary = pd.DataFrame(
+        _venn_disengaged_trial_rows
+    )
+
+    return (
+        venn_disengaged_trial_metadata,
+        venn_disengaged_trial_sets,
+        venn_disengaged_trial_summary,
+    )
+
+
+@app.cell
+def _(
+    plot_three_set_venn,
+    plt,
+    venn_disengaged_trial_sets,
+    venn_disengaged_trial_summary,
+):
+    venn_disengaged_trial_summary_selectforplot = venn_disengaged_trial_summary[(venn_disengaged_trial_summary['subject'].isin(['NUO010', 'NUO012'])) & (venn_disengaged_trial_summary['modality'] == 'auditory')]
+    _selected_pair_ids = (
+        venn_disengaged_trial_summary_selectforplot["pair_id"]
+        .dropna()
+        .unique()
+    )
+
+    _selected_summary_sets = {}
+
+    for _condition_name in ["saline", "dcz"]:
+        _first_pair_id = _selected_pair_ids[0]
+        _labels = venn_disengaged_trial_sets[
+            _first_pair_id
+        ][_condition_name].keys()
+
+        _selected_summary_sets[_condition_name] = {
+            _label: set().union(
+                *[
+                    venn_disengaged_trial_sets[_pair_id][
+                        _condition_name
+                    ][_label]
+                    for _pair_id in _selected_pair_ids
+                ]
+            )
+            for _label in _labels
+        }
+
+    _selected_summary_fig, _selected_summary_axes = plt.subplots(
+        1,
+        2,
+        figsize=(10, 4),
+        dpi=150,
+    )
+
+    for _ax, _condition_name in zip(
+        _selected_summary_axes,
+        ["saline", "dcz"],
+    ):
+        plot_three_set_venn(
+            _selected_summary_sets[_condition_name],
+            ax=_ax,
+            title=_condition_name.upper(),
+        )
+
+    _selected_summary_fig.suptitle("NUO010 + NUO012 auditory")
+    # _selected_summary_fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/auditory_venn_dcz_saline.svg")
+    _selected_summary_fig.tight_layout()
+    return
+
+
+@app.cell
+def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
+    from matplotlib_venn import venn3 as _venn3
+
+    def plot_three_set_venn(trial_sets, ax, title):
+        _labels = list(trial_sets)
+        _sets = [trial_sets[_label] for _label in _labels]
+
+        if not any(_sets):
+            ax.text(
+                0.5,
+                0.5,
+                "No trials",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_title(title)
+            ax.axis("off")
+            return
+
+        _venn = _venn3(
+            subsets=_sets,
+            set_labels=_labels,
+            set_colors=("#4C78A8", "#F58518", "#54A24B"),
+            alpha=0.45,
+            ax=ax,
+        )
+
+        for _label in _venn.set_labels:
+            if _label is not None:
+                _label.set_fontsize(8)
+
+        for _label in _venn.subset_labels:
+            if _label is not None:
+                _label.set_fontsize(10)
+                # _label.set_fontweight("bold")
+
+        ax.set_title(title)
+
+    venn_disengaged_trial_figures = []
+
+    for _pair_id, _condition_sets in venn_disengaged_trial_sets.items():
+        _fig, _axes = plt.subplots(1, 2, figsize=(10, 4), dpi=150)
+
+        for _ax, _condition_name in zip(_axes, ["saline", "dcz"]):
+            plot_three_set_venn(
+                _condition_sets[_condition_name],
+                ax=_ax,
+                title=_condition_name.upper(),
+            )
+
+        _metadata = venn_disengaged_trial_metadata.get(
+            _pair_id,
+            {},
+        )
+        _fig.suptitle(
+            (
+                f"{_pair_id} "
+                f"({_metadata.get('mouse_group', 'unknown')}, "
+                f"{_metadata.get('modality', 'unknown modality')})"
+            )
+        )
+        _fig.tight_layout()
+        venn_disengaged_trial_figures.append(_fig)
+
+    mo.vstack(venn_disengaged_trial_figures) 
+    return (plot_three_set_venn,)
 
 
 @app.cell(hide_code=True)
