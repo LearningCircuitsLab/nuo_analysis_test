@@ -663,8 +663,8 @@ def occupancy_for_trials(
     trial_df,
     bodypart="Center",
     timestamp_col=("timestamp", ""),
-    xbins=15,
-    ybins=15,
+    xbins=32,
+    ybins=24,
     x_range=(0, 640),
     y_range=(0, 480),
 ):
@@ -769,13 +769,26 @@ def plot_four_condition_occupancy(
     roi_top,
     bodypart="Center",
     timestamp_col=("timestamp", ""),
-    xbins=15,
-    ybins=15,
+    xbins=32,
+    ybins=24,
     x_range=(0, 640),
     y_range=(0, 480),
     cmap="viridis",
     interpolation="gaussian",
     figsize=(18, 4.5),
+    zone_xy=(
+        (135, 175),
+        (291, 110),
+        (351, 110),
+        (500, 175),
+        (500, 447),
+        (135, 447),
+    ),
+    port_xy=(
+        (269, 111),
+        (322, 105),
+        (380, 113),
+    ),
 ):
     """Plot four trial-clipped occupancy maps in one row."""
     occ_maps = [
@@ -836,6 +849,28 @@ def plot_four_condition_occupancy(
                 linestyle="--",
             )
         )
+        if zone_xy:
+            zone_xy_array = np.asarray(zone_xy, dtype=float)
+            zone_xy_closed = np.vstack(
+                [zone_xy_array, zone_xy_array[0]]
+            )
+            ax.plot(
+                zone_xy_closed[:, 0],
+                zone_xy_closed[:, 1],
+                color="white",
+                linewidth=1.5,
+            )
+        if port_xy:
+            port_xy_array = np.asarray(port_xy, dtype=float)
+            ax.scatter(
+                port_xy_array[:, 0],
+                port_xy_array[:, 1],
+                s=18,
+                color="white",
+                edgecolor="white",
+                linewidth=0.8,
+                zorder=5,
+            )
         ax.set_title(condition_label, fontsize=10)
         ax.set_aspect("equal")
         ax.set_xlim(*x_range)
@@ -5304,6 +5339,35 @@ def plot_condition_session_values_by_mouse(
             return mouse_values.get(split_label, [])
         return []
 
+    def numeric_session_values(mouse_values):
+        values = [
+            value.get("value", np.nan)
+            if isinstance(value, dict)
+            else value
+            for value in mouse_values
+        ]
+        return pd.to_numeric(
+            pd.Series(values),
+            errors="coerce",
+        ).dropna().to_numpy(dtype=float)
+
+    def session_value_entries(mouse_values):
+        rows = []
+        for idx, value in enumerate(mouse_values):
+            if isinstance(value, dict):
+                pair_id = value.get("pair_id", f"row_{idx}")
+                value = value.get("value", np.nan)
+            else:
+                pair_id = f"row_{idx}"
+            value = pd.to_numeric(
+                pd.Series([value]),
+                errors="coerce",
+            ).iloc[0]
+            if pd.isna(value):
+                continue
+            rows.append({"pair_id": pair_id, "value": float(value)})
+        return pd.DataFrame(rows)
+
     condition_order = [
         "vis_saline",
         "vis_dcz",
@@ -5381,11 +5445,7 @@ def plot_condition_session_values_by_mouse(
         for mouse_idx, mouse in enumerate(mouse_names):
             mouse_values = condition_dict.get(mouse, [])
             mouse_values = values_for_split(mouse_values, split_label)
-            session_values = np.array(
-                mouse_values,
-                dtype=float,
-            )
-            session_values = session_values[~np.isnan(session_values)]
+            session_values = numeric_session_values(mouse_values)
             if len(session_values) == 0:
                 continue
 
@@ -5474,6 +5534,35 @@ def plot_group_condition_values_by_mouse(
             return mouse_values.get(split_label, [])
         return []
 
+    def numeric_session_values(mouse_values):
+        values = [
+            value.get("value", np.nan)
+            if isinstance(value, dict)
+            else value
+            for value in mouse_values
+        ]
+        return pd.to_numeric(
+            pd.Series(values),
+            errors="coerce",
+        ).dropna().to_numpy(dtype=float)
+
+    def session_value_entries(mouse_values):
+        rows = []
+        for idx, value in enumerate(mouse_values):
+            if isinstance(value, dict):
+                pair_id = value.get("pair_id", f"row_{idx}")
+                value = value.get("value", np.nan)
+            else:
+                pair_id = f"row_{idx}"
+            value = pd.to_numeric(
+                pd.Series([value]),
+                errors="coerce",
+            ).iloc[0]
+            if pd.isna(value):
+                continue
+            rows.append({"pair_id": pair_id, "value": float(value)})
+        return pd.DataFrame(rows)
+
     group_values = {
         "vis_hm3": output_per_mouse_dic_hm3_diff.get("vis", {}),
         "aud_hm3": output_per_mouse_dic_hm3_diff.get("aud", {}),
@@ -5539,19 +5628,62 @@ def plot_group_condition_values_by_mouse(
         else np.array([0])
     )
     x_positions = np.arange(len(plot_order))
+    plot_position = {
+        plot_item: idx for idx, plot_item in enumerate(plot_order)
+    }
     labeled_mice = set()
     plotted_any = False
+
+    if split_labels is not None and len(split_labels) > 1:
+        for group in group_order:
+            group_dict = group_values.get(group, {})
+            for mouse_idx, mouse in enumerate(mouse_names):
+                pair_values = {}
+                for split_label in split_labels:
+                    mouse_values = group_dict.get(mouse, [])
+                    mouse_values = values_for_split(
+                        mouse_values,
+                        split_label,
+                    )
+                    value_entries = session_value_entries(mouse_values)
+                    for _, value_row in value_entries.iterrows():
+                        pair_values.setdefault(
+                            value_row["pair_id"],
+                            {},
+                        )[split_label] = value_row["value"]
+
+                for split_values in pair_values.values():
+                    if any(
+                        split_label not in split_values
+                        for split_label in split_labels
+                    ):
+                        continue
+                    line_x = [
+                        x_positions[
+                            plot_position[(group, split_label)]
+                        ]
+                        + mouse_offsets[mouse_idx]
+                        for split_label in split_labels
+                    ]
+                    line_y = [
+                        split_values[split_label]
+                        for split_label in split_labels
+                    ]
+                    ax.plot(
+                        line_x,
+                        line_y,
+                        color=mouse_colors[mouse],
+                        alpha=0.22,
+                        linewidth=0.9,
+                        zorder=1,
+                    )
 
     for group_idx, (group, split_label) in enumerate(plot_order):
         group_dict = group_values.get(group, {})
         for mouse_idx, mouse in enumerate(mouse_names):
             mouse_values = group_dict.get(mouse, [])
             mouse_values = values_for_split(mouse_values, split_label)
-            session_values = np.array(
-                mouse_values,
-                dtype=float,
-            )
-            session_values = session_values[~np.isnan(session_values)]
+            session_values = numeric_session_values(mouse_values)
             if len(session_values) == 0:
                 continue
 

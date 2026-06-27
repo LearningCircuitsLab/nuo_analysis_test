@@ -405,10 +405,10 @@ def _(mo):
 
 @app.cell
 def _():
-    # hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
-    # hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
-    hM3Dq_mice = ['NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
-    hM4Di_mice = ['NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
+    hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
+    # hM3Dq_mice = ['NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    # hM4Di_mice = ['NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
     return hM3Dq_mice, hM4Di_mice
 
 
@@ -1175,6 +1175,9 @@ def _(behavior_utils, metric_paired_dates, pd, plt):
             metric_col,
             observation_col,
         }
+        if agg_func == "len":
+            agg_func = len
+
         metric_by_subject = {}
         metric_summary = pd.DataFrame()
 
@@ -1268,6 +1271,9 @@ def _(behavior_utils, metric_paired_dates, pd, plt):
             metric_col,
             observation_col,
         }
+        if agg_func == "len":
+            agg_func = len
+
         observation_summary = pd.DataFrame()
 
         fig, ax = plt.subplots(figsize=figsize)
@@ -1434,22 +1440,18 @@ def _(plot_metric_by_date):
         plot_func=plot_metric_by_date,
     ):
         metric_name = metric_name or metric_col.replace("_", " ")
+        plot_agg_func = len if agg_func == "len" else agg_func
+        ylabel = metric_name if agg_func == "len" else f"{agg_func} {metric_name}"
 
         return plot_func(
             df_group,
             metric_col=metric_col,
-            agg_func=agg_func,
-            ylabel=f"{agg_func} {metric_name}",
+            agg_func=plot_agg_func,
+            ylabel=ylabel,
             title=f"{metric_name} in {group_name} group",
         )[0]
 
     return (plot_group,)
-
-
-@app.cell
-def _(df_test_selected_hm3):
-    df_test_selected_hm3[df_test_selected_hm3['subject'] == 'NUO010' or df_test_selected_hm3['subject'] == 'NUO012']
-    return
 
 
 @app.cell
@@ -1460,16 +1462,12 @@ def _(
     plot_group,
     plot_metric_by_date,
 ):
-    hm3_sub_performance_fig_aud = plot_group(df_test_selected_hm3[(df_test_selected_hm3["subject"].isin(["NUO010", "NUO012", "NUO008"])) & (df_test_selected_hm3['stimulus_modality']=='auditory')], "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date)
-    hm3_sub_performance_fig_aud.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_sub_performance_fig_aud.svg", format="svg", bbox_inches="tight")
     mo.vstack(
         [
-            plot_group(df_test_selected_hm4, "hM4Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date), 
-            plot_group(df_test_selected_hm3, "hM3Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_date),
-            hm3_sub_performance_fig_aud
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="trial", metric_name="total number of trials", agg_func="len", plot_func=plot_metric_by_date), 
+            plot_group(df_test_selected_hm3, "hM3Di", metric_col="trial", metric_name="total number of trials", agg_func="len", plot_func=plot_metric_by_date)
         ]
     )
-
     return
 
 
@@ -1485,6 +1483,73 @@ def _(
         [
             plot_group(df_test_selected_hm4, "hM4Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation), 
             plot_group(df_test_selected_hm3, "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation)
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## sampled for plotting
+    """)
+    return
+
+
+@app.cell
+def _(
+    df_test_selected_hm3,
+    df_test_selected_hm4,
+    mo,
+    plot_group,
+    plot_metric_by_date,
+):
+    hm4_sub_bydate_fig_aud = plot_group(
+        df_test_selected_hm4[
+            (df_test_selected_hm4["subject"].isin(["NUO001", "NUO002", "NUO005"])) 
+            # & (df_test_selected_hm4['stimulus_modality']=='auditory')
+            ], "hM4Dq", metric_col="reaction_time", metric_name="reaction time", agg_func="mean", plot_func=plot_metric_by_date)
+    hm4_sub_bydate_fig_aud.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_sub_bydate_fig_aud.svg", format="svg", bbox_inches="tight")
+    hm3_sub_bydate_fig_aud = plot_group(
+        df_test_selected_hm3[
+            (df_test_selected_hm3["subject"].isin(["NUO010", "NUO012"])) 
+            # & (df_test_selected_hm3['stimulus_modality']=='auditory')
+            ], "hM3Dq", metric_col="reaction_time", metric_name="reaction time", agg_func="mean", plot_func=plot_metric_by_date)
+    hm3_sub_bydate_fig_aud.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_sub_bydate_fig_aud.svg", format="svg", bbox_inches="tight")
+    mo.vstack(
+        [
+            hm4_sub_bydate_fig_aud,
+            hm3_sub_bydate_fig_aud
+        ]
+    )
+    return
+
+
+@app.cell
+def _(
+    df_test_selected_hm3,
+    df_test_selected_hm4,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    plot_group,
+    plot_metric_by_observation,
+):
+    hm4_sub_byobserve_fig_aud = plot_group(
+        df_test_selected_hm4[
+            (df_test_selected_hm4["subject"].isin(hM4Di_mice)) 
+            # & (df_test_selected_hm4['stimulus_modality']=='auditory')
+            ], "hM4Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation)
+    hm4_sub_byobserve_fig_aud.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_sub_byobserve_fig_aud.svg", format="svg", bbox_inches="tight")
+    hm3_sub_byobserve_fig_aud = plot_group(df_test_selected_hm3[
+        (df_test_selected_hm3["subject"].isin(hM3Dq_mice)) 
+        # & (df_test_selected_hm3['stimulus_modality']=='auditory')
+        ], "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation)
+    hm3_sub_byobserve_fig_aud.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_sub_byobserve_fig_aud.svg", format="svg", bbox_inches="tight")
+    mo.hstack(
+        [
+            hm4_sub_byobserve_fig_aud,
+            hm3_sub_byobserve_fig_aud
         ]
     )
     return

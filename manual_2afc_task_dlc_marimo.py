@@ -460,7 +460,13 @@ def _(pd, utils):
 
 
 @app.cell
-def _(add_number_of_pokes, df_test, dft, hM3Dq_mice, hM4Di_mice, pd):
+def _(df_test_upd):
+    df_test_upd['port2_pokes_num'].unique()
+    return
+
+
+@app.cell
+def _(add_number_of_pokes, df_test, dft, hM3Dq_mice, hM4Di_mice, np, pd):
     session_performance = df_test.groupby(
         ["subject", "session"]
     )["correct"].transform("mean")
@@ -516,14 +522,75 @@ def _(add_number_of_pokes, df_test, dft, hM3Dq_mice, hM4Di_mice, pd):
 
         return pd.concat(session_dfs).sort_index()
 
+    def add_react_slow_column(df_in, reaction_sd_criteria=2):
+        if df_in["subject"].nunique() > 1:
+            raise ValueError("The dataframe should contain only one subject.")
+
+        df = df_in.copy()
+        reaction_time = pd.to_numeric(
+            df["reaction_time"],
+            errors="coerce",
+        )
+        reaction_time = reaction_time.where(reaction_time > 0)
+        df["reaction_time_log"] = np.log(reaction_time)
+
+        median_reaction_time_log = df["reaction_time_log"].median()
+        std_reaction_time_log = df["reaction_time_log"].std()
+        reaction_threshold = (
+            median_reaction_time_log
+            + reaction_sd_criteria * std_reaction_time_log
+        )
+        df["react_slow"] = (
+            df["reaction_time_log"] > reaction_threshold
+            if np.isfinite(reaction_threshold)
+            else False
+        )
+        return df
+
+    def add_break_more_column(df_in, break_sd_criteria=2):
+        if df_in["subject"].nunique() > 1:
+            raise ValueError("The dataframe should contain only one subject.")
+
+        df = df_in.copy()
+        port2_pokes = pd.to_numeric(
+            df["port2_pokes_num"],
+            errors="coerce",
+        )
+        df["port2_pokes_num_log"] = np.log(port2_pokes)
+
+        median_port2_pokes_log = df["port2_pokes_num_log"].median()
+        std_port2_pokes_log = df["port2_pokes_num_log"].std()
+        break_threshold = (
+            median_port2_pokes_log
+            + break_sd_criteria * std_port2_pokes_log
+        )
+        df["break_more"] = (
+            df["port2_pokes_num_log"] > break_threshold
+            if np.isfinite(break_threshold)
+            else False
+        )
+        return df
+
+    def add_behavior_state_columns(df_subject):
+        df_subject = dft.add_engagement_column(
+            df_subject,
+            engagement_sd_criteria=2,
+        )
+        df_subject = add_react_slow_column(
+            df_subject,
+            reaction_sd_criteria=2,
+        )
+        df_subject = add_break_more_column(
+            df_subject,
+            break_sd_criteria=2,
+        )
+        return df_subject
+
     df_test_upd = add_trial_variables_by_subject(df_test_upd)
     df_test_upd = (
         pd.concat(
             [
-                dft.add_engagement_column(
-                    df_subject,
-                    engagement_sd_criteria=2,
-                )
+                add_behavior_state_columns(df_subject)
                 for _, df_subject in df_test_upd.groupby(
                     "subject",
                     sort=False,
@@ -987,12 +1054,12 @@ def _(behav_pair_map):
 
 
 @app.cell
-def _(utils, utils_test):
-    utils_test.rsync_specific_file(
-        file_path="/home/kudongdong/data/training_village/2afc/image/NUO010/video2img/frame0.jpg",
-        local_path="/mnt/e/data/LeciLab/behavioral_data/tmp/processing/video/",
-        credentials=utils.get_idibaps_cluster_credentials(),
-    )
+def _():
+    # utils_test.rsync_specific_file(
+    #     file_path="/home/kudongdong/data/training_village/2afc/image/NUO010/video2img/frame0.jpg",
+    #     local_path="/mnt/e/data/LeciLab/behavioral_data/tmp/processing/video/",
+    #     credentials=utils.get_idibaps_cluster_credentials(),
+    # )
     return
 
 
@@ -1007,8 +1074,8 @@ def _(np):
         )
     )
 
-    fig = px.imshow(img, origin="upper")
-    fig.show()
+    _fig = px.imshow(img, origin="upper")
+    _fig.show()
     return
 
 
@@ -1273,7 +1340,13 @@ def _(behavior_utils, np, pd):
                     if len(saline_values) == 0 or len(dcz_values) == 0:
                         continue
                     mouse_output[split_label].append(
-                        float(np.nanmean(saline_values) - np.nanmean(dcz_values))
+                        {
+                            "pair_id": pair_id,
+                            "value": float(
+                                np.nanmean(saline_values)
+                                - np.nanmean(dcz_values)
+                            ),
+                        }
                     )
                 continue
 
@@ -1678,6 +1751,245 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### combine the subjects
+    """)
+    return
+
+
+@app.cell
+def _(
+    compare_value_name,
+    mo,
+    np,
+    pd,
+    plt,
+    roi_per_animal_condition_hm3_diff_split_col,
+    roi_per_animal_condition_hm4_diff_split_col,
+    split_label,
+):
+    from scipy import stats as _stats
+
+    _split_labels = list(split_label)
+
+    def _p_value_to_label(_p_value):
+        if pd.isna(_p_value):
+            return "n/a"
+        if _p_value < 0.001:
+            return "***"
+        if _p_value < 0.01:
+            return "**"
+        if _p_value < 0.05:
+            return "*"
+        return "ns"
+
+    def _add_significance_bar(_ax, _x1, _x2, _y, _h, _label):
+        _ax.plot(
+            [_x1, _x1, _x2, _x2],
+            [_y, _y + _h, _y + _h, _y],
+            color="black",
+            linewidth=1,
+        )
+        _ax.text(
+            (_x1 + _x2) / 2,
+            _y + _h,
+            _label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+
+    def _combined_diff_rows(_output_dic, _group_name):
+        _rows = []
+
+        def _entry_to_pair_value(_entry, _fallback_idx):
+            if isinstance(_entry, dict):
+                return (
+                    _entry.get("pair_id", f"row_{_fallback_idx}"),
+                    _entry.get("value", np.nan),
+                )
+            return f"row_{_fallback_idx}", _entry
+
+        for _modality in ["vis", "aud"]:
+            for _subject, _split_values in (
+                _output_dic.get(_modality, {}).items()
+            ):
+                if not isinstance(_split_values, dict):
+                    continue
+                if any(
+                    _label not in _split_values
+                    for _label in _split_labels
+                ):
+                    continue
+
+                for _label in _split_labels:
+                    for _entry_idx, _entry in enumerate(
+                        _split_values[_label]
+                    ):
+                        _pair_id, _value = _entry_to_pair_value(
+                            _entry,
+                            _entry_idx,
+                        )
+                        _value = pd.to_numeric(
+                            pd.Series([_value]),
+                            errors="coerce",
+                        ).iloc[0]
+                        if pd.isna(_value):
+                            continue
+                        _rows.append(
+                            {
+                                "group": _group_name,
+                                "subject": _subject,
+                                "modality": _modality,
+                                "pair_id": _pair_id,
+                                "split_label": _label,
+                                "roi_diff": float(_value),
+                            }
+                        )
+        return _rows
+
+    combined_roi_diff_split_df = pd.DataFrame(
+        _combined_diff_rows(
+            roi_per_animal_condition_hm3_diff_split_col,
+            "hM3Dq",
+        )
+        + _combined_diff_rows(
+            roi_per_animal_condition_hm4_diff_split_col,
+            "hM4Di",
+        )
+    )
+
+    def _plot_combined_group(_df, _group_name):
+        _fig, _ax = plt.subplots(figsize=(5, 5), dpi=150)
+        _df_group = _df[_df["group"] == _group_name].copy()
+
+        if _df_group.empty:
+            _ax.text(
+                0.5,
+                0.5,
+                "No paired values to plot.",
+                ha="center",
+                va="center",
+                transform=_ax.transAxes,
+            )
+            _ax.set_axis_off()
+            _fig.tight_layout()
+            return _fig
+
+        _data = [
+            _df_group.loc[
+                _df_group["split_label"] == _label,
+                "roi_diff",
+            ].dropna()
+            for _label in _split_labels
+        ]
+        _colors = ["#4C78A8", "#F58518"]
+        _x_positions = np.arange(1, len(_split_labels) + 1)
+
+        _boxplot = _ax.boxplot(
+            _data,
+            labels=_split_labels,
+            patch_artist=True,
+            showmeans=True,
+            showfliers=False,
+        )
+        for _patch, _color in zip(_boxplot["boxes"], _colors):
+            _patch.set_facecolor(_color)
+            _patch.set_alpha(0.22)
+            _patch.set_edgecolor(_color)
+
+        _paired_df = _df_group.pivot_table(
+            index=["subject", "modality", "pair_id"],
+            columns="split_label",
+            values="roi_diff",
+            aggfunc="mean",
+        )
+        _paired_df = _paired_df.dropna(subset=_split_labels)
+
+        for _, _row in _paired_df.iterrows():
+            _ax.plot(
+                _x_positions,
+                [_row[_label] for _label in _split_labels],
+                color="gray",
+                alpha=0.3,
+                linewidth=1,
+                zorder=2,
+            )
+
+        for _idx, (_label, _color) in enumerate(
+            zip(_split_labels, _colors),
+            start=1,
+        ):
+            _values = _df_group.loc[
+                _df_group["split_label"] == _label,
+                "roi_diff",
+            ].dropna().to_numpy(dtype=float)
+            if len(_values) == 0:
+                continue
+            _jitter = np.linspace(-0.06, 0.06, len(_values))
+            _ax.scatter(
+                _idx + _jitter,
+                _values,
+                color=_color,
+                edgecolor="black",
+                linewidth=0.4,
+                alpha=0.75,
+                s=35,
+                zorder=3,
+            )
+
+        if len(_split_labels) == 2 and len(_paired_df) >= 2:
+            try:
+                _p_value = _stats.ttest_rel(
+                    _paired_df[_split_labels[0]],
+                    _paired_df[_split_labels[1]],
+                    nan_policy="omit",
+                ).pvalue
+            except ValueError:
+                _p_value = np.nan
+
+            _y_values = pd.to_numeric(
+                _df_group["roi_diff"],
+                errors="coerce",
+            ).dropna()
+            if not _y_values.empty:
+                _y_min = _y_values.min()
+                _y_max = _y_values.max()
+                _y_range = _y_max - _y_min
+                if _y_range == 0:
+                    _y_range = abs(_y_max) * 0.1 if _y_max != 0 else 1
+                _bar_y = _y_max + _y_range * 0.12
+                _bar_h = _y_range * 0.06
+                _add_significance_bar(
+                    _ax,
+                    _x_positions[0],
+                    _x_positions[1],
+                    _bar_y,
+                    _bar_h,
+                    _p_value_to_label(_p_value),
+                )
+                _ax.set_ylim(top=_bar_y + _bar_h + _y_range * 0.15)
+
+        _ax.axhline(0, color="black", linewidth=0.8, alpha=0.4)
+        _ax.set_xlabel(compare_value_name)
+        _ax.set_ylabel("saline - DCZ (ROI time ratio)")
+        _ax.set_title(f"{_group_name}: combined aud/vis subjects")
+        _ax.grid(True, axis="y", alpha=0.3)
+        _fig.tight_layout()
+        return _fig
+
+    combined_roi_diff_split_figures = [
+        _plot_combined_group(combined_roi_diff_split_df, "hM3Dq"),
+        _plot_combined_group(combined_roi_diff_split_df, "hM4Di"),
+    ]
+    _plot_combined_group(combined_roi_diff_split_df, "hM3Dq").savefig('/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_bypreviouschoice_roitime.svg')
+    _plot_combined_group(combined_roi_diff_split_df, "hM4Di").savefig('/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_bypreviouschoice_roitime.svg')
+    mo.hstack(combined_roi_diff_split_figures)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## speed
     """)
     return
@@ -1871,7 +2183,13 @@ def _(behavior_utils, np, pd):
                     if len(saline_values) == 0 or len(dcz_values) == 0:
                         continue
                     mouse_output[split_label].append(
-                        float(np.nanmean(saline_values) - np.nanmean(dcz_values))
+                        {
+                            "pair_id": pair_id,
+                            "value": float(
+                                np.nanmean(saline_values)
+                                - np.nanmean(dcz_values)
+                            ),
+                        }
                     )
                 continue
 
@@ -1972,100 +2290,13 @@ def _(behavior_utils, np, pd):
         return output
 
 
-    return (get_speed_per_mouse_sessions,)
+    return
 
 
 @app.cell
-def _(
-    behav_df_dic_dcz,
-    behav_df_dic_saline,
-    behav_pair_map,
-    df_dic_dcz,
-    df_dic_saline,
-    get_speed_per_mouse_sessions,
-    hM3Dq_mice,
-    hM4Di_mice,
-    split_col,
-    split_label,
-):
-    speed_per_animal_condition_hm4 = get_speed_per_mouse_sessions(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        subjects=hM4Di_mice,
-    )
-    speed_per_animal_condition_hm4_diff = get_speed_per_mouse_sessions(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        subjects=hM4Di_mice,
-        difference=True,
-    )
-    speed_per_animal_condition_hm3 = get_speed_per_mouse_sessions(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        subjects=hM3Dq_mice,
-    )
-    speed_per_animal_condition_hm3_diff = get_speed_per_mouse_sessions(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        subjects=hM3Dq_mice,
-        difference=True,
-    )
-    speed_per_animal_condition_hm4_split_col = get_speed_per_mouse_sessions(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        df_dic_saline=df_dic_saline,
-        df_dic_dcz=df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        subjects=hM4Di_mice,
-        split_column=split_col,
-        split_labels=split_label,
-    )
-    speed_per_animal_condition_hm4_diff_split_col = get_speed_per_mouse_sessions(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        df_dic_saline=df_dic_saline,
-        df_dic_dcz=df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        subjects=hM4Di_mice,
-        split_column=split_col,
-        split_labels=split_label,
-        difference=True,
-    )
-    speed_per_animal_condition_hm3_split_col = get_speed_per_mouse_sessions(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        df_dic_saline=df_dic_saline,
-        df_dic_dcz=df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        subjects=hM3Dq_mice,
-        split_column=split_col,
-        split_labels=split_label,
-    )
-    speed_per_animal_condition_hm3_diff_split_col = get_speed_per_mouse_sessions(
-        behav_df_dic_saline=behav_df_dic_saline,
-        behav_df_dic_dcz=behav_df_dic_dcz,
-        df_dic_saline=df_dic_saline,
-        df_dic_dcz=df_dic_dcz,
-        behav_pair_map=behav_pair_map,
-        subjects=hM3Dq_mice,
-        split_column=split_col,
-        split_labels=split_label,
-        difference=True,
-    )
-    return (
-        speed_per_animal_condition_hm3,
-        speed_per_animal_condition_hm3_diff,
-        speed_per_animal_condition_hm3_diff_split_col,
-        speed_per_animal_condition_hm3_split_col,
-        speed_per_animal_condition_hm4,
-        speed_per_animal_condition_hm4_diff,
-        speed_per_animal_condition_hm4_diff_split_col,
-        speed_per_animal_condition_hm4_split_col,
-    )
+def _(leisi):
+    leisi
+    return
 
 
 @app.cell
@@ -2167,6 +2398,1103 @@ def _(
             speed_engagement_condition_diff_session_fig,
         ]
     )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### combine the subjects
+    """)
+    return
+
+
+@app.cell
+def _(
+    compare_value_name,
+    mo,
+    np,
+    pd,
+    plt,
+    speed_per_animal_condition_hm3_diff_split_col,
+    speed_per_animal_condition_hm4_diff_split_col,
+    split_label,
+):
+    from scipy import stats as _stats
+
+    _split_labels = list(split_label)
+
+    def _p_value_to_label(_p_value):
+        if pd.isna(_p_value):
+            return "n/a"
+        if _p_value < 0.001:
+            return "***"
+        if _p_value < 0.01:
+            return "**"
+        if _p_value < 0.05:
+            return "*"
+        return "ns"
+
+    def _add_significance_bar(_ax, _x1, _x2, _y, _h, _label):
+        _ax.plot(
+            [_x1, _x1, _x2, _x2],
+            [_y, _y + _h, _y + _h, _y],
+            color="black",
+            linewidth=1,
+        )
+        _ax.text(
+            (_x1 + _x2) / 2,
+            _y + _h,
+            _label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+
+    def _combined_speed_diff_rows(_output_dic, _group_name):
+        _rows = []
+
+        def _entry_to_pair_value(_entry, _fallback_idx):
+            if isinstance(_entry, dict):
+                return (
+                    _entry.get("pair_id", f"row_{_fallback_idx}"),
+                    _entry.get("value", np.nan),
+                )
+            return f"row_{_fallback_idx}", _entry
+
+        for _modality in ["vis", "aud"]:
+            for _subject, _split_values in (
+                _output_dic.get(_modality, {}).items()
+            ):
+                if not isinstance(_split_values, dict):
+                    continue
+                if any(
+                    _label not in _split_values
+                    for _label in _split_labels
+                ):
+                    continue
+
+                for _label in _split_labels:
+                    for _entry_idx, _entry in enumerate(
+                        _split_values[_label]
+                    ):
+                        _pair_id, _value = _entry_to_pair_value(
+                            _entry,
+                            _entry_idx,
+                        )
+                        _value = pd.to_numeric(
+                            pd.Series([_value]),
+                            errors="coerce",
+                        ).iloc[0]
+                        if pd.isna(_value):
+                            continue
+                        _rows.append(
+                            {
+                                "group": _group_name,
+                                "subject": _subject,
+                                "modality": _modality,
+                                "pair_id": _pair_id,
+                                "split_label": _label,
+                                "speed_diff": float(_value),
+                            }
+                        )
+        return _rows
+
+    combined_speed_diff_split_df = pd.DataFrame(
+        _combined_speed_diff_rows(
+            speed_per_animal_condition_hm3_diff_split_col,
+            "hM3Dq",
+        )
+        + _combined_speed_diff_rows(
+            speed_per_animal_condition_hm4_diff_split_col,
+            "hM4Di",
+        )
+    )
+
+    def _plot_combined_speed_group(_df, _group_name):
+        _fig, _ax = plt.subplots(figsize=(5, 5), dpi=150)
+        _df_group = _df[_df["group"] == _group_name].copy()
+
+        if _df_group.empty:
+            _ax.text(
+                0.5,
+                0.5,
+                "No paired values to plot.",
+                ha="center",
+                va="center",
+                transform=_ax.transAxes,
+            )
+            _ax.set_axis_off()
+            _fig.tight_layout()
+            return _fig
+
+        _data = [
+            _df_group.loc[
+                _df_group["split_label"] == _label,
+                "speed_diff",
+            ].dropna()
+            for _label in _split_labels
+        ]
+        _colors = ["#4C78A8", "#F58518"]
+        _x_positions = np.arange(1, len(_split_labels) + 1)
+
+        _boxplot = _ax.boxplot(
+            _data,
+            labels=_split_labels,
+            patch_artist=True,
+            showmeans=True,
+            showfliers=False,
+        )
+        for _patch, _color in zip(_boxplot["boxes"], _colors):
+            _patch.set_facecolor(_color)
+            _patch.set_alpha(0.22)
+            _patch.set_edgecolor(_color)
+
+        _paired_df = _df_group.pivot_table(
+            index=["subject", "modality", "pair_id"],
+            columns="split_label",
+            values="speed_diff",
+            aggfunc="mean",
+        )
+        _paired_df = _paired_df.dropna(subset=_split_labels)
+
+        for _, _row in _paired_df.iterrows():
+            _ax.plot(
+                _x_positions,
+                [_row[_label] for _label in _split_labels],
+                color="gray",
+                alpha=0.3,
+                linewidth=1,
+                zorder=2,
+            )
+
+        for _idx, (_label, _color) in enumerate(
+            zip(_split_labels, _colors),
+            start=1,
+        ):
+            _values = _df_group.loc[
+                _df_group["split_label"] == _label,
+                "speed_diff",
+            ].dropna().to_numpy(dtype=float)
+            if len(_values) == 0:
+                continue
+            _jitter = np.linspace(-0.06, 0.06, len(_values))
+            _ax.scatter(
+                _idx + _jitter,
+                _values,
+                color=_color,
+                edgecolor="black",
+                linewidth=0.4,
+                alpha=0.75,
+                s=35,
+                zorder=3,
+            )
+
+        if len(_split_labels) == 2 and len(_paired_df) >= 2:
+            try:
+                _p_value = _stats.ttest_rel(
+                    _paired_df[_split_labels[0]],
+                    _paired_df[_split_labels[1]],
+                    nan_policy="omit",
+                ).pvalue
+            except ValueError:
+                _p_value = np.nan
+
+            _y_values = pd.to_numeric(
+                _df_group["speed_diff"],
+                errors="coerce",
+            ).dropna()
+            if not _y_values.empty:
+                _y_min = _y_values.min()
+                _y_max = _y_values.max()
+                _y_range = _y_max - _y_min
+                if _y_range == 0:
+                    _y_range = abs(_y_max) * 0.1 if _y_max != 0 else 1
+                _bar_y = _y_max + _y_range * 0.12
+                _bar_h = _y_range * 0.06
+                _add_significance_bar(
+                    _ax,
+                    _x_positions[0],
+                    _x_positions[1],
+                    _bar_y,
+                    _bar_h,
+                    _p_value_to_label(_p_value),
+                )
+                _ax.set_ylim(top=_bar_y + _bar_h + _y_range * 0.15)
+
+        _ax.axhline(0, color="black", linewidth=0.8, alpha=0.4)
+        _ax.set_xlabel(compare_value_name)
+        _ax.set_ylabel("saline - DCZ (mean speed)")
+        _ax.set_title(f"{_group_name}: combined aud/vis subjects")
+        _ax.grid(True, axis="y", alpha=0.3)
+        _fig.tight_layout()
+        return _fig
+
+    combined_speed_diff_split_figures = [
+        _plot_combined_speed_group(combined_speed_diff_split_df, "hM3Dq"),
+        _plot_combined_speed_group(combined_speed_diff_split_df, "hM4Di"),
+    ]
+
+    mo.hstack(combined_speed_diff_split_figures)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## stationary time ratio
+    """)
+    return
+
+
+@app.cell
+def _(behavior_utils, np, pd):
+    def _empty_stationary_time_ratio_output(difference=False):
+        condition_keys = (
+            ["vis", "aud"]
+            if difference
+            else ["vis_saline", "vis_dcz", "aud_saline", "aud_dcz"]
+        )
+        return {condition_key: {} for condition_key in condition_keys}
+
+    def _mouse_stationary_split_output(
+        condition_dict,
+        subject,
+        split_labels,
+    ):
+        return condition_dict.setdefault(
+            subject,
+            {split_label: [] for split_label in split_labels},
+        )
+
+    def _stationary_frame_intervals(
+        behav_df,
+        bodypart="Center",
+        speed_col="mean_speed",
+    ):
+        timestamp = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                ("timestamp", ""),
+            ),
+            errors="coerce",
+        )
+        speed = pd.to_numeric(
+            behavior_utils.get_behavior_column(
+                behav_df,
+                (bodypart, speed_col),
+            ),
+            errors="coerce",
+        )
+        frame_df = (
+            pd.DataFrame(
+                {
+                    "timestamp": timestamp.to_numpy(),
+                    "speed": speed.to_numpy(),
+                }
+            )
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna(subset=["timestamp"])
+            .sort_values("timestamp")
+        )
+        if frame_df.empty:
+            return None, None, None
+
+        t = frame_df["timestamp"].to_numpy(dtype=float)
+        speed_values = frame_df["speed"].to_numpy(dtype=float)
+        dt = np.diff(t)
+        positive_dt = dt[np.isfinite(dt) & (dt > 0)]
+        median_dt = (
+            float(np.median(positive_dt))
+            if len(positive_dt)
+            else 0.0
+        )
+        frame_end = np.empty_like(t)
+        if len(t) > 1:
+            frame_end[:-1] = t[1:]
+        frame_end[-1] = t[-1] + median_dt
+        return t, frame_end, speed_values
+
+    def get_stationary_time_ratio_for_trials(
+        behav_df,
+        trial_df,
+        bodypart="Center",
+        speed_col="mean_speed",
+        stationary_speed_threshold=10,
+    ):
+        if behav_df.empty or trial_df.empty:
+            return np.nan
+
+        t, frame_end, speed_values = _stationary_frame_intervals(
+            behav_df,
+            bodypart=bodypart,
+            speed_col=speed_col,
+        )
+        if t is None:
+            return np.nan
+
+        stationary = np.isfinite(speed_values) & (
+            speed_values <= stationary_speed_threshold
+        )
+        stationary_time = 0.0
+        trial_time = 0.0
+
+        for _, trial_row in trial_df.iterrows():
+            trial_start = pd.to_numeric(
+                trial_row["TRIAL_START"],
+                errors="coerce",
+            )
+            trial_end = pd.to_numeric(
+                trial_row["TRIAL_END"],
+                errors="coerce",
+            )
+            if (
+                not np.isfinite(trial_start)
+                or not np.isfinite(trial_end)
+                or trial_end <= trial_start
+            ):
+                continue
+
+            trial_time += float(trial_end - trial_start)
+            overlap_start = np.maximum(t, float(trial_start))
+            overlap_end = np.minimum(frame_end, float(trial_end))
+            overlap = np.clip(overlap_end - overlap_start, 0, None)
+            stationary_time += float(overlap[stationary].sum())
+
+        if trial_time <= 0:
+            return np.nan
+        return float(stationary_time / trial_time)
+
+    def get_trial_stationary_time_ratio_by_split_col(
+        behav_df,
+        trial_df,
+        split_column="engaged",
+        split_labels=("engaged", "disengaged"),
+        bodypart="Center",
+        speed_col="mean_speed",
+        stationary_speed_threshold=10,
+    ):
+        true_label, false_label = split_labels
+        ratio_by_split = {true_label: [], false_label: []}
+        stationary_time_by_split = {true_label: 0.0, false_label: 0.0}
+        trial_time_by_split = {true_label: 0.0, false_label: 0.0}
+
+        if behav_df.empty or trial_df.empty:
+            return ratio_by_split
+
+        t, frame_end, speed_values = _stationary_frame_intervals(
+            behav_df,
+            bodypart=bodypart,
+            speed_col=speed_col,
+        )
+        if t is None:
+            return ratio_by_split
+
+        stationary = np.isfinite(speed_values) & (
+            speed_values <= stationary_speed_threshold
+        )
+
+        for _, trial_row in trial_df.iterrows():
+            split_label = (
+                true_label
+                if bool(trial_row[split_column])
+                else false_label
+            )
+            trial_start = pd.to_numeric(
+                trial_row["TRIAL_START"],
+                errors="coerce",
+            )
+            trial_end = pd.to_numeric(
+                trial_row["TRIAL_END"],
+                errors="coerce",
+            )
+            if (
+                not np.isfinite(trial_start)
+                or not np.isfinite(trial_end)
+                or trial_end <= trial_start
+            ):
+                continue
+
+            trial_time_by_split[split_label] += float(
+                trial_end - trial_start
+            )
+            overlap_start = np.maximum(t, float(trial_start))
+            overlap_end = np.minimum(frame_end, float(trial_end))
+            overlap = np.clip(overlap_end - overlap_start, 0, None)
+            stationary_time_by_split[split_label] += float(
+                overlap[stationary].sum()
+            )
+
+        for split_label in split_labels:
+            if trial_time_by_split[split_label] > 0:
+                ratio_by_split[split_label].append(
+                    stationary_time_by_split[split_label]
+                    / trial_time_by_split[split_label]
+                )
+
+        return ratio_by_split
+
+    def get_trial_stationary_time_ratio_per_mouse_sessions(
+        behav_df_dic_saline,
+        behav_df_dic_dcz,
+        df_dic_saline,
+        df_dic_dcz,
+        behav_pair_map,
+        subjects=None,
+        bodypart="Center",
+        speed_col="mean_speed",
+        stationary_speed_threshold=10,
+        split_column="engaged",
+        split_labels=("engaged", "disengaged"),
+        difference=False,
+    ):
+        output = _empty_stationary_time_ratio_output(
+            difference=difference
+        )
+
+        for _, pair_row in behav_pair_map.sort_values("pair_id").iterrows():
+            pair_id = pair_row["pair_id"]
+            subject = str(pair_row["subject"])
+            if subjects is not None and subject not in subjects:
+                continue
+            if (
+                pair_id not in behav_df_dic_saline
+                or pair_id not in behav_df_dic_dcz
+                or pair_id not in df_dic_saline
+                or pair_id not in df_dic_dcz
+            ):
+                continue
+
+            modality = str(pair_row.get("stimulus_modality", "")).lower()
+            has_visual = "visual" in modality
+            has_auditory = "auditory" in modality
+            if has_visual == has_auditory:
+                continue
+            modality_prefix = "vis" if has_visual else "aud"
+
+            saline_ratios = get_trial_stationary_time_ratio_by_split_col(
+                behav_df_dic_saline[pair_id],
+                df_dic_saline[pair_id],
+                split_column=split_column,
+                split_labels=split_labels,
+                bodypart=bodypart,
+                speed_col=speed_col,
+                stationary_speed_threshold=stationary_speed_threshold,
+            )
+            dcz_ratios = get_trial_stationary_time_ratio_by_split_col(
+                behav_df_dic_dcz[pair_id],
+                df_dic_dcz[pair_id],
+                split_column=split_column,
+                split_labels=split_labels,
+                bodypart=bodypart,
+                speed_col=speed_col,
+                stationary_speed_threshold=stationary_speed_threshold,
+            )
+
+            if difference:
+                mouse_output = _mouse_stationary_split_output(
+                    output[modality_prefix],
+                    subject,
+                    split_labels,
+                )
+                for split_label in split_labels:
+                    saline_values = np.asarray(
+                        saline_ratios[split_label],
+                        dtype=float,
+                    )
+                    dcz_values = np.asarray(
+                        dcz_ratios[split_label],
+                        dtype=float,
+                    )
+                    if len(saline_values) == 0 or len(dcz_values) == 0:
+                        continue
+                    mouse_output[split_label].append(
+                        {
+                            "pair_id": pair_id,
+                            "value": float(
+                                np.nanmean(saline_values)
+                                - np.nanmean(dcz_values)
+                            ),
+                        }
+                    )
+                continue
+
+            saline_output = _mouse_stationary_split_output(
+                output[f"{modality_prefix}_saline"],
+                subject,
+                split_labels,
+            )
+            dcz_output = _mouse_stationary_split_output(
+                output[f"{modality_prefix}_dcz"],
+                subject,
+                split_labels,
+            )
+            for split_label in split_labels:
+                saline_output[split_label].extend(
+                    saline_ratios[split_label]
+                )
+                dcz_output[split_label].extend(dcz_ratios[split_label])
+
+        return output
+
+    def get_stationary_time_ratio_per_mouse_sessions(
+        behav_df_dic_saline,
+        behav_df_dic_dcz,
+        df_dic_saline,
+        df_dic_dcz,
+        behav_pair_map,
+        subjects=None,
+        bodypart="Center",
+        speed_col="mean_speed",
+        stationary_speed_threshold=10,
+        split_column=None,
+        split_labels=("engaged", "disengaged"),
+        difference=False,
+    ):
+        if split_column is not None:
+            return get_trial_stationary_time_ratio_per_mouse_sessions(
+                behav_df_dic_saline=behav_df_dic_saline,
+                behav_df_dic_dcz=behav_df_dic_dcz,
+                df_dic_saline=df_dic_saline,
+                df_dic_dcz=df_dic_dcz,
+                behav_pair_map=behav_pair_map,
+                subjects=subjects,
+                bodypart=bodypart,
+                speed_col=speed_col,
+                stationary_speed_threshold=stationary_speed_threshold,
+                split_column=split_column,
+                split_labels=split_labels,
+                difference=difference,
+            )
+
+        output = _empty_stationary_time_ratio_output(
+            difference=difference
+        )
+        for _, pair_row in behav_pair_map.sort_values("pair_id").iterrows():
+            pair_id = pair_row["pair_id"]
+            subject = str(pair_row["subject"])
+            if subjects is not None and subject not in subjects:
+                continue
+            if (
+                pair_id not in behav_df_dic_saline
+                or pair_id not in behav_df_dic_dcz
+                or pair_id not in df_dic_saline
+                or pair_id not in df_dic_dcz
+            ):
+                continue
+
+            modality = str(pair_row.get("stimulus_modality", "")).lower()
+            has_visual = "visual" in modality
+            has_auditory = "auditory" in modality
+            if has_visual == has_auditory:
+                continue
+            modality_prefix = "vis" if has_visual else "aud"
+
+            saline_ratio = get_stationary_time_ratio_for_trials(
+                behav_df_dic_saline[pair_id],
+                df_dic_saline[pair_id],
+                bodypart=bodypart,
+                speed_col=speed_col,
+                stationary_speed_threshold=stationary_speed_threshold,
+            )
+            dcz_ratio = get_stationary_time_ratio_for_trials(
+                behav_df_dic_dcz[pair_id],
+                df_dic_dcz[pair_id],
+                bodypart=bodypart,
+                speed_col=speed_col,
+                stationary_speed_threshold=stationary_speed_threshold,
+            )
+
+            if difference:
+                if pd.notna(saline_ratio) and pd.notna(dcz_ratio):
+                    output[modality_prefix].setdefault(
+                        subject,
+                        [],
+                    ).append(float(saline_ratio - dcz_ratio))
+                continue
+
+            if pd.notna(saline_ratio):
+                output[f"{modality_prefix}_saline"].setdefault(
+                    subject,
+                    [],
+                ).append(float(saline_ratio))
+            if pd.notna(dcz_ratio):
+                output[f"{modality_prefix}_dcz"].setdefault(
+                    subject,
+                    [],
+                ).append(float(dcz_ratio))
+
+        return output
+
+    return (get_stationary_time_ratio_per_mouse_sessions,)
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    df_dic_dcz,
+    df_dic_saline,
+    get_stationary_time_ratio_per_mouse_sessions,
+    hM3Dq_mice,
+    hM4Di_mice,
+    split_col,
+    split_label,
+):
+    stationary_time_ratio_per_animal_condition_hm4 = (
+        get_stationary_time_ratio_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM4Di_mice,
+        )
+    )
+    stationary_time_ratio_per_animal_condition_hm4_diff = (
+        get_stationary_time_ratio_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM4Di_mice,
+            difference=True,
+        )
+    )
+    stationary_time_ratio_per_animal_condition_hm3 = (
+        get_stationary_time_ratio_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM3Dq_mice,
+        )
+    )
+    stationary_time_ratio_per_animal_condition_hm3_diff = (
+        get_stationary_time_ratio_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM3Dq_mice,
+            difference=True,
+        )
+    )
+    stationary_time_ratio_per_animal_condition_hm4_split_col = (
+        get_stationary_time_ratio_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM4Di_mice,
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    stationary_time_ratio_per_animal_condition_hm4_diff_split_col = (
+        get_stationary_time_ratio_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM4Di_mice,
+            split_column=split_col,
+            split_labels=split_label,
+            difference=True,
+        )
+    )
+    stationary_time_ratio_per_animal_condition_hm3_split_col = (
+        get_stationary_time_ratio_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM3Dq_mice,
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    stationary_time_ratio_per_animal_condition_hm3_diff_split_col = (
+        get_stationary_time_ratio_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM3Dq_mice,
+            split_column=split_col,
+            split_labels=split_label,
+            difference=True,
+        )
+    )
+    return (
+        stationary_time_ratio_per_animal_condition_hm3,
+        stationary_time_ratio_per_animal_condition_hm3_diff,
+        stationary_time_ratio_per_animal_condition_hm3_diff_split_col,
+        stationary_time_ratio_per_animal_condition_hm3_split_col,
+        stationary_time_ratio_per_animal_condition_hm4,
+        stationary_time_ratio_per_animal_condition_hm4_diff,
+        stationary_time_ratio_per_animal_condition_hm4_diff_split_col,
+        stationary_time_ratio_per_animal_condition_hm4_split_col,
+    )
+
+
+@app.cell
+def _(
+    mo,
+    plot_test,
+    stationary_time_ratio_per_animal_condition_hm3,
+    stationary_time_ratio_per_animal_condition_hm3_diff,
+    stationary_time_ratio_per_animal_condition_hm4,
+    stationary_time_ratio_per_animal_condition_hm4_diff,
+):
+    hm4_stationary_time_ratio_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            stationary_time_ratio_per_animal_condition_hm4,
+            "hM4Di",
+            ylabel="Session stationary time ratio",
+            title="hM4Di: stationary time ratio by condition",
+        )
+    )
+    hm3_stationary_time_ratio_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            stationary_time_ratio_per_animal_condition_hm3,
+            "hM3Dq",
+            ylabel="Session stationary time ratio",
+            title="hM3Dq: stationary time ratio by condition",
+        )
+    )
+    stationary_time_ratio_condition_diff_session_fig = (
+        plot_test.plot_group_condition_values_by_mouse(
+            stationary_time_ratio_per_animal_condition_hm3_diff,
+            stationary_time_ratio_per_animal_condition_hm4_diff,
+            ylabel="saline - DCZ (stationary time ratio)",
+            title="stationary time ratio saline - DCZ",
+        )
+    )
+
+    mo.vstack(
+        [
+            hm4_stationary_time_ratio_condition_session_fig,
+            hm3_stationary_time_ratio_condition_session_fig,
+            stationary_time_ratio_condition_diff_session_fig,
+        ]
+    )
+    return
+
+
+@app.cell
+def _(
+    compare_value_name,
+    mo,
+    plot_test,
+    split_col,
+    split_label,
+    stationary_time_ratio_per_animal_condition_hm3_diff_split_col,
+    stationary_time_ratio_per_animal_condition_hm3_split_col,
+    stationary_time_ratio_per_animal_condition_hm4_diff_split_col,
+    stationary_time_ratio_per_animal_condition_hm4_split_col,
+):
+    hm4_stationary_time_ratio_split_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            stationary_time_ratio_per_animal_condition_hm4_split_col,
+            "hM4Di",
+            ylabel="Session stationary time ratio",
+            title=(
+                f"hM4Di: stationary time ratio by condition and "
+                f"{compare_value_name}"
+            ),
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    hm3_stationary_time_ratio_split_condition_session_fig = (
+        plot_test.plot_condition_session_values_by_mouse(
+            stationary_time_ratio_per_animal_condition_hm3_split_col,
+            "hM3Dq",
+            ylabel="Session stationary time ratio",
+            title=(
+                f"hM3Dq: stationary time ratio by condition and "
+                f"{compare_value_name}"
+            ),
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    stationary_time_ratio_split_condition_diff_session_fig = (
+        plot_test.plot_group_condition_values_by_mouse(
+            stationary_time_ratio_per_animal_condition_hm3_diff_split_col,
+            stationary_time_ratio_per_animal_condition_hm4_diff_split_col,
+            ylabel="saline - DCZ (stationary time ratio)",
+            title=(
+                f"stationary time ratio saline - DCZ by "
+                f"{compare_value_name}"
+            ),
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    mo.vstack(
+        [
+            hm4_stationary_time_ratio_split_condition_session_fig,
+            hm3_stationary_time_ratio_split_condition_session_fig,
+            stationary_time_ratio_split_condition_diff_session_fig,
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### combine the subjects
+    """)
+    return
+
+
+@app.cell
+def _(
+    compare_value_name,
+    mo,
+    np,
+    pd,
+    plt,
+    split_label,
+    stationary_time_ratio_per_animal_condition_hm3_diff_split_col,
+    stationary_time_ratio_per_animal_condition_hm4_diff_split_col,
+):
+    from scipy import stats as _stats
+
+    _split_labels = list(split_label)
+
+    def _p_value_to_label(_p_value):
+        if pd.isna(_p_value):
+            return "n/a"
+        if _p_value < 0.001:
+            return "***"
+        if _p_value < 0.01:
+            return "**"
+        if _p_value < 0.05:
+            return "*"
+        return "ns"
+
+    def _add_significance_bar(_ax, _x1, _x2, _y, _h, _label):
+        _ax.plot(
+            [_x1, _x1, _x2, _x2],
+            [_y, _y + _h, _y + _h, _y],
+            color="black",
+            linewidth=1,
+        )
+        _ax.text(
+            (_x1 + _x2) / 2,
+            _y + _h,
+            _label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+
+    def _combined_stationary_diff_rows(_output_dic, _group_name):
+        _rows = []
+
+        def _entry_to_pair_value(_entry, _fallback_idx):
+            if isinstance(_entry, dict):
+                return (
+                    _entry.get("pair_id", f"row_{_fallback_idx}"),
+                    _entry.get("value", np.nan),
+                )
+            return f"row_{_fallback_idx}", _entry
+
+        for _modality in ["vis", "aud"]:
+            for _subject, _split_values in (
+                _output_dic.get(_modality, {}).items()
+            ):
+                if not isinstance(_split_values, dict):
+                    continue
+                if any(
+                    _label not in _split_values
+                    for _label in _split_labels
+                ):
+                    continue
+
+                for _label in _split_labels:
+                    for _entry_idx, _entry in enumerate(
+                        _split_values[_label]
+                    ):
+                        _pair_id, _value = _entry_to_pair_value(
+                            _entry,
+                            _entry_idx,
+                        )
+                        _value = pd.to_numeric(
+                            pd.Series([_value]),
+                            errors="coerce",
+                        ).iloc[0]
+                        if pd.isna(_value):
+                            continue
+                        _rows.append(
+                            {
+                                "group": _group_name,
+                                "subject": _subject,
+                                "modality": _modality,
+                                "pair_id": _pair_id,
+                                "split_label": _label,
+                                "stationary_time_ratio_diff": float(
+                                    _value
+                                ),
+                            }
+                        )
+        return _rows
+
+    combined_stationary_time_ratio_diff_split_df = pd.DataFrame(
+        _combined_stationary_diff_rows(
+            stationary_time_ratio_per_animal_condition_hm3_diff_split_col,
+            "hM3Dq",
+        )
+        + _combined_stationary_diff_rows(
+            stationary_time_ratio_per_animal_condition_hm4_diff_split_col,
+            "hM4Di",
+        )
+    )
+
+    def _plot_combined_stationary_group(_df, _group_name):
+        _fig, _ax = plt.subplots(figsize=(5, 5), dpi=150)
+        _df_group = _df[_df["group"] == _group_name].copy()
+
+        if _df_group.empty:
+            _ax.text(
+                0.5,
+                0.5,
+                "No paired values to plot.",
+                ha="center",
+                va="center",
+                transform=_ax.transAxes,
+            )
+            _ax.set_axis_off()
+            _fig.tight_layout()
+            return _fig
+
+        _data = [
+            _df_group.loc[
+                _df_group["split_label"] == _label,
+                "stationary_time_ratio_diff",
+            ].dropna()
+            for _label in _split_labels
+        ]
+        _colors = ["#4C78A8", "#F58518"]
+        _x_positions = np.arange(1, len(_split_labels) + 1)
+
+        _boxplot = _ax.boxplot(
+            _data,
+            labels=_split_labels,
+            patch_artist=True,
+            showmeans=True,
+            showfliers=False,
+        )
+        for _patch, _color in zip(_boxplot["boxes"], _colors):
+            _patch.set_facecolor(_color)
+            _patch.set_alpha(0.22)
+            _patch.set_edgecolor(_color)
+
+        _paired_df = _df_group.pivot_table(
+            index=["subject", "modality", "pair_id"],
+            columns="split_label",
+            values="stationary_time_ratio_diff",
+            aggfunc="mean",
+        )
+        _paired_df = _paired_df.dropna(subset=_split_labels)
+
+        for _, _row in _paired_df.iterrows():
+            _ax.plot(
+                _x_positions,
+                [_row[_label] for _label in _split_labels],
+                color="gray",
+                alpha=0.3,
+                linewidth=1,
+                zorder=2,
+            )
+
+        for _idx, (_label, _color) in enumerate(
+            zip(_split_labels, _colors),
+            start=1,
+        ):
+            _values = _df_group.loc[
+                _df_group["split_label"] == _label,
+                "stationary_time_ratio_diff",
+            ].dropna().to_numpy(dtype=float)
+            if len(_values) == 0:
+                continue
+            _jitter = np.linspace(-0.06, 0.06, len(_values))
+            _ax.scatter(
+                _idx + _jitter,
+                _values,
+                color=_color,
+                edgecolor="black",
+                linewidth=0.4,
+                alpha=0.75,
+                s=35,
+                zorder=3,
+            )
+
+        if len(_split_labels) == 2 and len(_paired_df) >= 2:
+            try:
+                _p_value = _stats.ttest_rel(
+                    _paired_df[_split_labels[0]],
+                    _paired_df[_split_labels[1]],
+                    nan_policy="omit",
+                ).pvalue
+            except ValueError:
+                _p_value = np.nan
+
+            _y_values = pd.to_numeric(
+                _df_group["stationary_time_ratio_diff"],
+                errors="coerce",
+            ).dropna()
+            if not _y_values.empty:
+                _y_min = _y_values.min()
+                _y_max = _y_values.max()
+                _y_range = _y_max - _y_min
+                if _y_range == 0:
+                    _y_range = abs(_y_max) * 0.1 if _y_max != 0 else 1
+                _bar_y = _y_max + _y_range * 0.12
+                _bar_h = _y_range * 0.06
+                _add_significance_bar(
+                    _ax,
+                    _x_positions[0],
+                    _x_positions[1],
+                    _bar_y,
+                    _bar_h,
+                    _p_value_to_label(_p_value),
+                )
+                _ax.set_ylim(top=_bar_y + _bar_h + _y_range * 0.15)
+
+        _ax.axhline(0, color="black", linewidth=0.8, alpha=0.4)
+        _ax.set_xlabel(compare_value_name)
+        _ax.set_ylabel("saline - DCZ (stationary time ratio)")
+        _ax.set_title(f"{_group_name}: combined aud/vis subjects")
+        _ax.grid(True, axis="y", alpha=0.3)
+        _fig.tight_layout()
+        return _fig
+
+    combined_stationary_time_ratio_diff_split_figures = [
+        _plot_combined_stationary_group(
+            combined_stationary_time_ratio_diff_split_df,
+            "hM3Dq",
+        ),
+        _plot_combined_stationary_group(
+            combined_stationary_time_ratio_diff_split_df,
+            "hM4Di",
+        ),
+    ]
+    _plot_combined_stationary_group(combined_stationary_time_ratio_diff_split_df, "hM3Dq").savefig('/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_bypreviouschoice_stationarytimerario.svg')
+    _plot_combined_stationary_group(combined_stationary_time_ratio_diff_split_df, "hM4Di").savefig('/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_bypreviouschoice_stationarytimerario.svg')
+    mo.hstack(combined_stationary_time_ratio_diff_split_figures)
     return
 
 
@@ -2717,6 +4045,7 @@ def _(df_dic_dcz, df_dic_saline, pd, plots, plt, utils):
     _fig.suptitle("NUO010 + NUO012")
     _fig.tight_layout()
     # _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/trials_start_across_time_engaged_nuo010nuo012.png")
+    _fig
     return
 
 
@@ -2736,6 +4065,8 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
                 "previous_correct = False": set(),
                 "engaged = False": set(),
                 "roi_out = True": set(),
+                "react_slow = True": set(),
+                "break_more = True": set(),
             }
 
         if "trial" in df.columns:
@@ -2757,6 +4088,16 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
             "roi_out = True": (
                 df["roi_out"].eq(True)
                 if "roi_out" in df.columns
+                else pd.Series(False, index=df.index)
+            ),
+            "react_slow = True": (
+                df["react_slow"].eq(True)
+                if "react_slow" in df.columns
+                else pd.Series(False, index=df.index)
+            ),
+            "break_more = True": (
+                df["break_more"].eq(True)
+                if "break_more" in df.columns
                 else pd.Series(False, index=df.index)
             ),
         }
@@ -2827,6 +4168,8 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
             ]
             _disengaged = _trial_sets["engaged = False"]
             _roi_out = _trial_sets["roi_out = True"]
+            _react_slow = _trial_sets["react_slow = True"]
+            _break_more = _trial_sets["break_more = True"]
 
             _venn_disengaged_trial_rows.append(
                 {
@@ -2840,6 +4183,8 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
                     ),
                     "engaged_false": len(_disengaged),
                     "roi_out_true": len(_roi_out),
+                    "react_slow_true": len(_react_slow),
+                    "break_more_true": len(_break_more),
                     "previous_false_and_disengaged": len(
                         _previous_incorrect & _disengaged
                     ),
@@ -2852,13 +4197,20 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
                     "all_three": len(
                         _previous_incorrect & _disengaged & _roi_out
                     ),
+                    "all_five": len(
+                        _previous_incorrect
+                        & _disengaged
+                        & _roi_out
+                        & _react_slow
+                        & _break_more
+                    ),
                 }
             )
 
     venn_disengaged_trial_summary = pd.DataFrame(
         _venn_disengaged_trial_rows
     )
-
+    venn_disengaged_trial_summary
     return (
         venn_disengaged_trial_metadata,
         venn_disengaged_trial_sets,
@@ -2868,12 +4220,15 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
 
 @app.cell
 def _(
-    plot_three_set_venn,
-    plt,
+    mo,
+    plot_five_set_venn,
     venn_disengaged_trial_sets,
     venn_disengaged_trial_summary,
 ):
-    venn_disengaged_trial_summary_selectforplot = venn_disengaged_trial_summary[(venn_disengaged_trial_summary['subject'].isin(['NUO010', 'NUO012'])) & (venn_disengaged_trial_summary['modality'] == 'auditory')]
+    venn_disengaged_trial_summary_selectforplot = venn_disengaged_trial_summary[
+        (venn_disengaged_trial_summary['subject'].isin(['NUO010', 'NUO012', 'NUO007', 'NUO008'])) 
+        # & (venn_disengaged_trial_summary['modality'] == 'auditory')
+        ]
     _selected_pair_ids = (
         venn_disengaged_trial_summary_selectforplot["pair_id"]
         .dropna()
@@ -2900,97 +4255,91 @@ def _(
             for _label in _labels
         }
 
-    _selected_summary_fig, _selected_summary_axes = plt.subplots(
-        1,
-        2,
-        figsize=(10, 4),
-        dpi=150,
-    )
-
-    for _ax, _condition_name in zip(
-        _selected_summary_axes,
-        ["saline", "dcz"],
-    ):
-        plot_three_set_venn(
+    _selected_summary_figures = []
+    for _condition_name in ["saline", "dcz"]:
+        _selected_summary_figures.append(
+            plot_five_set_venn(
             _selected_summary_sets[_condition_name],
-            ax=_ax,
-            title=_condition_name.upper(),
+                title=f"sub auditory {_condition_name.upper()}",
+            )
         )
 
-    _selected_summary_fig.suptitle("NUO010 + NUO012 auditory")
-    # _selected_summary_fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/auditory_venn_dcz_saline.svg")
-    _selected_summary_fig.tight_layout()
+    mo.hstack(_selected_summary_figures)
     return
 
 
 @app.cell
 def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
-    from matplotlib_venn import venn3 as _venn3
+    import sys as _sys
+    import importlib as _importlib
 
-    def plot_three_set_venn(trial_sets, ax, title):
+    _pyvenn_path = "/home/kudongdong/code/pkg/pyvenn"
+    if _pyvenn_path not in _sys.path:
+        _sys.path.insert(0, _pyvenn_path)
+
+    import venn as _pyvenn
+    _pyvenn = _importlib.reload(_pyvenn)
+
+    def plot_five_set_venn(trial_sets, title):
         _labels = list(trial_sets)
         _sets = [trial_sets[_label] for _label in _labels]
 
         if not any(_sets):
-            ax.text(
+            _fig, _ax = plt.subplots(figsize=(5, 5), dpi=150)
+            _ax.text(
                 0.5,
                 0.5,
                 "No trials",
                 ha="center",
                 va="center",
-                transform=ax.transAxes,
+                transform=_ax.transAxes,
             )
-            ax.set_title(title)
-            ax.axis("off")
-            return
+            _ax.set_title(title)
+            _ax.axis("off")
+            return _fig
 
-        _venn = _venn3(
-            subsets=_sets,
-            set_labels=_labels,
-            set_colors=("#4C78A8", "#F58518", "#54A24B"),
-            alpha=0.45,
-            ax=ax,
+        _venn_labels = _pyvenn.get_labels(
+            _sets,
+            fill=["number"],
         )
+        _fig, _ax = _pyvenn.venn5(
+            _venn_labels,
+            names=_labels,
+            figsize=(7, 7),
+            dpi=150,
+            fontsize=9,
+        )
+        _fig.suptitle(title)
+        _fig.tight_layout()
+        return _fig
 
-        for _label in _venn.set_labels:
-            if _label is not None:
-                _label.set_fontsize(8)
-
-        for _label in _venn.subset_labels:
-            if _label is not None:
-                _label.set_fontsize(10)
-                # _label.set_fontweight("bold")
-
-        ax.set_title(title)
-
-    venn_disengaged_trial_figures = []
+    _venn_disengaged_trial_view = []
 
     for _pair_id, _condition_sets in venn_disengaged_trial_sets.items():
-        _fig, _axes = plt.subplots(1, 2, figsize=(10, 4), dpi=150)
-
-        for _ax, _condition_name in zip(_axes, ["saline", "dcz"]):
-            plot_three_set_venn(
-                _condition_sets[_condition_name],
-                ax=_ax,
-                title=_condition_name.upper(),
-            )
-
         _metadata = venn_disengaged_trial_metadata.get(
             _pair_id,
             {},
         )
-        _fig.suptitle(
+        _venn_disengaged_trial_view.append(
+            mo.md(
             (
-                f"{_pair_id} "
+                    f"### {_pair_id} "
                 f"({_metadata.get('mouse_group', 'unknown')}, "
                 f"{_metadata.get('modality', 'unknown modality')})"
             )
+            )
         )
-        _fig.tight_layout()
-        venn_disengaged_trial_figures.append(_fig)
 
-    mo.vstack(venn_disengaged_trial_figures) 
-    return (plot_three_set_venn,)
+        for _condition_name in ["saline", "dcz"]:
+            _venn_disengaged_trial_view.append(
+                plot_five_set_venn(
+                    _condition_sets[_condition_name],
+                    title=_condition_name.upper(),
+                )
+            )
+
+    mo.vstack(_venn_disengaged_trial_view) 
+    return (plot_five_set_venn,)
 
 
 @app.cell(hide_code=True)
@@ -3153,7 +4502,7 @@ def _(
         bodypart="Center",
         include_stationary=False,
         include_occupancy=True,
-        include_trajectory_speed=True,
+        include_trajectory_speed=False,
         include_roi_time=False,
         include_stationary_speed=False,
         include_stationary_time=False,
@@ -3310,7 +4659,7 @@ def _(df_test_hm3, np, pd, plt):
         for idx, col in enumerate(event_cols)
     }
 
-    fig, ax = plt.subplots(figsize=(13, 4))
+    _fig, _ax = plt.subplots(figsize=(13, 4))
 
     for trial_idx, (_, row) in enumerate(plot_df.iterrows()):
         y = len(plot_df) - trial_idx
@@ -3321,7 +4670,7 @@ def _(df_test_hm3, np, pd, plt):
         for col in event_cols:
             event_times = as_event_times(row.get(col, np.nan))
             for event_time in event_times:
-                ax.vlines(
+                _ax.vlines(
                     event_time,
                     y - 0.38,
                     y + 0.38,
@@ -3330,12 +4679,12 @@ def _(df_test_hm3, np, pd, plt):
                     alpha=0.95,
                 )
 
-    ax.set_yticks(range(1, len(plot_df) + 1))
-    ax.set_yticklabels([f"trial {i}" for i in range(len(plot_df), 0, -1)])
-    ax.set_xlabel("time from TRIAL_START (s)")
-    ax.set_ylabel("trial")
-    ax.set_title("First 5 trials state event raster")
-    ax.grid(axis="x", alpha=0.25)
+    _ax.set_yticks(range(1, len(plot_df) + 1))
+    _ax.set_yticklabels([f"trial {i}" for i in range(len(plot_df), 0, -1)])
+    _ax.set_xlabel("time from TRIAL_START (s)")
+    _ax.set_ylabel("trial")
+    _ax.set_title("First 5 trials state event raster")
+    _ax.grid(axis="x", alpha=0.25)
 
     legend_handles = [
         Line2D(
@@ -3348,7 +4697,7 @@ def _(df_test_hm3, np, pd, plt):
         for col in event_cols
     ]
 
-    ax.legend(
+    _ax.legend(
         handles=legend_handles,
         bbox_to_anchor=(1.02, 1),
         loc="upper left",
