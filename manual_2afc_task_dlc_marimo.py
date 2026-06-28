@@ -1546,19 +1546,24 @@ def _(behavior_utils, np, pd):
                     output[modality_prefix].setdefault(
                         subject,
                         [],
-                    ).append(float(saline_ratio - dcz_ratio))
+                    ).append(
+                        {
+                            "pair_id": pair_id,
+                            "value": float(saline_ratio - dcz_ratio),
+                        }
+                    )
                 continue
 
             if pd.notna(saline_ratio):
                 output[f"{modality_prefix}_saline"].setdefault(
                     subject,
                     [],
-                ).append(float(saline_ratio))
+                ).append({"pair_id": pair_id, "value": float(saline_ratio)})
             if pd.notna(dcz_ratio):
                 output[f"{modality_prefix}_dcz"].setdefault(
                     subject,
                     [],
-                ).append(float(dcz_ratio))
+                ).append({"pair_id": pair_id, "value": float(dcz_ratio)})
 
         return output
 
@@ -2090,6 +2095,234 @@ def _(
     return
 
 
+@app.cell
+def _(
+    mo,
+    np,
+    pd,
+    plt,
+    roi_per_animal_condition_hm3,
+    roi_per_animal_condition_hm4,
+):
+    from scipy import stats as _stats
+
+    def _p_value_to_label(_p_value):
+        if pd.isna(_p_value):
+            return "n/a"
+        if _p_value < 0.001:
+            return "***"
+        if _p_value < 0.01:
+            return "**"
+        if _p_value < 0.05:
+            return "*"
+        return "ns"
+
+    def _add_significance_bar(_ax, _x1, _x2, _y, _h, _label):
+        _ax.plot(
+            [_x1, _x1, _x2, _x2],
+            [_y, _y + _h, _y + _h, _y],
+            color="black",
+            linewidth=1,
+        )
+        _ax.text(
+            (_x1 + _x2) / 2,
+            _y + _h,
+            _label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+
+    def plot_combined_saline_dcz_by_group(
+        hm3_condition_dic,
+        hm4_condition_dic,
+        metric_col,
+        ylabel,
+        title_prefix,
+    ):
+        def _entry_to_pair_value(_entry, _fallback_idx):
+            if isinstance(_entry, dict):
+                return (
+                    _entry.get("pair_id", f"row_{_fallback_idx}"),
+                    _entry.get("value", np.nan),
+                )
+            return f"row_{_fallback_idx}", _entry
+
+        def _condition_rows(_condition_dic, _group_name):
+            _rows = []
+            for _modality in ["vis", "aud"]:
+                for _condition_name in ["saline", "dcz"]:
+                    _condition_key = f"{_modality}_{_condition_name}"
+                    for _subject, _values in (
+                        _condition_dic.get(_condition_key, {}).items()
+                    ):
+                        for _entry_idx, _entry in enumerate(_values):
+                            _pair_id, _value = _entry_to_pair_value(
+                                _entry,
+                                _entry_idx,
+                            )
+                            _value = pd.to_numeric(
+                                pd.Series([_value]),
+                                errors="coerce",
+                            ).iloc[0]
+                            if pd.isna(_value):
+                                continue
+                            _rows.append(
+                                {
+                                    "group": _group_name,
+                                    "subject": _subject,
+                                    "modality": _modality,
+                                    "pair_id": _pair_id,
+                                    "condition": _condition_name,
+                                    metric_col: float(_value),
+                                }
+                            )
+            return _rows
+
+        combined_df = pd.DataFrame(
+            _condition_rows(hm3_condition_dic, "hM3Dq")
+            + _condition_rows(hm4_condition_dic, "hM4Di")
+        )
+
+        def _plot_group(_group_name):
+            _fig, _ax = plt.subplots(figsize=(5, 5), dpi=150)
+            _df_group = combined_df[
+                combined_df["group"] == _group_name
+            ].copy()
+
+            if _df_group.empty:
+                _ax.text(
+                    0.5,
+                    0.5,
+                    "No paired values to plot.",
+                    ha="center",
+                    va="center",
+                    transform=_ax.transAxes,
+                )
+                _ax.set_axis_off()
+                _fig.tight_layout()
+                return _fig
+
+            _conditions = ["saline", "dcz"]
+            _colors = {"saline": "blue", "dcz": "red"}
+            _data = [
+                _df_group.loc[
+                    _df_group["condition"] == _condition_name,
+                    metric_col,
+                ].dropna()
+                for _condition_name in _conditions
+            ]
+            _x_positions = np.arange(1, len(_conditions) + 1)
+
+            _boxplot = _ax.boxplot(
+                _data,
+                labels=["saline", "DCZ"],
+                patch_artist=True,
+                showmeans=True,
+                showfliers=False,
+            )
+            for _patch, _condition_name in zip(
+                _boxplot["boxes"],
+                _conditions,
+            ):
+                _patch.set_facecolor(_colors[_condition_name])
+                _patch.set_alpha(0.20)
+                _patch.set_edgecolor(_colors[_condition_name])
+
+            _paired_df = _df_group.pivot_table(
+                index=["subject", "modality", "pair_id"],
+                columns="condition",
+                values=metric_col,
+                aggfunc="mean",
+            ).dropna(subset=_conditions)
+
+            for _, _row in _paired_df.iterrows():
+                _ax.plot(
+                    _x_positions,
+                    [_row[_condition] for _condition in _conditions],
+                    color="gray",
+                    alpha=0.35,
+                    linewidth=1,
+                    zorder=2,
+                )
+
+            for _idx, _condition_name in enumerate(_conditions, start=1):
+                _values = _df_group.loc[
+                    _df_group["condition"] == _condition_name,
+                    metric_col,
+                ].dropna().to_numpy(dtype=float)
+                if len(_values) == 0:
+                    continue
+                _jitter = np.linspace(-0.06, 0.06, len(_values))
+                _ax.scatter(
+                    _idx + _jitter,
+                    _values,
+                    color=_colors[_condition_name],
+                    edgecolor="black",
+                    linewidth=0.4,
+                    alpha=0.75,
+                    s=35,
+                    zorder=3,
+                )
+
+            if len(_paired_df) >= 1:
+                try:
+                    _p_value = _stats.wilcoxon(
+                        _paired_df["saline"],
+                        _paired_df["dcz"],
+                    ).pvalue
+                except ValueError:
+                    _p_value = np.nan
+
+                _y_values = pd.to_numeric(
+                    _df_group[metric_col],
+                    errors="coerce",
+                ).dropna()
+                if not _y_values.empty:
+                    _y_min = _y_values.min()
+                    _y_max = _y_values.max()
+                    _y_range = _y_max - _y_min
+                    if _y_range == 0:
+                        _y_range = abs(_y_max) * 0.1 if _y_max != 0 else 1
+                    _bar_y = _y_max + _y_range * 0.12
+                    _bar_h = _y_range * 0.06
+                    _add_significance_bar(
+                        _ax,
+                        _x_positions[0],
+                        _x_positions[1],
+                        _bar_y,
+                        _bar_h,
+                        _p_value_to_label(_p_value),
+                    )
+                    _ax.set_ylim(top=_bar_y + _bar_h + _y_range * 0.15)
+
+            _ax.set_xlabel("Observation")
+            _ax.set_ylabel(ylabel)
+            _ax.set_title(f"{title_prefix} in {_group_name}")
+            _ax.grid(True, axis="y", alpha=0.3)
+            _fig.tight_layout()
+            return _fig
+
+        return combined_df, [
+            _plot_group("hM3Dq"),
+            _plot_group("hM4Di"),
+        ]
+
+    combined_roi_condition_df, combined_roi_condition_figures = (
+        plot_combined_saline_dcz_by_group(
+            roi_per_animal_condition_hm3,
+            roi_per_animal_condition_hm4,
+            metric_col="roi_time_ratio",
+            ylabel="ROI time ratio",
+            title_prefix="ROI time ratio",
+        )
+    )
+    combined_roi_condition_figures[0].savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_roi_time_byobserve_fig.svg")
+    combined_roi_condition_figures[1].savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_roi_time_byobserve_fig.svg")
+    mo.hstack(combined_roi_condition_figures)
+    return (plot_combined_saline_dcz_by_group,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -2376,19 +2609,24 @@ def _(behavior_utils, np, pd):
                     output[modality_prefix].setdefault(
                         subject,
                         [],
-                    ).append(float(saline_speed - dcz_speed))
+                    ).append(
+                        {
+                            "pair_id": pair_id,
+                            "value": float(saline_speed - dcz_speed),
+                        }
+                    )
                 continue
 
             if pd.notna(saline_speed):
                 output[f"{modality_prefix}_saline"].setdefault(
                     subject,
                     [],
-                ).append(float(saline_speed))
+                ).append({"pair_id": pair_id, "value": float(saline_speed)})
             if pd.notna(dcz_speed):
                 output[f"{modality_prefix}_dcz"].setdefault(
                     subject,
                     [],
-                ).append(float(dcz_speed))
+                ).append({"pair_id": pair_id, "value": float(dcz_speed)})
 
         return output
 
@@ -2733,6 +2971,27 @@ def _(
     ]
 
     mo.hstack(combined_speed_diff_split_figures)
+    return
+
+
+@app.cell
+def _(
+    mo,
+    plot_combined_saline_dcz_by_group,
+    speed_per_animal_condition_hm3,
+    speed_per_animal_condition_hm4,
+):
+    combined_speed_condition_df, combined_speed_condition_figures = (
+        plot_combined_saline_dcz_by_group(
+            speed_per_animal_condition_hm3,
+            speed_per_animal_condition_hm4,
+            metric_col="mean_speed",
+            ylabel="Mean speed",
+            title_prefix="Mean speed",
+        )
+    )
+
+    mo.hstack(combined_speed_condition_figures)
     return
 
 
@@ -3107,19 +3366,24 @@ def _(behavior_utils, np, pd):
                     output[modality_prefix].setdefault(
                         subject,
                         [],
-                    ).append(float(saline_ratio - dcz_ratio))
+                    ).append(
+                        {
+                            "pair_id": pair_id,
+                            "value": float(saline_ratio - dcz_ratio),
+                        }
+                    )
                 continue
 
             if pd.notna(saline_ratio):
                 output[f"{modality_prefix}_saline"].setdefault(
                     subject,
                     [],
-                ).append(float(saline_ratio))
+                ).append({"pair_id": pair_id, "value": float(saline_ratio)})
             if pd.notna(dcz_ratio):
                 output[f"{modality_prefix}_dcz"].setdefault(
                     subject,
                     [],
-                ).append(float(dcz_ratio))
+                ).append({"pair_id": pair_id, "value": float(dcz_ratio)})
 
         return output
 
@@ -3592,6 +3856,41 @@ def _(
     _plot_combined_stationary_group(combined_stationary_time_ratio_diff_split_df, "hM3Dq").savefig('/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_bypreviouschoice_stationarytimerario.svg')
     _plot_combined_stationary_group(combined_stationary_time_ratio_diff_split_df, "hM4Di").savefig('/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_bypreviouschoice_stationarytimerario.svg')
     mo.hstack(combined_stationary_time_ratio_diff_split_figures)
+    return
+
+
+@app.cell
+def _(
+    mo,
+    plot_combined_saline_dcz_by_group,
+    stationary_time_ratio_per_animal_condition_hm3,
+    stationary_time_ratio_per_animal_condition_hm4,
+):
+    (
+        combined_stationary_time_ratio_condition_df,
+        combined_stationary_time_ratio_condition_figures,
+    ) = plot_combined_saline_dcz_by_group(
+        stationary_time_ratio_per_animal_condition_hm3,
+        stationary_time_ratio_per_animal_condition_hm4,
+        metric_col="stationary_time_ratio",
+        ylabel="Stationary time ratio",
+        title_prefix="Stationary time ratio",
+    )
+
+    mo.hstack(combined_stationary_time_ratio_condition_figures)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # compare performance according to the conditions
+    """)
+    return
+
+
+@app.cell
+def _():
     return
 
 

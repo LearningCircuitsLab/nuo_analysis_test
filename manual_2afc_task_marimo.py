@@ -668,9 +668,13 @@ def _(
         ~drop_mask
     ].copy()
 
-    df_test_selected_upd = dft.calculate_time_between_trials_and_reaction_time(dft.add_day_column_to_df(
-        add_number_of_pokes(df_test_selected_upd, port_number=2)
-    ))
+    df_test_selected_upd = dft.add_trial_duration_column_to_df(
+        dft.calculate_time_between_trials_and_reaction_time(
+            dft.add_day_column_to_df(
+                add_number_of_pokes(df_test_selected_upd, port_number=2)
+            )
+        )
+    )
 
     metric_paired_dates = behavior_utils.get_paired_injection_dates(
         injection_info_df

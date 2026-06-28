@@ -51,6 +51,51 @@ def _():
     return Path, behavior_utils, mpl, np, pd, plot_test, plt, sns, utils
 
 
+@app.cell
+def _(Path):
+    figure_export_root = Path("/mnt/e/data/LeciLab/behavioral_data/tmp/escape")
+
+    def _safe_figure_file_stem(text):
+        safe_text = "".join(
+            char if char.isalnum() or char in {"-", "_", "."} else "_"
+            for char in str(text).strip()
+        )
+        while "__" in safe_text:
+            safe_text = safe_text.replace("__", "_")
+        safe_text = safe_text.strip("_.")
+        return safe_text or "figure"
+
+    def save_figures_to_folder(
+        figure_items,
+        folder_name,
+        file_format="svg",
+        dpi=300,
+    ):
+        figure_folder = figure_export_root / _safe_figure_file_stem(folder_name)
+        figure_folder.mkdir(parents=True, exist_ok=True)
+
+        saved_paths = []
+        file_stem_counts = {}
+        for title, fig in figure_items:
+            file_stem = _safe_figure_file_stem(title)
+            file_stem_counts[file_stem] = file_stem_counts.get(file_stem, 0) + 1
+            if file_stem_counts[file_stem] > 1:
+                file_stem = f"{file_stem}_{file_stem_counts[file_stem]:02d}"
+
+            figure_path = figure_folder / f"{file_stem}.{file_format}"
+            fig.savefig(
+                figure_path,
+                format=file_format,
+                dpi=dpi,
+                bbox_inches="tight",
+            )
+            saved_paths.append(figure_path)
+
+        return saved_paths
+
+    return (save_figures_to_folder,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md("""
@@ -368,6 +413,46 @@ def _(behav_df_filtered_dic, behavior_utils, paired_dlc_dates, video_df_dic):
         missing_video_pairs,
     ) = behavior_utils.split_paired_behavior_dicts(video_df_dic, paired_dlc_dates)
     return behav_df_dic_dcz, behav_df_dic_saline, behav_pair_map
+
+
+@app.cell
+def _(behav_pair_map, pd):
+    def build_session_axis_lookup(behav_pair_map):
+        session_axis_lookup = {}
+        if behav_pair_map.empty:
+            return session_axis_lookup
+
+        pair_map = behav_pair_map.copy()
+        pair_map["_DCZ_date"] = pd.to_datetime(
+            pair_map["DCZ_date"],
+            errors="coerce",
+        )
+        pair_map = pair_map.sort_values(["subject", "_DCZ_date", "pair_id"])
+
+        for _subject, subject_pair_map in pair_map.groupby("subject"):
+            for pair_index, (_, pair_row) in enumerate(
+                subject_pair_map.iterrows(),
+                start=1,
+            ):
+                for condition, key_col, offset in [
+                    ("DCZ", "DCZ_key", 1),
+                    ("saline", "saline_key", 2),
+                ]:
+                    session_key = pair_row.get(key_col)
+                    if pd.isna(session_key):
+                        continue
+                    session_axis_lookup[session_key] = {
+                        "label": f"{condition}{pair_index}",
+                        "order": (pair_index - 1) * 2 + offset,
+                        "condition": condition,
+                        "pair_index": pair_index,
+                        "pair_id": pair_row["pair_id"],
+                    }
+
+        return session_axis_lookup
+
+    session_axis_lookup = build_session_axis_lookup(behav_pair_map)
+    return (session_axis_lookup,)
 
 
 @app.cell
@@ -702,6 +787,7 @@ def _(
     ratio_dictionaries_to_long,
     s_behav_df_dic_hm3,
     s_behav_df_dic_hm4,
+    save_figures_to_folder,
 ):
     def build_mean_speed_dictionary(behav_df_dic, time_bin):
         mean_speed_dic = {}
@@ -818,6 +904,28 @@ def _(
         "hM4Di: first 15s",
         "Mean speed (pixels/s)",
         y_limits=None,
+    )
+
+    mean_speed_figures_to_save = [
+        ("hM3Dq: first 15s", mean_speed_fig_hm3),
+        ("hM4Di: first 15s", mean_speed_fig_hm4),
+    ]
+    for mean_speed_time_bin in mean_speed_time_bins:
+        mean_speed_figures_to_save.extend(
+            [
+                (
+                    f"hM3Dq: first {mean_speed_time_bin}s",
+                    mean_speed_difference_figs_hm3[mean_speed_time_bin],
+                ),
+                (
+                    f"hM4Di: first {mean_speed_time_bin}s",
+                    mean_speed_difference_figs_hm4[mean_speed_time_bin],
+                ),
+            ]
+        )
+    mean_speed_saved_figure_paths = save_figures_to_folder(
+        mean_speed_figures_to_save,
+        "mean_speed_sound-nosound",
     )
 
     difference_figure_rows = [
@@ -999,6 +1107,7 @@ def _(
     pre_time_bin,
     s_speed_change_dic_hm3_prebin,
     s_speed_change_dic_hm4_prebin,
+    session_axis_lookup,
 ):
     # speed change trial by trial
     trial_speed_time_bin = 15
@@ -1008,6 +1117,7 @@ def _(
 
     def organize_mouse_day_traces(sound_dic, no_sound_dic):
         organized = {}
+        axis_labels = {}
         all_names = sorted(set(sound_dic) | set(no_sound_dic))
 
         for mouse in sorted({name[:6] for name in all_names}):
@@ -1015,14 +1125,31 @@ def _(
                 name for name in all_names if name[:6] == mouse
             )
             dates = sorted({name.rsplit("_", 2)[-2] for name in mouse_names})
-            date_to_day = {
-                date: day for day, date in enumerate(dates, start=1)
+            fallback_start = max(
+                [
+                    axis_info["order"]
+                    for session_name, axis_info in session_axis_lookup.items()
+                    if str(session_name).startswith(mouse)
+                ],
+                default=0,
+            )
+            date_to_fallback = {
+                date: fallback_start + fallback_index
+                for fallback_index, date in enumerate(dates, start=1)
             }
 
             organized[mouse] = {}
             for name in mouse_names:
                 date = name.rsplit("_", 2)[-2]
-                day = date_to_day[date]
+                axis_info = session_axis_lookup.get(name)
+                if axis_info is None:
+                    day = date_to_fallback[date]
+                    axis_label = f"session{day - fallback_start}"
+                else:
+                    day = axis_info["order"]
+                    axis_label = axis_info["label"]
+
+                axis_labels[day] = axis_label
                 organized[mouse].setdefault(day, [])
 
                 sound_by_trial = sound_dic.get(name, {})
@@ -1038,7 +1165,7 @@ def _(
                         }
                     )
 
-        return organized
+        return organized, axis_labels
 
 
     def resample_trial_speed(speed_trace):
@@ -1101,7 +1228,10 @@ def _(
         y_limits=None,
         horizontal_reference=None,
     ):
-        organized = organize_mouse_day_traces(sound_dic, no_sound_dic)
+        organized, axis_labels = organize_mouse_day_traces(
+            sound_dic,
+            no_sound_dic,
+        )
         mice = sorted(organized)
         all_days = sorted({
             day
@@ -1200,7 +1330,7 @@ def _(
                 for trial_index in range(n_mini):
                     trial_ax = fig.add_subplot(inner_grid[trial_index, 0])
                     if trial_index == 0:
-                        trial_ax.set_title(f"day{day}", fontsize=10)
+                        trial_ax.set_title(axis_labels[day], fontsize=10)
                     if trial_index >= len(day_trials):
                         trial_ax.set_axis_off()
                         continue
@@ -1344,6 +1474,319 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## first 5 trials mean speed change combine all the days
+    """)
+    return
+
+
+@app.cell
+def _(
+    analyzed_video_names,
+    behav_df_filtered_dic,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    np,
+    pd,
+    plt,
+    session_df_dic,
+):
+    import ast as _ast
+
+    first5_speed_pre = 1
+    first5_speed_time_bin = 2
+    first5_speed_dt = 0.001
+    first5_speed_time_grid = np.arange(
+        -first5_speed_pre,
+        first5_speed_time_bin,
+        first5_speed_dt,
+    )
+
+    def _first5_speed_event_times(value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            value = _ast.literal_eval(value)
+        try:
+            if pd.isna(value):
+                return []
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, (list, tuple, np.ndarray, pd.Series)):
+            return list(value)
+        return [value]
+
+    def _first5_speed_timestamp(behav_df):
+        if ("timestamp", "") in behav_df.columns:
+            return behav_df[("timestamp", "")]
+        timestamp = behav_df["timestamp"]
+        if isinstance(timestamp, pd.DataFrame):
+            return timestamp.iloc[:, 0]
+        return timestamp
+
+    def _first5_resample_speed_trace(behav_df, trigger_time):
+        timestamp = pd.to_numeric(
+            _first5_speed_timestamp(behav_df),
+            errors="coerce",
+        )
+        window_df = behav_df[
+            (timestamp >= trigger_time - first5_speed_pre)
+            & (timestamp <= trigger_time + first5_speed_time_bin)
+        ]
+        tmp_df = (
+            pd.DataFrame(
+                {
+                    "timestamp": _first5_speed_timestamp(window_df).to_numpy(),
+                    "speed": window_df[("Center", "mean_speed")].to_numpy(),
+                }
+            )
+            .dropna()
+            .sort_values("timestamp")
+            .drop_duplicates("timestamp")
+        )
+        if len(tmp_df) < 2:
+            return None
+
+        relative_time = tmp_df["timestamp"].to_numpy() - trigger_time
+        speed = tmp_df["speed"].to_numpy()
+        return np.interp(
+            first5_speed_time_grid,
+            relative_time,
+            speed,
+        )
+
+    def _first5_speed_mean_trace(traces):
+        traces = [
+            np.asarray(trace, dtype=float)
+            for trace in traces
+            if trace is not None and np.isfinite(trace).any()
+        ]
+        if not traces:
+            return None
+        return (
+            pd.DataFrame(np.vstack(traces))
+            .mean(axis=0, skipna=True)
+            .to_numpy()
+        )
+
+    def _first5_session_speed_traces(name):
+        behav_df_filtered = behav_df_filtered_dic[name]
+        session_df = session_df_dic[name]
+
+        no_sound_traces = []
+        sound_traces = []
+        for _, trial_row in session_df.iterrows():
+            if "sound_not_played" in session_df.columns:
+                for t_ns in _first5_speed_event_times(
+                    trial_row["sound_not_played"]
+                ):
+                    no_sound_trace = _first5_resample_speed_trace(
+                        behav_df_filtered,
+                        t_ns,
+                    )
+                    if no_sound_trace is not None:
+                        no_sound_traces.append(no_sound_trace)
+
+            if "sound_played" in session_df.columns:
+                for sound_play in _first5_speed_event_times(
+                    trial_row["sound_played"]
+                ):
+                    sound_trace = _first5_resample_speed_trace(
+                        behav_df_filtered,
+                        sound_play,
+                    )
+                    if sound_trace is not None:
+                        sound_traces.append(sound_trace)
+
+        return no_sound_traces, sound_traces
+
+    def _first5_speed_mouse_day_data(mice):
+        mouse_day_data = {}
+        for mouse in sorted(mice):
+            mouse_names = sorted(
+                name
+                for name in analyzed_video_names
+                if name[:6] == mouse and name in session_df_dic
+            )
+            if not mouse_names:
+                continue
+
+            dates = sorted({name.rsplit("_", 2)[-2] for name in mouse_names})
+            date_to_day = {
+                date: day for day, date in enumerate(dates, start=1)
+            }
+            mouse_day_data[mouse] = []
+            for name in mouse_names:
+                date = name.rsplit("_", 2)[-2]
+                no_sound_traces, sound_traces = _first5_session_speed_traces(
+                    name
+                )
+                mouse_day_data[mouse].append(
+                    {
+                        "name": name,
+                        "day": date_to_day[date],
+                        "no_sound_mean": _first5_speed_mean_trace(
+                            no_sound_traces
+                        ),
+                        "sound_traces": sound_traces,
+                    }
+                )
+
+            mouse_day_data[mouse] = sorted(
+                mouse_day_data[mouse],
+                key=lambda day_data: day_data["day"],
+            )
+
+        return mouse_day_data
+
+    def _first5_speed_plot_group(mouse_day_data, group_name):
+        mice = sorted(mouse_day_data)
+        if not mice:
+            fig, ax = plt.subplots(figsize=(6, 3), dpi=150)
+            ax.text(
+                0.5,
+                0.5,
+                f"No first-5-trial speed data for {group_name}",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            return fig
+
+        fig, axes = plt.subplots(
+            len(mice),
+            5,
+            figsize=(20, max(3.5, 3.2 * len(mice))),
+            dpi=150,
+            sharex=True,
+            sharey=True,
+            squeeze=False,
+        )
+
+        for mouse_row, mouse in enumerate(mice):
+            day_data_list = mouse_day_data[mouse]
+            day_numbers = [day_data["day"] for day_data in day_data_list]
+            blue_colors = dict(
+                zip(
+                    day_numbers,
+                    plt.get_cmap("Blues")(
+                        np.linspace(0.25, 0.9, len(day_numbers))
+                    ),
+                )
+            )
+            odd_days = [day for day in day_numbers if day % 2 == 1]
+            even_days = [day for day in day_numbers if day % 2 == 0]
+            red_colors = dict(
+                zip(
+                    odd_days,
+                    plt.get_cmap("Reds")(
+                        np.linspace(0.35, 0.9, max(len(odd_days), 1))
+                    )[: len(odd_days)],
+                )
+            )
+            yellow_colors = dict(
+                zip(
+                    even_days,
+                    plt.get_cmap("YlOrBr")(
+                        np.linspace(0.30, 0.9, max(len(even_days), 1))
+                    )[: len(even_days)],
+                )
+            )
+
+            for trial_count in range(1, 6):
+                ax = axes[mouse_row, trial_count - 1]
+                for day_data in day_data_list:
+                    day = day_data["day"]
+                    no_sound_mean = day_data["no_sound_mean"]
+                    if no_sound_mean is not None:
+                        ax.plot(
+                            first5_speed_time_grid,
+                            no_sound_mean,
+                            color=blue_colors[day],
+                            lw=2.5,
+                            alpha=0.75,
+                            label=(
+                                f"no sound day{day}"
+                                if mouse_row == 0 and trial_count == 1
+                                else None
+                            ),
+                        )
+
+                    sound_mean = _first5_speed_mean_trace(
+                        day_data["sound_traces"][:trial_count]
+                    )
+                    if sound_mean is not None:
+                        sound_color = (
+                            red_colors[day]
+                            if day % 2 == 1
+                            else yellow_colors[day]
+                        )
+                        ax.plot(
+                            first5_speed_time_grid,
+                            sound_mean,
+                            color=sound_color,
+                            lw=2.5,
+                            alpha=0.9,
+                            label=(
+                                f"sound day{day}"
+                                if mouse_row == 0 and trial_count == 1
+                                else None
+                            ),
+                        )
+
+                ax.axvline(
+                    x=0,
+                    c="k",
+                    linestyle="--",
+                    linewidth=1.5,
+                )
+                ax.set_xlim(-first5_speed_pre, first5_speed_time_bin)
+                if mouse_row == 0:
+                    ax.set_title(
+                        f"sound first {trial_count} trial"
+                        f"{'s' if trial_count > 1 else ''}",
+                        fontsize=10,
+                    )
+                if trial_count == 1:
+                    ax.set_ylabel(f"{mouse}\nMean speed (pixels/s)")
+                if mouse_row == len(mice) - 1:
+                    ax.set_xlabel("Time (s)")
+                ax.grid(axis="y", alpha=0.2)
+
+        axes[0, 0].legend(
+            fontsize=6,
+            frameon=False,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+        )
+        fig.suptitle(
+            f"{group_name}: average speed (first 5 sound trials)",
+            y=1.0,
+        )
+        fig.tight_layout()
+        return fig
+
+    first5_speed_mouse_day_data_hm3 = _first5_speed_mouse_day_data(hM3Dq_mice)
+    first5_speed_mouse_day_data_hm4 = _first5_speed_mouse_day_data(hM4Di_mice)
+    first5_speed_fig_hm3 = _first5_speed_plot_group(
+        first5_speed_mouse_day_data_hm3,
+        "hM3Dq",
+    )
+    first5_speed_fig_hm4 = _first5_speed_plot_group(
+        first5_speed_mouse_day_data_hm4,
+        "hM4Di",
+    )
+
+    mo.vstack([first5_speed_fig_hm3, first5_speed_fig_hm4])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## stationary time ratio
     """)
     return
@@ -1463,6 +1906,8 @@ def _(
     s_stationary_time_ratio_by_time_bin_hm4,
     s_stationary_time_ratio_dic_hm3,
     s_stationary_time_ratio_dic_hm4,
+    save_figures_to_folder,
+    session_axis_lookup,
     sns,
     stationary_time_bins,
 ):
@@ -1472,6 +1917,7 @@ def _(
     def ratio_dictionaries_to_long(no_sound_dic, sound_dic):
         session_names = sorted(set(no_sound_dic) | set(sound_dic))
         session_day = {}
+        session_day_order = {}
 
         for subject in sorted({name[:6] for name in session_names}):
             subject_sessions = sorted(
@@ -1480,13 +1926,28 @@ def _(
             dates = sorted(
                 {name.rsplit("_", 2)[-2] for name in subject_sessions}
             )
-            date_to_day = {
-                date: f"day{day}"
-                for day, date in enumerate(dates, start=1)
+            fallback_start = max(
+                [
+                    axis_info["order"]
+                    for session_name, axis_info in session_axis_lookup.items()
+                    if str(session_name).startswith(subject)
+                ],
+                default=0,
+            )
+            date_to_fallback = {
+                date: (fallback_start + fallback_index, f"session{fallback_index}")
+                for fallback_index, date in enumerate(dates, start=1)
             }
             for name in subject_sessions:
                 date = name.rsplit("_", 2)[-2]
-                session_day[name] = date_to_day[date]
+                axis_info = session_axis_lookup.get(name)
+                if axis_info is None:
+                    day_order, day_label = date_to_fallback[date]
+                else:
+                    day_order = axis_info["order"]
+                    day_label = axis_info["label"]
+                session_day[name] = day_label
+                session_day_order[name] = day_order
 
         rows = []
         for condition, ratio_dic in [
@@ -1501,6 +1962,7 @@ def _(
                                 "session": name,
                                 "subject": name[:6],
                                 "day": session_day[name],
+                                "day_order": session_day_order[name],
                                 "condition": condition,
                                 "trial": trial,
                                 "event_index": event_index,
@@ -1532,9 +1994,11 @@ def _(
             ax.set_axis_off()
             return fig
 
-        day_order = sorted(
-            ratio_long_df["day"].unique(),
-            key=lambda day: int(day.removeprefix("day")),
+        day_order = (
+            ratio_long_df[["day", "day_order"]]
+            .drop_duplicates()
+            .sort_values("day_order")["day"]
+            .to_list()
         )
         condition_order = ["no_sound", "sound"]
         palette = {
@@ -1624,7 +2088,7 @@ def _(
             loc="upper left",
         )
 
-        ax.set_xlabel("Day")
+        ax.set_xlabel("Injection")
         ax.set_ylabel(ylabel)
         ax.set_title(group_name)
         if y_limits is not None:
@@ -1646,20 +2110,22 @@ def _(
                 columns=[
                     "subject",
                     "day",
+                    "day_order",
                     "no_sound",
                     "sound",
                     "difference",
+                    "day_number",
                 ]
             )
 
         condition_summary = (
             ratio_long_df.groupby(
-                ["subject", "day", "condition"],
+                ["subject", "day", "day_order", "condition"],
                 as_index=False,
             )["ratio"]
             .agg(summary_method)
             .pivot(
-                index=["subject", "day"],
+                index=["subject", "day", "day_order"],
                 columns="condition",
                 values="ratio",
             )
@@ -1670,9 +2136,11 @@ def _(
                 columns=[
                     "subject",
                     "day",
+                    "day_order",
                     "no_sound",
                     "sound",
                     "difference",
+                    "day_number",
                 ]
             )
 
@@ -1682,9 +2150,9 @@ def _(
         condition_summary["difference"] = (
             condition_summary["sound"] - condition_summary["no_sound"]
         )
-        condition_summary["day_number"] = condition_summary[
-            "day"
-        ].str.removeprefix("day").astype(int)
+        condition_summary["day_number"] = (
+            condition_summary["day_order"].astype(int)
+        )
         return condition_summary
 
     def plot_subject_day_difference(
@@ -1750,13 +2218,17 @@ def _(
             zorder=5,
         )
 
-        days = sorted(difference_df["day_number"].unique())
-        ax.set_xticks(days)
-        ax.set_xticklabels([f"day{day}" for day in days])
+        day_ticks = (
+            difference_df[["day_number", "day"]]
+            .drop_duplicates()
+            .sort_values("day_number")
+        )
+        ax.set_xticks(day_ticks["day_number"])
+        ax.set_xticklabels(day_ticks["day"])
         ax.axhline(0, color="gray", linestyle="--", linewidth=1)
         if y_limits is not None:
             ax.set_ylim(*y_limits)
-        ax.set_xlabel("Day")
+        ax.set_xlabel("Injection")
         ax.set_ylabel(ylabel)
         ax.set_title(group_name)
         ax.grid(axis="y", alpha=0.25)
@@ -1839,6 +2311,32 @@ def _(
         for time_bin in stationary_time_bins
     ]
 
+    stationary_time_ratio_figures_to_save = [
+        ("hM3Dq: first 15s", stationary_time_ratio_fig_hm3),
+        ("hM4Di: first 15s", stationary_time_ratio_fig_hm4),
+    ]
+    for _stationary_time_bin in stationary_time_bins:
+        stationary_time_ratio_figures_to_save.extend(
+            [
+                (
+                    f"hM3Dq: first {_stationary_time_bin}s",
+                    stationary_time_ratio_difference_figs_hm3[
+                        _stationary_time_bin
+                    ],
+                ),
+                (
+                    f"hM4Di: first {_stationary_time_bin}s",
+                    stationary_time_ratio_difference_figs_hm4[
+                        _stationary_time_bin
+                    ],
+                ),
+            ]
+        )
+    stationary_time_ratio_saved_figure_paths = save_figures_to_folder(
+        stationary_time_ratio_figures_to_save,
+        "stationary_time_ratio_sound-nosound",
+    )
+
     mo.vstack(
         [
             mo.hstack(
@@ -1873,6 +2371,7 @@ def _(
     plt,
     s_speed_change_dic_hm3_prebin,
     s_speed_change_dic_hm4_prebin,
+    session_axis_lookup,
 ):
     from matplotlib.lines import Line2D as _Line2D
     from matplotlib.ticker import MaxNLocator as _MaxNLocator
@@ -1887,32 +2386,37 @@ def _(
                 name for name in all_names if name[:6] == mouse
             )
             dates = sorted({name.rsplit("_", 2)[-2] for name in mouse_names})
-            date_to_day = {
-                date: day for day, date in enumerate(dates, start=1)
-            }
-            counts_by_day = {
-                day: {"sound": 0, "no_sound": 0}
-                for day in date_to_day.values()
+            fallback_start = max(
+                [
+                    axis_info["order"]
+                    for session_name, axis_info in session_axis_lookup.items()
+                    if str(session_name).startswith(mouse)
+                ],
+                default=0,
+            )
+            date_to_fallback = {
+                date: (fallback_start + fallback_index, f"session{fallback_index}")
+                for fallback_index, date in enumerate(dates, start=1)
             }
 
             for name in mouse_names:
                 date = name.rsplit("_", 2)[-2]
-                day = date_to_day[date]
-                counts_by_day[day]["sound"] += len(
-                    sound_dic.get(name, {})
-                )
-                counts_by_day[day]["no_sound"] += len(
-                    no_sound_dic.get(name, {})
-                )
-
-            for day, counts in counts_by_day.items():
+                axis_info = session_axis_lookup.get(name)
+                if axis_info is None:
+                    day_order, day_label = date_to_fallback[date]
+                else:
+                    day_order = axis_info["order"]
+                    day_label = axis_info["label"]
+                sound_count = len(sound_dic.get(name, {}))
+                no_sound_count = len(no_sound_dic.get(name, {}))
                 rows.append(
                     {
                         "subject": mouse,
-                        "day": day,
-                        "sound": counts["sound"],
-                        "no_sound": counts["no_sound"],
-                        "total": counts["sound"] + counts["no_sound"],
+                        "day": day_label,
+                        "day_order": day_order,
+                        "sound": sound_count,
+                        "no_sound": no_sound_count,
+                        "total": sound_count + no_sound_count,
                     }
                 )
 
@@ -1948,10 +2452,10 @@ def _(
         for mouse in mice:
             mouse_df = trial_count_df[
                 trial_count_df["subject"] == mouse
-            ].sort_values("day")
+            ].sort_values("day_order")
             for column, color, _ in conditions:
                 ax.plot(
-                    mouse_df["day"],
+                    mouse_df["day_order"],
                     mouse_df[column],
                     color=color,
                     marker=mouse_markers[mouse],
@@ -1996,11 +2500,15 @@ def _(
             loc="upper left",
         )
 
-        days = sorted(trial_count_df["day"].unique())
-        ax.set_xticks(days)
-        ax.set_xticklabels([f"day{day}" for day in days])
+        day_ticks = (
+            trial_count_df[["day_order", "day"]]
+            .drop_duplicates()
+            .sort_values("day_order")
+        )
+        ax.set_xticks(day_ticks["day_order"])
+        ax.set_xticklabels(day_ticks["day"])
         ax.yaxis.set_major_locator(_MaxNLocator(integer=True))
-        ax.set_xlabel("Day")
+        ax.set_xlabel("Injection")
         ax.set_ylabel("Number of trials")
         ax.set_title(group_name)
         ax.grid(alpha=0.25)
@@ -2202,6 +2710,318 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## first 5 trials mean position change combine all the days
+    """)
+    return
+
+
+@app.cell
+def _(
+    analyzed_video_names,
+    behav_df_filtered_dic,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    np,
+    pd,
+    plt,
+    session_df_dic,
+):
+    import ast as _ast
+
+    first5_position_pre = 2
+    first5_position_time_bin = 15
+    first5_position_dt = 0.001
+    first5_position_time_grid = np.arange(
+        -first5_position_pre,
+        first5_position_time_bin,
+        first5_position_dt,
+    )
+
+    def _first5_event_times(value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            value = _ast.literal_eval(value)
+        try:
+            if pd.isna(value):
+                return []
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, (list, tuple, np.ndarray, pd.Series)):
+            return list(value)
+        return [value]
+
+    def _first5_timestamp(behav_df):
+        if ("timestamp", "") in behav_df.columns:
+            return behav_df[("timestamp", "")]
+        timestamp = behav_df["timestamp"]
+        if isinstance(timestamp, pd.DataFrame):
+            return timestamp.iloc[:, 0]
+        return timestamp
+
+    def _first5_resample_x_trace(behav_df, trigger_time):
+        timestamp = pd.to_numeric(
+            _first5_timestamp(behav_df),
+            errors="coerce",
+        )
+        window_df = behav_df[
+            (timestamp >= trigger_time - first5_position_pre)
+            & (timestamp <= trigger_time + first5_position_time_bin)
+        ]
+        tmp_df = (
+            pd.DataFrame(
+                {
+                    "timestamp": _first5_timestamp(window_df).to_numpy(),
+                    "x": window_df[("Center", "x")].to_numpy(),
+                }
+            )
+            .dropna()
+            .sort_values("timestamp")
+            .drop_duplicates("timestamp")
+        )
+        if len(tmp_df) < 2:
+            return None
+
+        relative_time = tmp_df["timestamp"].to_numpy() - trigger_time
+        x_position = tmp_df["x"].to_numpy()
+        return np.interp(
+            first5_position_time_grid,
+            relative_time,
+            x_position,
+        )
+
+    def _first5_mean_trace(traces):
+        traces = [
+            np.asarray(trace, dtype=float)
+            for trace in traces
+            if trace is not None and np.isfinite(trace).any()
+        ]
+        if not traces:
+            return None
+        return (
+            pd.DataFrame(np.vstack(traces))
+            .mean(axis=0, skipna=True)
+            .to_numpy()
+        )
+
+    def _first5_session_x_traces(name):
+        behav_df_filtered = behav_df_filtered_dic[name]
+        session_df = session_df_dic[name]
+
+        no_sound_traces = []
+        sound_traces = []
+        for _, trial_row in session_df.iterrows():
+            if "sound_not_played" in session_df.columns:
+                for t_ns in _first5_event_times(trial_row["sound_not_played"]):
+                    no_sound_trace = _first5_resample_x_trace(
+                        behav_df_filtered,
+                        t_ns,
+                    )
+                    if no_sound_trace is not None:
+                        no_sound_traces.append(no_sound_trace)
+
+            if "sound_played" in session_df.columns:
+                for sound_play in _first5_event_times(trial_row["sound_played"]):
+                    sound_trace = _first5_resample_x_trace(
+                        behav_df_filtered,
+                        sound_play,
+                    )
+                    if sound_trace is not None:
+                        sound_traces.append(sound_trace)
+
+        return no_sound_traces, sound_traces
+
+    def _first5_mouse_day_data(mice):
+        mouse_day_data = {}
+        for mouse in sorted(mice):
+            mouse_names = sorted(
+                name
+                for name in analyzed_video_names
+                if name[:6] == mouse and name in session_df_dic
+            )
+            if not mouse_names:
+                continue
+
+            dates = sorted({name.rsplit("_", 2)[-2] for name in mouse_names})
+            date_to_day = {
+                date: day for day, date in enumerate(dates, start=1)
+            }
+            mouse_day_data[mouse] = []
+            for name in mouse_names:
+                date = name.rsplit("_", 2)[-2]
+                no_sound_traces, sound_traces = _first5_session_x_traces(name)
+                mouse_day_data[mouse].append(
+                    {
+                        "name": name,
+                        "day": date_to_day[date],
+                        "no_sound_mean": _first5_mean_trace(no_sound_traces),
+                        "sound_traces": sound_traces,
+                    }
+                )
+
+            mouse_day_data[mouse] = sorted(
+                mouse_day_data[mouse],
+                key=lambda day_data: day_data["day"],
+            )
+
+        return mouse_day_data
+
+    def _first5_plot_group(mouse_day_data, group_name):
+        mice = sorted(mouse_day_data)
+        if not mice:
+            fig, ax = plt.subplots(figsize=(6, 3), dpi=150)
+            ax.text(
+                0.5,
+                0.5,
+                f"No first-5-trial x-position data for {group_name}",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            return fig
+
+        fig, axes = plt.subplots(
+            len(mice),
+            5,
+            figsize=(20, max(3.5, 3.2 * len(mice))),
+            dpi=150,
+            sharex=True,
+            sharey=True,
+            squeeze=False,
+        )
+
+        for mouse_row, mouse in enumerate(mice):
+            day_data_list = mouse_day_data[mouse]
+            day_numbers = [day_data["day"] for day_data in day_data_list]
+            blue_colors = dict(
+                zip(
+                    day_numbers,
+                    plt.get_cmap("Blues")(
+                        np.linspace(0.25, 0.9, len(day_numbers))
+                    ),
+                )
+            )
+            odd_days = [day for day in day_numbers if day % 2 == 1]
+            even_days = [day for day in day_numbers if day % 2 == 0]
+            red_colors = dict(
+                zip(
+                    odd_days,
+                    plt.get_cmap("Reds")(
+                        np.linspace(0.35, 0.9, max(len(odd_days), 1))
+                    )[: len(odd_days)],
+                )
+            )
+            yellow_colors = dict(
+                zip(
+                    even_days,
+                    plt.get_cmap("YlOrBr")(
+                        np.linspace(0.30, 0.9, max(len(even_days), 1))
+                    )[: len(even_days)],
+                )
+            )
+
+            for trial_count in range(1, 6):
+                ax = axes[mouse_row, trial_count - 1]
+                for day_data in day_data_list:
+                    day = day_data["day"]
+                    no_sound_mean = day_data["no_sound_mean"]
+                    if no_sound_mean is not None:
+                        ax.plot(
+                            first5_position_time_grid,
+                            no_sound_mean,
+                            color=blue_colors[day],
+                            lw=2.5,
+                            alpha=0.75,
+                            label=(
+                                f"no sound day{day}"
+                                if mouse_row == 0 and trial_count == 1
+                                else None
+                            ),
+                        )
+
+                    sound_mean = _first5_mean_trace(
+                        day_data["sound_traces"][:trial_count]
+                    )
+                    if sound_mean is not None:
+                        sound_color = (
+                            red_colors[day]
+                            if day % 2 == 1
+                            else yellow_colors[day]
+                        )
+                        ax.plot(
+                            first5_position_time_grid,
+                            sound_mean,
+                            color=sound_color,
+                            lw=2.5,
+                            alpha=0.9,
+                            label=(
+                                f"sound day{day}"
+                                if mouse_row == 0 and trial_count == 1
+                                else None
+                            ),
+                        )
+
+                ax.axhline(
+                    y=364,
+                    c="k",
+                    linestyle="dotted",
+                    linewidth=2,
+                )
+                ax.axvline(
+                    x=0,
+                    c="k",
+                    linestyle="--",
+                    linewidth=1.5,
+                )
+                ax.set_xlim(-first5_position_pre, first5_position_time_bin)
+                ax.set_ylim(0, 640)
+                if mouse_row == 0:
+                    ax.set_title(
+                        f"sound first {trial_count} trial"
+                        f"{'s' if trial_count > 1 else ''}",
+                        fontsize=10,
+                    )
+                if trial_count == 1:
+                    ax.set_ylabel(f"{mouse}\nX position (pixels)")
+                if mouse_row == len(mice) - 1:
+                    ax.set_xlabel("Time (s)")
+                ax.grid(axis="y", alpha=0.2)
+
+        axes[0, 0].legend(
+            fontsize=6,
+            frameon=False,
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+        )
+        fig.suptitle(
+            f"{group_name}: average position (first 5 sound trials)",
+            y=1.0,
+        )
+        fig.tight_layout()
+        return fig
+
+    first5_position_mouse_day_data_hm3 = _first5_mouse_day_data(hM3Dq_mice)
+    first5_position_mouse_day_data_hm4 = _first5_mouse_day_data(hM4Di_mice)
+    first5_position_fig_hm3 = _first5_plot_group(
+        first5_position_mouse_day_data_hm3,
+        "hM3Dq",
+    )
+    first5_position_fig_hm4 = _first5_plot_group(
+        first5_position_mouse_day_data_hm4,
+        "hM4Di",
+    )
+
+    mo.vstack([first5_position_fig_hm3, first5_position_fig_hm4])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## trigger zone time ratio
     """)
     return
@@ -2354,6 +3174,7 @@ def _(
     s_trigger_zone_time_ratio_by_time_bin_hm4,
     s_trigger_zone_time_ratio_dic_hm3,
     s_trigger_zone_time_ratio_dic_hm4,
+    save_figures_to_folder,
     trigger_zone_time_bins,
 ):
     df_trigger_zone_time_ratio_hm3 = ratio_dictionaries_to_long(
@@ -2428,6 +3249,32 @@ def _(
         for time_bin in trigger_zone_time_bins
     ]
 
+    trigger_zone_figures_to_save = [
+        ("hM3Dq: first 15s", trigger_zone_time_ratio_fig_hm3),
+        ("hM4Di: first 15s", trigger_zone_time_ratio_fig_hm4),
+    ]
+    for _trigger_zone_time_bin in trigger_zone_time_bins:
+        trigger_zone_figures_to_save.extend(
+            [
+                (
+                    f"hM3Dq: first {_trigger_zone_time_bin}s",
+                    trigger_zone_time_ratio_difference_figs_hm3[
+                        _trigger_zone_time_bin
+                    ],
+                ),
+                (
+                    f"hM4Di: first {_trigger_zone_time_bin}s",
+                    trigger_zone_time_ratio_difference_figs_hm4[
+                        _trigger_zone_time_bin
+                    ],
+                ),
+            ]
+        )
+    trigger_zone_saved_figure_paths = save_figures_to_folder(
+        trigger_zone_figures_to_save,
+        "trigger_zone_time_ratio_sound-nosound",
+    )
+
     mo.vstack(
         [
             mo.hstack(
@@ -2437,6 +3284,346 @@ def _(
                 ]
             ),
             *trigger_zone_difference_figure_rows,
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # sound intensity in behavior
+    """)
+    return
+
+
+@app.cell
+def _(
+    analyzed_video_names,
+    behav_df_filtered_dic,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    np,
+    pd,
+    plt,
+    save_figures_to_folder,
+    session_df_dic,
+    sns,
+):
+    from scipy import stats as _stats
+    from scipy.signal import hilbert as _hilbert
+    import ast as _ast
+
+    # auditory looming sounds
+    def crescendo_looming_sound(
+        amp_start: float = 20,
+        amp_end: float = 90,
+        ramp_duration: float = 0.4,
+        ramp_down_duration: float = 0.005,
+        hold_duration: float = 0.595,
+        n_repeats: int = 10,
+    ) -> np.ndarray:
+        # convert n_repeats to an int
+        n_repeats = int(n_repeats)
+        fs = 192000  # Sampling frequency
+        # Generate ramp + rampdown + hold for one repetition
+        n_ramp = int(fs * ramp_duration)
+        n_hold = int(fs * hold_duration)
+        n_ramp_down = int(fs * ramp_down_duration)
+        # convert amplitudes to dB
+        db_start = 20 * np.log10(amp_start)
+        db_end = 20 * np.log10(amp_end)
+        # Linear amplitude ramp (in dB scale)
+        db_ramp = np.linspace(db_start, db_end, n_ramp)
+        db_ramp_down = np.linspace(db_end, db_start, n_ramp_down)
+        # Convert back to amplitudes (exponential in linear scale)
+        ramp_amplitudes = 10 ** (db_ramp / 20)
+        ramp_down_amplitudes = 10 ** (db_ramp_down / 20)
+        hold_amplitudes = np.ones(n_hold) * amp_start
+        # Create one cycle of noise
+        noise_ramp = np.random.randn(n_ramp) * ramp_amplitudes
+        noise_hold = np.random.randn(n_hold) * hold_amplitudes
+        noise_ramp_down = np.random.randn(n_ramp_down) * ramp_down_amplitudes
+        cycle = np.concatenate([noise_ramp, noise_ramp_down, noise_hold])
+        # Repeat 10 times
+        stimulus = np.tile(cycle, n_repeats)
+
+        return stimulus, np.arange(len(stimulus)) / fs
+
+    def get_sound_event_times(value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            value = _ast.literal_eval(value)
+        try:
+            if pd.isna(value):
+                return []
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, (list, tuple, np.ndarray, pd.Series)):
+            return list(value)
+        return [value]
+
+    def get_sound_timestamp(behav_df):
+        if ("timestamp", "") in behav_df.columns:
+            return behav_df[("timestamp", "")]
+        timestamp = behav_df["timestamp"]
+        if isinstance(timestamp, pd.DataFrame):
+            return timestamp.iloc[:, 0]
+        return timestamp
+
+    def get_named_column(behav_df, column_name):
+        if (column_name, "") in behav_df.columns:
+            return behav_df[(column_name, "")]
+        column = behav_df[column_name]
+        if isinstance(column, pd.DataFrame):
+            return column.iloc[:, 0]
+        return column
+
+    def build_session_title_lookup():
+        session_title_lookup = {}
+        for mouse in sorted({name[:6] for name in analyzed_video_names}):
+            mouse_names = sorted(
+                name for name in analyzed_video_names if name[:6] == mouse
+            )
+            dates = sorted({name.rsplit("_", 2)[-2] for name in mouse_names})
+            date_to_day = {
+                date: day for day, date in enumerate(dates, start=1)
+            }
+            if mouse in hM3Dq_mice:
+                group_name = "hM3Dq"
+            elif mouse in hM4Di_mice:
+                group_name = "hM4Di"
+            else:
+                group_name = "unknown"
+            for name in mouse_names:
+                date = name.rsplit("_", 2)[-2]
+                session_title_lookup[name] = (
+                    f"{mouse} {group_name} day{date_to_day[date]}"
+                )
+        return session_title_lookup
+
+    session_title_lookup = build_session_title_lookup()
+
+    sound_play_dic = {}
+    for _name in analyzed_video_names:
+        sound_play_list = []
+        if _name in session_df_dic and "sound_played" in session_df_dic[_name].columns:
+            for sound_played in session_df_dic[_name]["sound_played"]:
+                sound_play_list.extend(get_sound_event_times(sound_played))
+        sound_play_dic[_name] = sound_play_list
+
+    stimulus, t = crescendo_looming_sound()
+    analytic_signal = _hilbert(stimulus)
+    amplitude_envelope = np.abs(analytic_signal)
+
+    window_size = 10000
+    smooth_envelope = np.convolve(
+        amplitude_envelope,
+        np.ones(window_size) / window_size,
+        mode="same",
+    )
+
+    def get_sound_intensity(behav_df, sound_play_list):
+        behav_df_copy = behav_df.copy()
+        timestamp = pd.to_numeric(
+            get_sound_timestamp(behav_df_copy),
+            errors="coerce",
+        )
+
+        sound_intensity = np.full(len(behav_df_copy), np.nan)
+        trial_col = np.full(len(behav_df_copy), np.nan)
+
+        i = 1
+        for start in sound_play_list:
+            end = start + t[-1]
+            mask = (timestamp >= start) & (timestamp <= end)
+            if not np.any(mask):
+                continue
+
+            rel_t = timestamp.loc[mask] - start
+            env_interp = np.interp(rel_t, t, smooth_envelope)
+
+            sound_intensity[mask.to_numpy()] = env_interp
+            trial_col[mask.to_numpy()] = i
+            i += 1
+
+        behav_df_copy[("sound_intensity", "")] = sound_intensity
+        behav_df_copy[("trial", "")] = trial_col
+
+        return behav_df_copy
+
+    behav_df_sound_intensity_dic = {}
+    for _name in analyzed_video_names:
+        behav_df_sound_intensity_dic[_name] = get_sound_intensity(
+            behav_df_filtered_dic[_name],
+            sound_play_dic[_name],
+        )
+
+    def plot_speed_change_with_sound(name):
+        fig, ax = plt.subplots(1, 1, figsize=(15, 3.5), dpi=150)
+        _behav_df_filtered = behav_df_sound_intensity_dic[name]
+        timestamp = pd.to_numeric(
+            get_sound_timestamp(_behav_df_filtered),
+            errors="coerce",
+        )
+        mean_speed = pd.to_numeric(
+            _behav_df_filtered[("Center", "mean_speed")],
+            errors="coerce",
+        )
+        sound_play_list = sound_play_dic[name]
+
+        sound_before_frames = 5  # 5 seconds before sound
+        sound_after_frames = 10  # 10 seconds after sound
+        colors = sns.color_palette("crest", len(sound_play_list))
+        for sound, color in zip(sound_play_list[::-1], colors[::-1]):
+            sound_mask = (
+                (timestamp >= sound - sound_before_frames)
+                & (timestamp <= sound + sound_after_frames)
+            )
+            sound_window_time = timestamp.loc[sound_mask] - sound
+            sound_window_speed = mean_speed.loc[sound_mask]
+
+            ax.plot(
+                sound_window_time,
+                sound_window_speed,
+                color=color,
+                alpha=0.3,
+            )
+
+        cbar = plt.colorbar(
+            plt.cm.ScalarMappable(cmap=sns.color_palette("crest", as_cmap=True)),
+            orientation="horizontal",
+            ax=ax,
+            shrink=0.3,
+        )
+        cbar.set_ticks([])
+        cbar.set_label("before -> after")
+
+        # plot the sound intensity on the speed plot, make it like shadow
+        ax.plot(t, smooth_envelope, color="k", lw=1)
+        ax.set_title(session_title_lookup[name])
+        fig.tight_layout()
+        return fig
+
+    speed_change_with_sound_figures = [
+        plot_speed_change_with_sound(_name)
+        for _name in sorted(analyzed_video_names)
+    ]
+    speed_change_with_sound_saved_figure_paths = save_figures_to_folder(
+        [
+            (session_title_lookup[_name], fig)
+            for _name, fig in zip(
+                sorted(analyzed_video_names),
+                speed_change_with_sound_figures,
+            )
+        ],
+        "speed_change_with_sound",
+    )
+
+    corr_dic = {}
+    p_dic = {}
+    trial_ids_dic = {}
+    for _name in analyzed_video_names:
+        _behav_df_filtered = behav_df_sound_intensity_dic[_name]
+
+        corr_list = []
+        p_list = []
+        trial_ids = []
+        trial_values = get_named_column(_behav_df_filtered, "trial").dropna().unique()
+
+        for i in trial_values:
+            trial_df = _behav_df_filtered[
+                get_named_column(_behav_df_filtered, "trial") == i
+            ]
+
+            # Ensure valid numeric arrays and remove NaNs
+            x = pd.to_numeric(
+                trial_df[("Center", "mean_speed")],
+                errors="coerce",
+            )
+            y = pd.to_numeric(
+                get_named_column(trial_df, "sound_intensity"),
+                errors="coerce",
+            )
+            mask = (~np.isnan(x)) & (~np.isnan(y))
+            x_valid = x[mask]
+            y_valid = y[mask]
+
+            if len(x_valid) > 2:
+                corr, p = _stats.pearsonr(x_valid, y_valid)
+                corr_list.append(corr)
+                p_list.append(p)
+                trial_ids.append(i)
+            else:
+                corr_list.append(np.nan)
+                p_list.append(np.nan)
+                trial_ids.append(i)
+        corr_dic[_name] = corr_list
+        p_dic[_name] = p_list
+        trial_ids_dic[_name] = trial_ids
+
+    def plot_correlation_between_speed_sound(name):
+        fig, ax = plt.subplots(1, 1, figsize=(12, 3.5), dpi=150)
+        corr_list = corr_dic[name]
+        p_list = p_dic[name]
+        bars = ax.bar(
+            range(len(corr_list)),
+            corr_list,
+            color="lightgray",
+            edgecolor="none",
+        )
+
+        # Add asterisks for p < 0.05
+        for bar, p in zip(bars, p_list):
+            if not np.isnan(p) and p < 0.05:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    (
+                        bar.get_height() + 0.01
+                        if bar.get_height() > 0
+                        else bar.get_height() - 0.03
+                    ),
+                    "*",
+                    ha="center",
+                    va="bottom",
+                    color="k",
+                    fontsize=14,
+                    fontweight="bold",
+                )
+
+        ax.axhline(0, color="k", lw=1)
+        ax.set_xticks([])
+        ax.set_xlabel("Trial")
+        ax.set_ylabel("Pearson correlation (r)")
+        ax.set_title(session_title_lookup[name])
+        fig.tight_layout()
+        return fig
+
+    correlation_between_speed_sound_figures = [
+        plot_correlation_between_speed_sound(_name)
+        for _name in sorted(analyzed_video_names)
+    ]
+    correlation_between_speed_sound_saved_figure_paths = save_figures_to_folder(
+        [
+            (session_title_lookup[_name], fig)
+            for _name, fig in zip(
+                sorted(analyzed_video_names),
+                correlation_between_speed_sound_figures,
+            )
+        ],
+        "correlation_between_speed_sound",
+    )
+
+    mo.vstack(
+        [
+            mo.md("## speed change with sound"),
+            *speed_change_with_sound_figures,
+            mo.md("## correlation between speed and sound"),
+            *correlation_between_speed_sound_figures,
         ]
     )
     return
