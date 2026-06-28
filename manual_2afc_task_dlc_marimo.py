@@ -265,10 +265,10 @@ def _(mo):
 
 @app.cell
 def _():
-    # hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
-    # hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
-    hM3Dq_mice = ['NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
-    hM4Di_mice = ['NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
+    hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
+    # hM3Dq_mice = ['NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    # hM4Di_mice = ['NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
     return hM3Dq_mice, hM4Di_mice
 
 
@@ -457,12 +457,6 @@ def _(pd, utils):
         return df
 
     return (add_number_of_pokes,)
-
-
-@app.cell
-def _(df_test_upd):
-    df_test_upd['port2_pokes_num'].unique()
-    return
 
 
 @app.cell
@@ -658,8 +652,108 @@ def _(pd):
             ).astype("Int64")
         return dlc_df
 
-
     return
+
+
+@app.cell
+def _(
+    behav_df_dic_dcz,
+    behav_df_dic_saline,
+    behav_pair_map,
+    df_dic_dcz,
+    df_dic_saline,
+    get_speed_per_mouse_sessions,
+    hM3Dq_mice,
+    hM4Di_mice,
+    split_col,
+    split_label,
+):
+    speed_per_animal_condition_hm4 = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM4Di_mice,
+    )
+    speed_per_animal_condition_hm4_diff = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM4Di_mice,
+        difference=True,
+    )
+    speed_per_animal_condition_hm3 = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM3Dq_mice,
+    )
+    speed_per_animal_condition_hm3_diff = get_speed_per_mouse_sessions(
+        behav_df_dic_saline=behav_df_dic_saline,
+        behav_df_dic_dcz=behav_df_dic_dcz,
+        behav_pair_map=behav_pair_map,
+        subjects=hM3Dq_mice,
+        difference=True,
+    )
+    speed_per_animal_condition_hm4_split_col = (
+        get_speed_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM4Di_mice,
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    speed_per_animal_condition_hm4_diff_split_col = (
+        get_speed_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM4Di_mice,
+            split_column=split_col,
+            split_labels=split_label,
+            difference=True,
+        )
+    )
+    speed_per_animal_condition_hm3_split_col = (
+        get_speed_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM3Dq_mice,
+            split_column=split_col,
+            split_labels=split_label,
+        )
+    )
+    speed_per_animal_condition_hm3_diff_split_col = (
+        get_speed_per_mouse_sessions(
+            behav_df_dic_saline=behav_df_dic_saline,
+            behav_df_dic_dcz=behav_df_dic_dcz,
+            df_dic_saline=df_dic_saline,
+            df_dic_dcz=df_dic_dcz,
+            behav_pair_map=behav_pair_map,
+            subjects=hM3Dq_mice,
+            split_column=split_col,
+            split_labels=split_label,
+            difference=True,
+        )
+    )
+    return (
+        speed_per_animal_condition_hm3,
+        speed_per_animal_condition_hm3_diff,
+        speed_per_animal_condition_hm3_diff_split_col,
+        speed_per_animal_condition_hm3_split_col,
+        speed_per_animal_condition_hm4,
+        speed_per_animal_condition_hm4_diff,
+        speed_per_animal_condition_hm4_diff_split_col,
+        speed_per_animal_condition_hm4_split_col,
+    )
 
 
 @app.cell
@@ -670,8 +764,17 @@ def _(mo):
 
 
 @app.cell
-def _():
-    dlc_mice_selected = ['NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO012']
+def _(project_select):
+    project_select.value
+    return
+
+
+@app.cell
+def _(project_select):
+    if project_select.value == 'COT_cannula_GAD2_data':
+        dlc_mice_selected = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO062', 'NUO063', 'NUO064', 'NUO012']
+    if project_select.value == 'COT_cannula_data':
+        dlc_mice_selected = ['NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO012']
     return (dlc_mice_selected,)
 
 
@@ -2290,13 +2393,7 @@ def _(behavior_utils, np, pd):
         return output
 
 
-    return
-
-
-@app.cell
-def _(leisi):
-    leisi
-    return
+    return (get_speed_per_mouse_sessions,)
 
 
 @app.cell
@@ -4220,13 +4317,16 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
 
 @app.cell
 def _(
+    hM3Dq_mice,
     mo,
     plot_five_set_venn,
+    plot_upset_from_trial_sets,
     venn_disengaged_trial_sets,
     venn_disengaged_trial_summary,
 ):
     venn_disengaged_trial_summary_selectforplot = venn_disengaged_trial_summary[
-        (venn_disengaged_trial_summary['subject'].isin(['NUO010', 'NUO012', 'NUO007', 'NUO008'])) 
+        (venn_disengaged_trial_summary['subject'].isin(hM3Dq_mice)) 
+        # (venn_disengaged_trial_summary['subject'].isin(hM4Di_mice)) 
         # & (venn_disengaged_trial_summary['modality'] == 'auditory')
         ]
     _selected_pair_ids = (
@@ -4255,16 +4355,35 @@ def _(
             for _label in _labels
         }
 
-    _selected_summary_figures = []
+    _selected_summary_view = []
     for _condition_name in ["saline", "dcz"]:
-        _selected_summary_figures.append(
-            plot_five_set_venn(
-            _selected_summary_sets[_condition_name],
-                title=f"sub auditory {_condition_name.upper()}",
+        _condition_title = f"{_condition_name.upper()}"
+        _selected_summary_view.append(mo.md(f"### {_condition_title}"))
+        _selected_summary_view.append(
+            mo.hstack(
+                [
+                    plot_five_set_venn(
+                        _selected_summary_sets[_condition_name],
+                        title=_condition_title,
+                    ),
+                    plot_upset_from_trial_sets(
+                        _selected_summary_sets[_condition_name],
+                        title=f"{_condition_title} UpSet",
+                    ),
+                ]
             )
         )
-
-    mo.hstack(_selected_summary_figures)
+        plot_five_set_venn(
+            _selected_summary_sets[_condition_name],title=_condition_title
+        ).savefig(
+            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_{_condition_title}_venn.svg"
+        )
+        plot_upset_from_trial_sets(
+            _selected_summary_sets[_condition_name],title=_condition_title
+        ).savefig(
+            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_{_condition_title}_upset.svg"
+        )
+    mo.vstack(_selected_summary_view)
     return
 
 
@@ -4272,6 +4391,8 @@ def _(
 def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
     import sys as _sys
     import importlib as _importlib
+    from upsetplot import UpSet as _UpSet
+    from upsetplot import from_memberships as _from_memberships
 
     _pyvenn_path = "/home/kudongdong/code/pkg/pyvenn"
     if _pyvenn_path not in _sys.path:
@@ -4313,6 +4434,51 @@ def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
         _fig.tight_layout()
         return _fig
 
+    def plot_upset_from_trial_sets(trial_sets, title):
+        _labels = list(trial_sets)
+        _all_trials = set().union(*trial_sets.values())
+        _memberships = [
+            [
+                _label
+                for _label in _labels
+                if _trial_id in trial_sets[_label]
+            ]
+            for _trial_id in _all_trials
+        ]
+        _memberships = [
+            _membership
+            for _membership in _memberships
+            if _membership
+        ]
+
+        if not _memberships:
+            _fig, _ax = plt.subplots(figsize=(6, 4), dpi=150)
+            _ax.text(
+                0.5,
+                0.5,
+                "No trials",
+                ha="center",
+                va="center",
+                transform=_ax.transAxes,
+            )
+            _ax.set_title(title)
+            _ax.axis("off")
+            return _fig
+
+        _upset_data = _from_memberships(_memberships)
+        _fig = plt.figure(figsize=(7, 4.5), dpi=150)
+        _upset = _UpSet(
+            _upset_data,
+            subset_size="count",
+            show_counts=True,
+            show_percentages=True,
+            sort_by="cardinality",
+        )
+        _upset.plot(fig=_fig)
+        _fig.suptitle(title)
+        _fig.tight_layout()
+        return _fig
+
     _venn_disengaged_trial_view = []
 
     for _pair_id, _condition_sets in venn_disengaged_trial_sets.items():
@@ -4331,15 +4497,24 @@ def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
         )
 
         for _condition_name in ["saline", "dcz"]:
+            _condition_title = _condition_name.upper()
             _venn_disengaged_trial_view.append(
-                plot_five_set_venn(
-                    _condition_sets[_condition_name],
-                    title=_condition_name.upper(),
+                mo.hstack(
+                    [
+                        plot_five_set_venn(
+                            _condition_sets[_condition_name],
+                            title=_condition_title,
+                        ),
+                        plot_upset_from_trial_sets(
+                            _condition_sets[_condition_name],
+                            title=f"{_condition_title} UpSet",
+                        ),
+                    ]
                 )
             )
 
     mo.vstack(_venn_disengaged_trial_view) 
-    return (plot_five_set_venn,)
+    return plot_five_set_venn, plot_upset_from_trial_sets
 
 
 @app.cell(hide_code=True)
