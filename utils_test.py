@@ -3,6 +3,7 @@ import pandas as pd
 import ssm
 import matplotlib.pyplot as plt
 import lecilab_behavior_analysis.df_transforms as dft
+import lecilab_behavior_analysis.utils as utils
 import matplotlib.pyplot as plt
 import lecilab_behavior_analysis.utils as behavior_utils
 
@@ -930,3 +931,46 @@ def plot_glmhmm_pipeline_figure(
 
     fig.tight_layout()
     return fig, df_with_state, post_prob_list
+
+
+
+def detect_incorrect_hold_and_next_event(events):
+    incorrect_hold_sequence_one = ['Port2In', 'Tup', 'Port2Out']
+    incorrect_hold_sequence_two = ['Port2In', 'Port2Out']
+    correct_hold_sequence = ['Port2In', 'Tup', 'Tup', 'Port2Out']
+    next_events = []
+    events = eval(events)
+    # remove all events after a correct hold
+    for i in range(len(events) - 3):
+        if events[i:i+4] == correct_hold_sequence:
+            events = events[:i+4]
+            break
+    for i in range(len(events) - 2):
+        if events[i:i+3] == incorrect_hold_sequence_one:
+            if i + 3 < len(events):
+                next_events.append(events[i + 3])
+        elif events[i:i+2] == incorrect_hold_sequence_two:
+            if i + 2 < len(events):
+                next_events.append(events[i + 2])
+    return next_events
+
+
+def add_fixation_break_columns(
+    df,
+    event_col="ordered_list_of_events",
+    next_event_col="next_event_after_fixation_break",
+    count_col="fixation_breaks",
+):
+    df = df.copy()
+    df[next_event_col] = df[event_col].apply(detect_incorrect_hold_and_next_event)
+    df[count_col] = df[next_event_col].apply(
+        lambda x: len(x) if isinstance(x, list) else 0
+    )
+    return df
+
+def add_number_of_pokes(df_raw: pd.DataFrame, port_number: int):
+    df = df_raw.copy()
+    port_hold_column = f"port{port_number}_holds"
+    df[port_hold_column] = df.apply(lambda row: utils.get_trial_port_hold(row, port_number), axis=1)
+    df[f"port{port_number}_pokes_num"] = df[port_hold_column].apply(lambda x: len(x))
+    return df

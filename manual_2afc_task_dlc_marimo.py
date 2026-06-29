@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.4"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -448,19 +448,7 @@ def _(df_test_raw, injection_info_df, mouse, pd):
 
 
 @app.cell
-def _(pd, utils):
-    def add_number_of_pokes(df_raw: pd.DataFrame, port_number: int):
-        df = df_raw.copy()
-        port_hold_column = f"port{port_number}_holds"
-        df[port_hold_column] = df.apply(lambda row: utils.get_trial_port_hold(row, port_number), axis=1)
-        df[f"port{port_number}_pokes_num"] = df[port_hold_column].apply(lambda x: len(x))
-        return df
-
-    return (add_number_of_pokes,)
-
-
-@app.cell
-def _(add_number_of_pokes, df_test, dft, hM3Dq_mice, hM4Di_mice, np, pd):
+def _(df_test, dft, hM3Dq_mice, hM4Di_mice, np, pd, utils_test):
     session_performance = df_test.groupby(
         ["subject", "session"]
     )["correct"].transform("mean")
@@ -497,7 +485,7 @@ def _(add_number_of_pokes, df_test, dft, hM3Dq_mice, hM4Di_mice, np, pd):
             #     engagement_sd_criteria=2,
             # )
 
-            df_session = add_number_of_pokes(
+            df_session = utils_test.add_number_of_pokes(
                 df_session,
                 port_number=2,
             )
@@ -5231,6 +5219,14 @@ def _(
     )
     condition_performance_view
     return
+
+
+app._unparsable_cell(
+    r"""
+    seperate saline and dcz
+    """,
+    name="_"
+)
 
 
 @app.cell(hide_code=True)

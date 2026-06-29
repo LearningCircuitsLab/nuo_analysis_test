@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.4"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -41,6 +41,13 @@ def _():
     # %load_ext autoreload
     # %autoreload 2
     return Path, dft, minimize, np, pd, plots, plt, sns, utils, utils_test
+
+
+@app.cell
+def _(utils_test):
+    import importlib
+    importlib.reload(utils_test)
+    return
 
 
 @app.cell
@@ -106,7 +113,17 @@ def _(mo):
 
 
 @app.cell
-def _(Path, dft, download_button, mouse_select, np, pd, project, utils):
+def _(
+    Path,
+    dft,
+    download_button,
+    mouse_select,
+    np,
+    pd,
+    project,
+    utils,
+    utils_test,
+):
     def parameters_for_fit_if_nonempty(df_stage):
         if df_stage.empty:
             return pd.DataFrame()
@@ -237,20 +254,19 @@ def _(Path, dft, download_button, mouse_select, np, pd, project, utils):
     df_test_vis_easy = df_test_vis_easy[
         df_test_vis_easy["_bad_session"].isna()
     ].drop(columns="_bad_session").copy()
+
+
+    # add fixation breaks 
+    df_test_vis_easy = utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_vis_easy),port_number=2,)
+    df_test_aud_easy = utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_aud_easy),port_number=2,)
+    df_test_vis_hard = utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_vis_hard),port_number=2,)
+    df_test_aud_hard = utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_aud_hard),port_number=2,)
     return (
         df_test_aud_easy,
         df_test_aud_hard,
         df_test_vis_easy,
         df_test_vis_hard,
     )
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
- 
-    """)
-    return
 
 
 @app.cell(hide_code=True)
@@ -395,14 +411,22 @@ def _(df_test, dft, pd, plt, sns):
 
 
 @app.cell
-def _(df_test, dft, plots, plt):
+def _(df_test, dft, np, plots, plt):
     # random session performance plot
     _random_mouse = df_test["subject"].dropna().sample(n=1).iloc[0]
     _df_random_mouse = df_test[df_test["subject"] == _random_mouse]
-    _random_session = _df_random_mouse["session"].dropna().sample(n=1).iloc[0]
+    n_sessions = 5
+    sessions = (
+        _df_random_mouse["session"]
+        .dropna()
+        .sort_values()
+        .unique()
+    )
+    start_idx = np.random.randint(0, len(sessions) - n_sessions + 1)
+    random_sessions = sessions[start_idx:start_idx + n_sessions]
     _df_random_session = _df_random_mouse[
-        _df_random_mouse["session"] == _random_session
-    ].copy()
+        _df_random_mouse["session"].isin(random_sessions)
+    ]
 
     _window = 50
     _df_random_session = dft.get_performance_through_trials(
@@ -413,10 +437,8 @@ def _(df_test, dft, plots, plt):
         _df_random_session.session != _df_random_session.session.shift(1)
     ].index
 
-    if _df_random_session.current_training_stage.nunique() > 1:
-        _perf_hue = "current_training_stage"
-    else:
-        _perf_hue = "stimulus_modality"
+    _perf_hue = "_performance_line"
+    _df_random_session[_perf_hue] = "performance"
 
     _fig, _perf_ax = plt.subplots(figsize=(7, 4))
     _perf_ax = plots.performance_vs_trials_plot(
@@ -425,9 +447,261 @@ def _(df_test, dft, plots, plt):
         legend=True,
         session_changes=_session_changes,
         hue=_perf_hue,
+        palette=["black"],
     )
-    _perf_ax.set_title(f"{_random_mouse} | {_random_session}")
+    _df_random_roap = _df_random_session.copy()
+    _df_random_roap["repeat_or_alternate"] = dft.get_repeat_or_alternate_series(
+        _df_random_roap.correct_side
+    )
+    _df_random_roap = dft.get_repeat_or_alternate_performance(
+        _df_random_roap,
+        window=_window,
+    )
+    _perf_ax = plots.repeat_or_alternate_performance_plot(
+        _df_random_roap,
+        _perf_ax,
+        session_changes=_session_changes,
+    )
+    _x_start = (
+        _df_random_session.loc[
+            _df_random_session["performance_w"].notna(),
+            "total_trial",
+        ].min()
+        + 50
+    )
+    _perf_ax.set_xlim(left=_x_start)
+    _perf_ax.set_title(f"{_random_mouse} | {random_sessions[0]}")
     _fig.tight_layout()
+    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/random_mouse_performance_plot.svg")
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # number of central pokes
+    """)
+    return
+
+
+@app.cell
+def _(df_test, np, plt):
+    # port 2 pokes histogram, split by correct
+    _df_p2h = df_test.copy()
+
+    _npokes_correct = _df_p2h.loc[_df_p2h["correct"] == True, "port2_pokes_num"]
+    _npokes_wrong = _df_p2h.loc[_df_p2h["correct"] == False, "port2_pokes_num"]
+
+    _bins = np.arange(
+        _df_p2h["port2_pokes_num"].min() - 0.5,
+        # _df_p2h["port2_pokes_num"].max() + 1.5,
+        25.5,
+        1,
+    )
+
+    _fig, _ax = plt.subplots(figsize=(5, 4))
+
+    _ax.hist(
+        _npokes_correct,
+        bins=_bins,
+        color="green",
+        alpha=0.45,
+        label="correct",
+        density=True
+    )
+
+    _ax.hist(
+        _npokes_wrong,
+        bins=_bins,
+        color="red",
+        alpha=0.45,
+        label="wrong",
+        density=True
+    )
+
+    _ax.set_xlabel("Number of pokes in Port2")
+    _ax.set_ylabel("Frequency")
+    _ax.spines[["top", "right"]].set_visible(False)
+    _ax.legend(frameon=False)
+
+    _fig.tight_layout()
+    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_port2_pokes_hist.svg")
+    plt.show()
+    return
+
+
+@app.cell
+def _(df_test, np, plt):
+    # port 2 pokes histogram, split by correct
+    _df_break = df_test.copy()
+    _nbreaks_correct = _df_break.loc[_df_break["correct"] == True]
+    _nbreaks_wrong = _df_break.loc[_df_break["correct"] == False]
+
+    _bins = np.arange(
+        _df_break["fixation_breaks"].min() - 0.5,
+        # _df_break["fixation_breaks"].max() + 1.5,
+        25.5,
+        1,
+    )
+
+    _fig, _ax = plt.subplots(figsize=(5, 4))
+
+    _ax.hist(
+        _nbreaks_correct["fixation_breaks"],
+        bins=_bins,
+        color="green",
+        alpha=0.45,
+        label="correct",
+        density=True
+    )
+
+    _ax.hist(
+        _nbreaks_wrong["fixation_breaks"],
+        bins=_bins,
+        color="red",
+        alpha=0.45,
+    
+        label="wrong",
+        density=True
+    )
+
+    _ax.set_xlabel("Number of breaks in fixation")
+    _ax.set_ylabel("Frequency")
+    _ax.spines[["top", "right"]].set_visible(False)
+    _ax.legend(frameon=False)
+
+    _fig.tight_layout()
+    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_fixation_breaks_hist.svg")
+    plt.show()
+    return
+
+
+@app.cell
+def _(df_options, df_selector, np, plt, utils):
+    # port 2 pokes histogram, split by correct, using df_selector / df_options
+    _selected_df_names = df_selector.value
+
+    _bins = np.arange(-0.5, 25.5, 1)
+
+    _fig, _axes = plt.subplots(
+        1,
+        len(_selected_df_names),
+        figsize=(5 * len(_selected_df_names), 4),
+        sharey=True,
+    )
+
+    for _ax, _df_name in zip(_axes, _selected_df_names):
+        _df_p2h = df_options[_df_name]["df"].copy()
+
+        _df_p2h["port2_holds"] = _df_p2h.apply(
+            lambda row: utils.get_trial_port_hold(row, 2),
+            axis=1,
+        )
+        _df_p2h["port2_npokes"] = _df_p2h["port2_holds"].apply(len)
+
+        _npokes_correct = _df_p2h.loc[_df_p2h["correct"] == True, "port2_npokes"]
+        _npokes_wrong = _df_p2h.loc[_df_p2h["correct"] == False, "port2_npokes"]
+
+        _ax.hist(
+            _npokes_correct,
+            bins=_bins,
+            color="green",
+            alpha=0.45,
+            label="correct",
+            density=True,
+        )
+
+        _ax.hist(
+            _npokes_wrong,
+            bins=_bins,
+            color="red",
+            alpha=0.45,
+            label="wrong",
+            density=True,
+        )
+
+        _ax.set_title(_df_name)
+        _ax.set_xlabel("Number of pokes in Port2")
+        _ax.spines[["top", "right"]].set_visible(False)
+        _ax.legend(frameon=False)
+
+    _axes[0].set_ylabel("Density")
+
+    _fig.tight_layout()
+    # _fig.savefig(
+    #     "/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_port2_pokes_hist.svg"
+    # )
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # trial start across time
+    """)
+    return
+
+
+@app.cell
+def _(df_test, plt, utils):
+    # random 5 sessions trial start time plot, colored by previous_correct
+    # each session starts from 0
+    _n_sessions = 5
+
+    _session_keys = (
+        df_test[["subject", "session"]]
+        .dropna()
+        .drop_duplicates()
+        .sample(n=_n_sessions)
+    )
+
+    _df_tst = df_test.merge(
+        _session_keys,
+        on=["subject", "session"],
+        how="inner",
+    ).copy()
+
+    _df_tst = _df_tst.sort_values(["subject", "session", "trial"]).reset_index(drop=True)
+
+    _df_tst = utils.add_time_from_session_start(_df_tst)
+
+    _sdf = _df_tst.copy()
+    _sdf["trial_from_start"] = _sdf.groupby(["subject", "session"]).cumcount()
+
+    _fig, _ax = plt.subplots(figsize=(6, 4))
+
+    _ax.scatter(
+        _sdf.loc[_sdf["previous_correct"] == True, "time_from_start"],
+        _sdf.loc[_sdf["previous_correct"] == True, "trial_from_start"],
+        s=8,
+        color="green",
+        alpha=0.6,
+        label="previous_correct",
+    )
+
+    _ax.scatter(
+        _sdf.loc[_sdf["previous_correct"] == False, "time_from_start"],
+        _sdf.loc[_sdf["previous_correct"] == False, "trial_from_start"],
+        s=8,
+        color="red",
+        alpha=0.6,
+        label="previous_incorrect",
+    )
+
+    _ax.set_xlabel("Trial start time from session start (s)")
+    _ax.set_ylabel("Trial number from session start")
+    _ax.spines[["top", "right"]].set_visible(False)
+    _ax.legend(frameon=False)
+
+    _fig.tight_layout()
+    _fig.savefig(
+        "/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/random_5_sessions_trial_start_time_plot.png"
+    )
+    _fig.savefig(
+        "/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/random_5_sessions_trial_start_time_plot.svg"
+    )
     plt.show()
     return
 
@@ -716,6 +990,29 @@ def _():
     #     plt.legend(frameon=False)
     #     plt.tight_layout()
     #     plt.show()
+    return
+
+
+@app.cell
+def _(df_test_vis_hard, plots, plt):
+    _fig, _ax = plt.subplots(1, 1, figsize=(5, 5))
+    for _i, linecolor in zip(df_test_vis_hard[df_test_vis_hard['previous_correct_numeric'] == 1].groupby('previous_port_before_stimulus'), ['brown', 'lightcoral']):
+        plots.psychometric_plot(df = _i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric', 
+                                line_kwargs={'color': linecolor,
+                                             'label': 'Left_previous_correct' if _i[0] == 'left' else 'Right_previous_correct'}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax)
+
+    for _i, linecolor in zip(df_test_vis_hard[df_test_vis_hard['previous_correct_numeric'] == 0].groupby('previous_port_before_stimulus'), ['darkgreen', 'limegreen']):
+        plots.psychometric_plot(df = _i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric', 
+                                line_kwargs={'color': linecolor,
+                                             'label': 'Left_previous_incorrect' if _i[0] == 'left' else 'Right_previous_incorrect'}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax)
+    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_correction_previous.svg")
+    _ax.legend()
+    _ax.set_title("Previous Correction Previous")
+
     return
 
 

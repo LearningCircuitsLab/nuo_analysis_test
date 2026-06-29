@@ -71,7 +71,7 @@ def _(Path):
         file_format="svg",
         dpi=300,
     ):
-        figure_folder = figure_export_root / _safe_figure_file_stem(folder_name)
+        figure_folder = figure_export_root / str(folder_name)
         figure_folder.mkdir(parents=True, exist_ok=True)
 
         saved_paths = []
@@ -1107,6 +1107,7 @@ def _(
     pre_time_bin,
     s_speed_change_dic_hm3_prebin,
     s_speed_change_dic_hm4_prebin,
+    save_figures_to_folder,
     session_axis_lookup,
 ):
     # speed change trial by trial
@@ -1227,6 +1228,7 @@ def _(
         metric_name="speed",
         y_limits=None,
         horizontal_reference=None,
+        save_folder_name=None,
     ):
         organized, axis_labels = organize_mouse_day_traces(
             sound_dic,
@@ -1304,6 +1306,150 @@ def _(
             hspace=0.30,
         )
 
+        def draw_mouse_day_panel(
+            panel_fig,
+            panel_grid,
+            mouse,
+            day,
+            day_trials,
+            sound_traces,
+            no_sound_traces,
+            n_mini,
+            ymin,
+            ymax,
+            show_ylabel,
+        ):
+            for trial_index in range(n_mini):
+                trial_ax = panel_fig.add_subplot(panel_grid[trial_index, 0])
+                if trial_index == 0:
+                    trial_ax.set_title(axis_labels[day], fontsize=10)
+                if trial_index >= len(day_trials):
+                    trial_ax.set_axis_off()
+                    continue
+
+                trial_data = day_trials[trial_index]
+                for trace in trial_data["no_sound"]:
+                    trial_ax.plot(
+                        trial_speed_grid,
+                        trace,
+                        color="steelblue",
+                        linewidth=0.8,
+                    )
+                for trace in trial_data["sound"]:
+                    trial_ax.plot(
+                        trial_speed_grid,
+                        trace,
+                        color="firebrick",
+                        linewidth=0.8,
+                    )
+
+                trial_ax.axvline(
+                    0,
+                    color="black",
+                    linestyle="--",
+                    linewidth=0.5,
+                )
+                if horizontal_reference is not None:
+                    trial_ax.axhline(
+                        horizontal_reference,
+                        color="black",
+                        linestyle="--",
+                        linewidth=0.5,
+                    )
+                trial_ax.set_xlim(-pre_time_bin, trial_speed_time_bin)
+                trial_ax.set_ylim(ymin, ymax)
+                trial_ax.set_xticks([])
+                trial_ax.set_yticks([])
+                for spine in trial_ax.spines.values():
+                    spine.set_linewidth(0.4)
+
+                if show_ylabel:
+                    trial_ax.set_ylabel(
+                        f"T{trial_data['trial']}",
+                        rotation=0,
+                        ha="right",
+                        va="center",
+                        fontsize=6,
+                    )
+
+            summary_ax = panel_fig.add_subplot(panel_grid[-1, 0])
+            for trace in no_sound_traces:
+                summary_ax.plot(
+                    trial_speed_grid,
+                    trace,
+                    color="lightsteelblue",
+                    linewidth=0.8,
+                    alpha=0.25,
+                )
+            for trace in sound_traces:
+                summary_ax.plot(
+                    trial_speed_grid,
+                    trace,
+                    color="lightcoral",
+                    linewidth=0.8,
+                    alpha=0.25,
+                )
+
+            no_sound_mean = mean_trial_trace(no_sound_traces)
+            sound_mean = mean_trial_trace(sound_traces)
+            if no_sound_mean is not None:
+                summary_ax.plot(
+                    trial_speed_grid,
+                    no_sound_mean,
+                    color="steelblue",
+                    linewidth=2.5,
+                    label=f"no sound (n={len(no_sound_traces)})",
+                )
+            if sound_mean is not None:
+                summary_ax.plot(
+                    trial_speed_grid,
+                    sound_mean,
+                    color="firebrick",
+                    linewidth=2.5,
+                    label=f"sound (n={len(sound_traces)})",
+                )
+
+            summary_ax.axvline(
+                0,
+                color="black",
+                linestyle="--",
+                linewidth=1,
+            )
+            if horizontal_reference is not None:
+                summary_ax.axhline(
+                    horizontal_reference,
+                    color="black",
+                    linestyle="--",
+                    linewidth=1,
+                )
+            summary_ax.set_xlim(-pre_time_bin, trial_speed_time_bin)
+            summary_ax.set_ylim(ymin, ymax)
+            summary_ax.set_xlabel("Time from trigger (s)", fontsize=8)
+            if show_ylabel:
+                summary_ax.set_ylabel(
+                    f"{mouse}\n{value_label}",
+                    fontsize=8,
+                )
+            else:
+                summary_ax.set_yticklabels([])
+            summary_ax.tick_params(labelsize=7)
+            if sound_traces or no_sound_traces:
+                summary_ax.legend(fontsize=6, frameon=False)
+
+        def get_day_traces(mouse, day):
+            day_trials = resampled_data[mouse][day]
+            sound_traces = [
+                trace
+                for trial_data in day_trials
+                for trace in trial_data["sound"]
+            ]
+            no_sound_traces = [
+                trace
+                for trial_data in day_trials
+                for trace in trial_data["no_sound"]
+            ]
+            return day_trials, sound_traces, no_sound_traces
+
         for mouse_row, mouse in enumerate(mice):
             n_mini = mini_counts[mouse]
             ymin, ymax = mouse_ylimits[mouse]
@@ -1315,134 +1461,67 @@ def _(
                     height_ratios=[0.28] * n_mini + [2.0],
                     hspace=0.04,
                 )
-                day_trials = resampled_data[mouse][day]
-                sound_traces = [
-                    trace
-                    for trial_data in day_trials
-                    for trace in trial_data["sound"]
-                ]
-                no_sound_traces = [
-                    trace
-                    for trial_data in day_trials
-                    for trace in trial_data["no_sound"]
-                ]
+                day_trials, sound_traces, no_sound_traces = get_day_traces(
+                    mouse,
+                    day,
+                )
+                draw_mouse_day_panel(
+                    fig,
+                    inner_grid,
+                    mouse,
+                    day,
+                    day_trials,
+                    sound_traces,
+                    no_sound_traces,
+                    n_mini,
+                    ymin,
+                    ymax,
+                    day_col == 0,
+                )
 
-                for trial_index in range(n_mini):
-                    trial_ax = fig.add_subplot(inner_grid[trial_index, 0])
-                    if trial_index == 0:
-                        trial_ax.set_title(axis_labels[day], fontsize=10)
-                    if trial_index >= len(day_trials):
-                        trial_ax.set_axis_off()
+        if save_folder_name is not None:
+            for mouse in mice:
+                n_mini = mini_counts[mouse]
+                ymin, ymax = mouse_ylimits[mouse]
+                for day in all_days:
+                    day_trials, sound_traces, no_sound_traces = get_day_traces(
+                        mouse,
+                        day,
+                    )
+                    if not day_trials and not sound_traces and not no_sound_traces:
                         continue
 
-                    trial_data = day_trials[trial_index]
-                    for trace in trial_data["no_sound"]:
-                        trial_ax.plot(
-                            trial_speed_grid,
-                            trace,
-                            color="steelblue",
-                            linewidth=0.8,
-                        )
-                    for trace in trial_data["sound"]:
-                        trial_ax.plot(
-                            trial_speed_grid,
-                            trace,
-                            color="firebrick",
-                            linewidth=0.8,
-                        )
-
-                    trial_ax.axvline(
-                        0,
-                        color="black",
-                        linestyle="--",
-                        linewidth=0.5,
+                    single_fig = plt.figure(
+                        figsize=(3.6, n_mini * 0.28 + 2.2),
+                        dpi=150,
                     )
-                    if horizontal_reference is not None:
-                        trial_ax.axhline(
-                            horizontal_reference,
-                            color="black",
-                            linestyle="--",
-                            linewidth=0.5,
-                        )
-                    trial_ax.set_xlim(-pre_time_bin, trial_speed_time_bin)
-                    trial_ax.set_ylim(ymin, ymax)
-                    trial_ax.set_xticks([])
-                    trial_ax.set_yticks([])
-                    for spine in trial_ax.spines.values():
-                        spine.set_linewidth(0.4)
-
-                    if day_col == 0:
-                        trial_ax.set_ylabel(
-                            f"T{trial_data['trial']}",
-                            rotation=0,
-                            ha="right",
-                            va="center",
-                            fontsize=6,
-                        )
-
-                summary_ax = fig.add_subplot(inner_grid[-1, 0])
-                for trace in no_sound_traces:
-                    summary_ax.plot(
-                        trial_speed_grid,
-                        trace,
-                        color="lightsteelblue",
-                        linewidth=0.8,
-                        alpha=0.25,
+                    single_grid = single_fig.add_gridspec(
+                        n_mini + 1,
+                        1,
+                        height_ratios=[0.28] * n_mini + [2.0],
+                        hspace=0.04,
                     )
-                for trace in sound_traces:
-                    summary_ax.plot(
-                        trial_speed_grid,
-                        trace,
-                        color="lightcoral",
-                        linewidth=0.8,
-                        alpha=0.25,
+                    draw_mouse_day_panel(
+                        single_fig,
+                        single_grid,
+                        mouse,
+                        day,
+                        day_trials,
+                        sound_traces,
+                        no_sound_traces,
+                        n_mini,
+                        ymin,
+                        ymax,
+                        True,
                     )
-
-                no_sound_mean = mean_trial_trace(no_sound_traces)
-                sound_mean = mean_trial_trace(sound_traces)
-                if no_sound_mean is not None:
-                    summary_ax.plot(
-                        trial_speed_grid,
-                        no_sound_mean,
-                        color="steelblue",
-                        linewidth=2.5,
-                        label=f"no sound (n={len(no_sound_traces)})",
+                    single_title = f"{group_name} {mouse} {axis_labels[day]}"
+                    single_fig.suptitle(single_title, fontsize=12, y=1.02)
+                    single_fig.tight_layout()
+                    save_figures_to_folder(
+                        [(single_title, single_fig)],
+                        save_folder_name,
                     )
-                if sound_mean is not None:
-                    summary_ax.plot(
-                        trial_speed_grid,
-                        sound_mean,
-                        color="firebrick",
-                        linewidth=2.5,
-                        label=f"sound (n={len(sound_traces)})",
-                    )
-
-                summary_ax.axvline(
-                    0,
-                    color="black",
-                    linestyle="--",
-                    linewidth=1,
-                )
-                if horizontal_reference is not None:
-                    summary_ax.axhline(
-                        horizontal_reference,
-                        color="black",
-                        linestyle="--",
-                        linewidth=1,
-                    )
-                summary_ax.set_xlim(-pre_time_bin, trial_speed_time_bin)
-                summary_ax.set_ylim(ymin, ymax)
-                summary_ax.set_xlabel("Time from trigger (s)", fontsize=8)
-                if day_col == 0:
-                    summary_ax.set_ylabel(
-                        f"{mouse}\n{value_label}",
-                        fontsize=8,
-                    )
-                else:
-                    summary_ax.set_yticklabels([])
-                summary_ax.tick_params(labelsize=7)
-                if sound_traces or no_sound_traces:
-                    summary_ax.legend(fontsize=6, frameon=False)
+                    plt.close(single_fig)
 
         fig.suptitle(
             f"{group_name}: trial-by-trial {metric_name}",
@@ -1458,6 +1537,7 @@ def _(
         "hM3Dq",
         value_label="Mean speed",
         metric_name="speed",
+        save_folder_name="speed change by different days",
     )
     speed_trial_fig_hm4 = plot_mouse_trial_grid(
         s_speed_change_dic_hm4_prebin,
@@ -1465,6 +1545,7 @@ def _(
         "hM4Di",
         value_label="Mean speed",
         metric_name="speed",
+        save_folder_name="speed change by different days",
     )
 
     mo.vstack([speed_trial_fig_hm3, speed_trial_fig_hm4])
@@ -2692,6 +2773,7 @@ def _(
         metric_name="x position",
         y_limits=(0, 640),
         horizontal_reference=364,
+        save_folder_name="x_position change by different days",
     )
     x_position_trial_fig_hm4 = plot_mouse_trial_grid(
         s_x_position_dic_hm4_prebin,
@@ -2701,6 +2783,7 @@ def _(
         metric_name="x position",
         y_limits=(0, 640),
         horizontal_reference=364,
+        save_folder_name="x_position change by different days",
     )
 
     mo.vstack([x_position_trial_fig_hm3, x_position_trial_fig_hm4])
