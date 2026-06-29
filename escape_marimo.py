@@ -768,7 +768,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # mean speed comparison
+    # compare mean speed by different time window
     """)
     return
 
@@ -879,7 +879,7 @@ def _(
                 "Mean speed: sound - no sound (pixels/s)",
                 summary_method=difference_summary_method,
                 y_limits=None,
-                figsize=(5, 3.5),
+                figsize=(7, 4),
             )
         )
         mean_speed_difference_figs_hm4[mean_speed_time_bin] = (
@@ -889,7 +889,7 @@ def _(
                 "Mean speed: sound - no sound (pixels/s)",
                 summary_method=difference_summary_method,
                 y_limits=None,
-                figsize=(5, 3.5),
+                figsize=(7, 4),
             )
         )
 
@@ -1787,7 +1787,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## stationary time ratio
+    ## compare stationary time ratio by different time window
     """)
     return
 
@@ -2288,7 +2288,7 @@ def _(
                 f"hM3Dq: first {_stationary_time_bin}s",
                 "Stationary time ratio: sound - no sound",
                 summary_method=difference_summary_method,
-                figsize=(5, 3.5),
+                figsize=(7, 4),
             )
         )
         stationary_time_ratio_difference_figs_hm4[_stationary_time_bin] = (
@@ -2297,7 +2297,7 @@ def _(
                 f"hM4Di: first {_stationary_time_bin}s",
                 "Stationary time ratio: sound - no sound",
                 summary_method=difference_summary_method,
-                figsize=(5, 3.5),
+                figsize=(7, 4),
             )
         )
 
@@ -3022,7 +3022,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## trigger zone time ratio
+    ## compare trigger zone time ratio by different time window
     """)
     return
 
@@ -3227,7 +3227,7 @@ def _(
             f"hM3Dq: first {_trigger_zone_time_bin}s",
             "Trigger-zone time ratio: sound - no sound",
             summary_method=difference_summary_method,
-            figsize=(5, 3.5),
+            figsize=(7, 4),
         )
         trigger_zone_time_ratio_difference_figs_hm4[
             _trigger_zone_time_bin
@@ -3236,7 +3236,7 @@ def _(
             f"hM4Di: first {_trigger_zone_time_bin}s",
             "Trigger-zone time ratio: sound - no sound",
             summary_method=difference_summary_method,
-            figsize=(5, 3.5),
+            figsize=(7, 4),
         )
 
     trigger_zone_difference_figure_rows = [

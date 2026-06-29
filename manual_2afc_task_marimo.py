@@ -1485,8 +1485,8 @@ def _(
 ):
     mo.hstack(
         [
-            plot_group(df_test_selected_hm4, "hM4Di", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation), 
-            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="correct", metric_name="performance", agg_func="mean", plot_func=plot_metric_by_observation)
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_observation), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_observation)
         ]
     )
     return

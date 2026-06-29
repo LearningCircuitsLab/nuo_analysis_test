@@ -3884,19 +3884,6 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # compare performance according to the conditions
-    """)
-    return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     # compare the trial with time
     """)
     return
@@ -4814,6 +4801,436 @@ def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
 
     mo.vstack(_venn_disengaged_trial_view) 
     return plot_five_set_venn, plot_upset_from_trial_sets
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## compare performance according to the conditions
+    """)
+    return
+
+
+@app.cell
+def _(
+    df_dic_dcz,
+    df_dic_saline,
+    hM3Dq_mice,
+    hM4Di_mice,
+    mo,
+    np,
+    pd,
+    plt,
+    utils,
+):
+    from scipy import stats as _stats
+
+    performance_condition_columns = [
+        "roi_out",
+        "engaged",
+        "react_slow",
+        "break_more",
+        "previous_correct",
+    ]
+
+    def _bool_series(series):
+        if pd.api.types.is_bool_dtype(series):
+            return series.astype("boolean")
+
+        if pd.api.types.is_numeric_dtype(series):
+            numeric_values = pd.to_numeric(series, errors="coerce")
+            return numeric_values.map(
+                {1: True, 1.0: True, 0: False, 0.0: False}
+            ).astype("boolean")
+
+        text_values = series.astype(str).str.strip().str.lower()
+        return text_values.map(
+            {
+                "true": True,
+                "false": False,
+                "1": True,
+                "0": False,
+                "yes": True,
+                "no": False,
+            }
+        ).astype("boolean")
+
+    def _combine_trial_dfs():
+        frames = []
+        for condition_name, condition_dic in [
+            ("saline", df_dic_saline),
+            ("dcz", df_dic_dcz),
+        ]:
+            for pair_id, trial_df in condition_dic.items():
+                if trial_df is None or trial_df.empty:
+                    continue
+                trial_df = trial_df.copy()
+                trial_df["condition"] = condition_name
+                trial_df["pair_id"] = pair_id
+                frames.append(trial_df)
+
+        return (
+            pd.concat(frames, ignore_index=True)
+            if frames
+            else pd.DataFrame()
+        )
+
+    def _session_performance(trial_df, session):
+        if trial_df.empty:
+            return np.nan
+        return utils.get_session_performance(trial_df, session)
+
+    def _session_uid(row):
+        return "|".join(
+            str(row.get(column, ""))
+            for column in [
+                "subject",
+                "session",
+                "year_month_day",
+                "condition",
+                "pair_id",
+            ]
+        )
+
+    def _performance_rows_by_column(trial_df, split_column):
+        if trial_df.empty or split_column not in trial_df.columns:
+            return []
+
+        group_columns = [
+            column
+            for column in [
+                "subject",
+                "session",
+                "year_month_day",
+                "condition",
+                "pair_id",
+            ]
+            if column in trial_df.columns
+        ]
+        if "subject" not in group_columns or "session" not in group_columns:
+            return []
+
+        rows = []
+        for group_key, session_df in trial_df.groupby(
+            group_columns,
+            sort=True,
+            dropna=False,
+        ):
+            group_values = (
+                dict(zip(group_columns, group_key))
+                if isinstance(group_key, tuple)
+                else {group_columns[0]: group_key}
+            )
+            session = group_values["session"]
+            split_values = _bool_series(session_df[split_column])
+            true_df = session_df[split_values.eq(True).fillna(False)]
+            false_df = session_df[split_values.eq(False).fillna(False)]
+            group_values["mouse_group"] = (
+                "hM3Dq"
+                if str(group_values["subject"]) in hM3Dq_mice
+                else "hM4Di"
+                if str(group_values["subject"]) in hM4Di_mice
+                else "unknown"
+            )
+            group_values["session_uid"] = _session_uid(group_values)
+
+            for split_label, split_df in [
+                ("true", true_df),
+                ("all", session_df),
+                ("false", false_df),
+            ]:
+                rows.append(
+                    {
+                        **group_values,
+                        "split_column": split_column,
+                        "split_label": split_label,
+                        "performance": _session_performance(
+                            split_df,
+                            session,
+                        ),
+                    }
+                )
+
+        return rows
+
+    def _p_value_to_label(p_value):
+        if pd.isna(p_value):
+            return "n/a"
+        if p_value < 0.001:
+            return "***"
+        if p_value < 0.01:
+            return "**"
+        if p_value < 0.05:
+            return "*"
+        return "ns"
+
+    def _add_significance_bar(ax, x1, x2, y, h, label):
+        ax.plot(
+            [x1, x1, x2, x2],
+            [y, y + h, y + h, y],
+            color="black",
+            linewidth=1,
+        )
+        ax.text(
+            (x1 + x2) / 2,
+            y + h,
+            label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+
+    def _paired_ttest_label(wide_df, label_a, label_b):
+        if label_a not in wide_df.columns or label_b not in wide_df.columns:
+            return "n/a"
+
+        paired_values = wide_df[[label_a, label_b]].dropna()
+        if len(paired_values) < 2:
+            return "n/a"
+        try:
+            p_value = _stats.ttest_rel(
+                paired_values[label_a],
+                paired_values[label_b],
+                nan_policy="omit",
+            ).pvalue
+        except ValueError:
+            p_value = np.nan
+        return _p_value_to_label(p_value)
+
+    def _jitter_for_session(session_uid):
+        jitter_seed = sum(ord(char) for char in str(session_uid))
+        return ((jitter_seed % 1000) / 999 - 0.5) * 0.12
+
+    def _plot_group_column(summary_df, group_name, split_column):
+        fig, ax = plt.subplots(figsize=(5, 4.2), dpi=150)
+        required_columns = {
+            "mouse_group",
+            "split_column",
+            "split_label",
+            "performance",
+        }
+        if summary_df.empty or not required_columns.issubset(
+            summary_df.columns
+        ):
+            ax.text(
+                0.5,
+                0.5,
+                f"No {split_column} values to plot.",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            fig.tight_layout()
+            return fig
+
+        plot_df = summary_df[
+            (summary_df["mouse_group"] == group_name)
+            & (summary_df["split_column"] == split_column)
+        ].copy()
+
+        if plot_df.empty:
+            ax.text(
+                0.5,
+                0.5,
+                f"No {split_column} values to plot.",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            fig.tight_layout()
+            return fig
+
+        split_labels = ["true", "all", "false"]
+        x_positions = {"true": 1, "all": 2, "false": 3}
+        colors = {
+            "true": "#2A9D8F",
+            "all": "#6C757D",
+            "false": "#E76F51",
+        }
+        data = [
+            pd.to_numeric(
+                plot_df.loc[
+                    plot_df["split_label"] == split_label,
+                    "performance",
+                ],
+                errors="coerce",
+            ).dropna()
+            for split_label in split_labels
+        ]
+
+        if all(values.empty for values in data):
+            ax.text(
+                0.5,
+                0.5,
+                f"No {split_column} performance values to plot.",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            fig.tight_layout()
+            return fig
+
+        boxplot = ax.boxplot(
+            data,
+            positions=[x_positions[label] for label in split_labels],
+            labels=split_labels,
+            patch_artist=True,
+            showmeans=True,
+            showfliers=False,
+        )
+        for patch, split_label in zip(boxplot["boxes"], split_labels):
+            patch.set_facecolor(colors[split_label])
+            patch.set_alpha(0.22)
+            patch.set_edgecolor(colors[split_label])
+
+        wide_df = plot_df.pivot_table(
+            index="session_uid",
+            columns="split_label",
+            values="performance",
+            aggfunc="mean",
+        )
+
+        for session_uid, row in wide_df.iterrows():
+            jitter = _jitter_for_session(session_uid)
+            if (
+                "true" in row
+                and "all" in row
+                and pd.notna(row["true"])
+                and pd.notna(row["all"])
+            ):
+                ax.plot(
+                    [x_positions["true"] + jitter, x_positions["all"] + jitter],
+                    [row["true"], row["all"]],
+                    color="gray",
+                    alpha=0.35,
+                    linewidth=1,
+                    zorder=2,
+                )
+            if (
+                "false" in row
+                and "all" in row
+                and pd.notna(row["false"])
+                and pd.notna(row["all"])
+            ):
+                ax.plot(
+                    [x_positions["all"] + jitter, x_positions["false"] + jitter],
+                    [row["all"], row["false"]],
+                    color="gray",
+                    alpha=0.35,
+                    linewidth=1,
+                    zorder=2,
+                )
+
+        for split_label in split_labels:
+            label_df = plot_df[
+                plot_df["split_label"] == split_label
+            ].copy()
+            label_df["performance"] = pd.to_numeric(
+                label_df["performance"],
+                errors="coerce",
+            )
+            label_df = label_df.dropna(subset=["performance"])
+            if label_df.empty:
+                continue
+
+            ax.scatter(
+                [
+                    x_positions[split_label]
+                    + _jitter_for_session(session_uid)
+                    for session_uid in label_df["session_uid"]
+                ],
+                label_df["performance"],
+                color=colors[split_label],
+                edgecolor="black",
+                linewidth=0.4,
+                alpha=0.78,
+                s=34,
+                zorder=3,
+            )
+
+        y_values = pd.to_numeric(
+            plot_df["performance"],
+            errors="coerce",
+        ).dropna()
+        if not y_values.empty:
+            y_min = y_values.min()
+            y_max = y_values.max()
+            y_range = y_max - y_min
+            if y_range == 0:
+                y_range = abs(y_max) * 0.1 if y_max != 0 else 0.1
+
+            bar_h = y_range * 0.05
+            bar_y_1 = y_max + y_range * 0.12
+            bar_y_2 = y_max + y_range * 0.29
+            _add_significance_bar(
+                ax,
+                x_positions["true"],
+                x_positions["all"],
+                bar_y_1,
+                bar_h,
+                _paired_ttest_label(wide_df, "true", "all"),
+            )
+            _add_significance_bar(
+                ax,
+                x_positions["all"],
+                x_positions["false"],
+                bar_y_2,
+                bar_h,
+                _paired_ttest_label(wide_df, "false", "all"),
+            )
+            ax.set_ylim(
+                bottom=max(0, y_min - y_range * 0.14),
+                top=bar_y_2 + bar_h + y_range * 0.18,
+            )
+
+        ax.set_title(f"{group_name}: performance by {split_column}")
+        ax.set_xlabel(split_column)
+        ax.set_ylabel("performance")
+        ax.set_xticks([1, 2, 3])
+        ax.set_xticklabels(split_labels)
+        ax.grid(True, axis="y", alpha=0.3)
+        fig.tight_layout()
+        return fig
+
+    condition_performance_trial_df = _combine_trial_dfs()
+    condition_performance_summary = pd.DataFrame(
+        [
+            row
+            for split_column in performance_condition_columns
+            for row in _performance_rows_by_column(
+                condition_performance_trial_df,
+                split_column,
+            )
+        ]
+    )
+
+    condition_performance_figures = {}
+    condition_performance_view_items = []
+    for split_column in performance_condition_columns:
+        hm3_fig = _plot_group_column(
+            condition_performance_summary,
+            "hM3Dq",
+            split_column,
+        )
+        hm4_fig = _plot_group_column(
+            condition_performance_summary,
+            "hM4Di",
+            split_column,
+        )
+        condition_performance_figures[(split_column, "hM3Dq")] = hm3_fig
+        condition_performance_figures[(split_column, "hM4Di")] = hm4_fig
+        condition_performance_view_items.append(
+            mo.hstack([hm3_fig, hm4_fig])
+        )
+
+    condition_performance_view = mo.vstack(
+        condition_performance_view_items
+    )
+    condition_performance_view
+    return
 
 
 @app.cell(hide_code=True)
