@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.4"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -312,6 +312,23 @@ def _(mo):
 
 
 @app.cell
+def _():
+    x1 = [21, 608]
+    x2 = [28, 588]
+    y1 = [60, 434]
+    y2 = [72, 451]
+    x_length_pixel = ((x1[1] - x1[0]) + (x2[1] - x2[0]))/2
+    y_length_pixel = ((y1[1] - y1[0]) + (y2[1] - y2[0]))/2
+    x_length = 86
+    y_length = 56
+    x_len_tran = x_length_pixel / x_length
+    y_len_tran = y_length_pixel / y_length
+    trigger_zone_x_threshold = 365 / x_len_tran
+    home_zone_threshold = 150 / x_len_tran
+    return trigger_zone_x_threshold, x_len_tran, y_len_tran
+
+
+@app.cell
 def _(np):
     def add_timestamp_from_end(behav_df, video_df):
         behav_df[("timestamp", "")] = np.nan
@@ -336,6 +353,8 @@ def _(
     behavior_utils,
     bodyparts,
     video_df_dic,
+    x_len_tran,
+    y_len_tran,
 ):
     behav_df_filtered_dic = {}
     for name1 in analyzed_video_names:
@@ -353,6 +372,8 @@ def _(
                     behav_df_filtered[(bp, coord)]
                     .interpolate(method="linear", limit_direction="both")
                 )
+                # tranvert to actual coordinates
+                behav_df_filtered[(bp, coord)] = behav_df_filtered[(bp, coord)]/x_len_tran if coord == "x" else behav_df_filtered[(bp, coord)]/y_len_tran
         behav_df_filtered_dic[name1] = behav_df_filtered
 
         behav_df_filtered_dic[name1] = add_timestamp_from_end(
@@ -479,14 +500,7 @@ def _(mo):
 
 
 @app.cell
-def _(
-    analyzed_video_names,
-    behav_df_filtered_dic,
-    hM3Dq_mice,
-    hM4Di_mice,
-    pd,
-    session_df_dic,
-):
+def _(analyzed_video_names, behav_df_filtered_dic, pd, session_df_dic):
     import ast as _ast
 
     def get_event_times(value):
@@ -505,7 +519,7 @@ def _(
             return list(value)
         return [value]
 
-    def build_behavior_window_dataframes(mice, time_bin=15):
+    def build_behavior_window_dataframes(mice, time_bin=15, pretimebin=0, timeupd = True):
         s_behav_df_dic = {}
         ns_behav_df_dic = {}
 
@@ -533,8 +547,10 @@ def _(
                         trial_row["sound_not_played"]
                     )
                     for t0 in no_sound_times:
-                        mask = (timestamp >= t0) & (timestamp <= t0 + time_bin)
+                        mask = (timestamp >= (t0 - pretimebin)) & (timestamp <= t0 + time_bin)
                         window_df = behav_df.loc[mask].copy()
+                        if timeupd:
+                            window_df[("timestamp", "")] = window_df[("timestamp", "")] - t0
                         if not window_df.empty:
                             window_df.attrs["trigger_time"] = float(t0)
                             no_sound_by_trial.setdefault(trial, []).append(
@@ -544,8 +560,10 @@ def _(
                 if "sound_played" in session_df.columns:
                     sound_times = get_event_times(trial_row["sound_played"])
                     for t0 in sound_times:
-                        mask = (timestamp >= t0) & (timestamp <= t0 + time_bin)
+                        mask = (timestamp >= (t0 - pretimebin)) & (timestamp <= t0 + time_bin)
                         window_df = behav_df.loc[mask].copy()
+                        if timeupd:
+                            window_df[("timestamp", "")] = window_df[("timestamp", "")] - t0
                         if not window_df.empty:
                             window_df.attrs["trigger_time"] = float(t0)
                             sound_by_trial.setdefault(trial, []).append(window_df)
@@ -555,6 +573,13 @@ def _(
 
         return s_behav_df_dic, ns_behav_df_dic
 
+
+
+    return (build_behavior_window_dataframes,)
+
+
+@app.cell
+def _(build_behavior_window_dataframes, hM3Dq_mice, hM4Di_mice):
     s_behav_df_dic_hm3, ns_behav_df_dic_hm3 = (
         build_behavior_window_dataframes(hM3Dq_mice)
     )
@@ -566,6 +591,30 @@ def _(
         ns_behav_df_dic_hm4,
         s_behav_df_dic_hm3,
         s_behav_df_dic_hm4,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## cut sound play and not play df but with pretime window
+    """)
+    return
+
+
+@app.cell
+def _(build_behavior_window_dataframes, hM3Dq_mice, hM4Di_mice):
+    s_behav_df_dic_hm3_prebin, ns_behav_df_dic_hm3_prebin = (
+        build_behavior_window_dataframes(hM3Dq_mice, pretimebin=2)
+    )
+    s_behav_df_dic_hm4_prebin, ns_behav_df_dic_hm4_prebin = (
+        build_behavior_window_dataframes(hM4Di_mice, pretimebin=2)
+    )
+    return (
+        ns_behav_df_dic_hm3_prebin,
+        ns_behav_df_dic_hm4_prebin,
+        s_behav_df_dic_hm3_prebin,
+        s_behav_df_dic_hm4_prebin,
     )
 
 
@@ -589,6 +638,7 @@ def _(
     plot_test,
     plt,
     session_df_dic,
+    trigger_zone_x_threshold,
 ):
     def get_timestamp(behav_df):
         if ("timestamp", "") in behav_df.columns:
@@ -680,7 +730,7 @@ def _(
         ax.set_ylim(0, 480)
         ax.axes.xaxis.set_visible(False)
         ax.axes.yaxis.set_visible(False)
-        ax.axvline(x=364, c="k", linestyle="--", linewidth=2)
+        ax.axvline(x=trigger_zone_x_threshold, c="k", linestyle="--", linewidth=2)
 
 
     def plot_all_pairs_for_mouse(mouse):
@@ -1111,7 +1161,7 @@ def _(
     session_axis_lookup,
 ):
     # speed change trial by trial
-    trial_speed_time_bin = 15
+    trial_speed_time_bin = 1
     trial_speed_fps = 30
     trial_speed_grid = np.arange(-pre_time_bin, trial_speed_time_bin, 0.01)
 
@@ -2639,7 +2689,7 @@ def _(
 ):
     import ast as _ast
 
-    x_position_time_bin = 15
+    x_position_time_bin = 11
 
 
     def build_x_position_dictionaries(mice, pre_time_bin=None):
@@ -2764,6 +2814,7 @@ def _(
     plot_mouse_trial_grid,
     s_x_position_dic_hm3_prebin,
     s_x_position_dic_hm4_prebin,
+    trigger_zone_x_threshold,
 ):
     x_position_trial_fig_hm3 = plot_mouse_trial_grid(
         s_x_position_dic_hm3_prebin,
@@ -2772,7 +2823,7 @@ def _(
         value_label="X position (pixels)",
         metric_name="x position",
         y_limits=(0, 640),
-        horizontal_reference=364,
+        horizontal_reference=trigger_zone_x_threshold,
         save_folder_name="x_position change by different days",
     )
     x_position_trial_fig_hm4 = plot_mouse_trial_grid(
@@ -2782,7 +2833,7 @@ def _(
         value_label="X position (pixels)",
         metric_name="x position",
         y_limits=(0, 640),
-        horizontal_reference=364,
+        horizontal_reference=trigger_zone_x_threshold,
         save_folder_name="x_position change by different days",
     )
 
@@ -2809,6 +2860,7 @@ def _(
     pd,
     plt,
     session_df_dic,
+    trigger_zone_x_threshold,
 ):
     import ast as _ast
 
@@ -3049,7 +3101,7 @@ def _(
                         )
 
                 ax.axhline(
-                    y=364,
+                    y=trigger_zone_x_threshold,
                     c="k",
                     linestyle="dotted",
                     linewidth=2,
@@ -3118,8 +3170,9 @@ def _(
     pd,
     s_behav_df_dic_hm3,
     s_behav_df_dic_hm4,
+    trigger_zone_x_threshold,
 ):
-    trigger_zone_x_threshold = 364
+
 
     def get_trigger_zone_time_ratio(behav_df, time_bin):
         if ("timestamp", "") in behav_df.columns:
@@ -3272,12 +3325,12 @@ def _(
     trigger_zone_time_ratio_fig_hm3 = plot_ratio_boxplot(
         df_trigger_zone_time_ratio_hm3,
         "hM3Dq: first 15s",
-        "Trigger-zone time ratio (x > 364)",
+        "Trigger-zone time ratio (x > trigger_zone_x_threshold)",
     )
     trigger_zone_time_ratio_fig_hm4 = plot_ratio_boxplot(
         df_trigger_zone_time_ratio_hm4,
         "hM4Di: first 15s",
-        "Trigger-zone time ratio (x > 364)",
+        "Trigger-zone time ratio (x > trigger_zone_x_threshold)",
     )
 
     trigger_zone_time_ratio_difference_figs_hm3 = {}
@@ -3376,6 +3429,14 @@ def _(
 def _(mo):
     mo.md(r"""
     # sound intensity in behavior
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## mice by mice, trial plot across time
     """)
     return
 
@@ -3708,6 +3769,181 @@ def _(
             mo.md("## correlation between speed and sound"),
             *correlation_between_speed_sound_figures,
         ]
+    )
+    return smooth_envelope, t
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## plot all the speed and x position trace with sound playing
+    """)
+    return
+
+
+@app.cell
+def _(s_behav_df_dic_hm3_prebin):
+    s_behav_df_dic_hm3_prebin["NUO064_EscapeBehavior_20260613_171531"][1][0].columns
+    return
+
+
+@app.cell
+def _(
+    pd,
+    plt,
+    s_behav_df_dic_hm3_prebin,
+    s_behav_df_dic_hm4_prebin,
+    smooth_envelope,
+    t,
+):
+    from matplotlib.lines import Line2D
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True, dpi=150)
+
+    for group_name, _behav_df_dic, color in [
+        ("hM3Dq", s_behav_df_dic_hm3_prebin, "firebrick"),
+        ("hM4Di", s_behav_df_dic_hm4_prebin, "steelblue"),
+    ]:
+        for session_name, trial_dic in _behav_df_dic.items():
+            for trial, window_df_list in trial_dic.items():
+                for window_df in window_df_list:
+                    timestamp = pd.to_numeric(
+                        window_df[("timestamp", "")],
+                        errors="coerce",
+                    )
+
+                    speed = pd.to_numeric(
+                        window_df[("Center", "mean_speed")],
+                        errors="coerce",
+                    )
+                    x_pos = pd.to_numeric(
+                        window_df[("Center", "x")],
+                        errors="coerce",
+                    )
+
+                    axes[0].plot(timestamp, speed, color=color, alpha=0.25, lw=1)
+                    axes[1].plot(timestamp, x_pos, color=color, alpha=0.25, lw=1)
+
+    # 画 sound envelope，如果前面已经有 t 和 smooth_envelope
+    axes[0].plot(t, smooth_envelope, color="k", lw=2)
+    axes[1].plot(t, smooth_envelope, color="k", lw=2)
+
+    axes[0].set_ylabel("Mean speed")
+    axes[1].set_ylabel("X position")
+    axes[1].set_xlabel("Time from sound onset (s)")
+
+    axes[0].set_title("Sound-play windows: Center mean_speed")
+    axes[1].set_title("Sound-play windows: Center x position")
+
+    for ax in axes:
+        ax.axvline(0, color="k", linestyle="--", lw=1)
+        ax.legend(
+            handles=[
+                Line2D([0], [0], color="firebrick", lw=2, label="hM3Dq"),
+                Line2D([0], [0], color="steelblue", lw=2, label="hM4Di"),
+                Line2D([0], [0], color="k", lw=2, label="sound envelope"),
+            ],
+            frameon=False,
+        )
+
+    plt.tight_layout()
+    plt.show()
+    return
+
+
+@app.cell
+def _(plt, smooth_envelope, t, trigger_zone_x_threshold):
+    def plot_behavior_windows_with_sound(
+        behav_df_dic,
+        window_label="Sound-play",
+        line_color="firebrick",
+        line_alpha=0.25,
+        line_width=1,
+    ):
+        fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True, dpi=150)
+
+        for session_name, trial_dic in behav_df_dic.items():
+            for _, window_df_list in trial_dic.items():
+                for window_df in window_df_list:
+                    axes[0].plot(
+                        window_df[("timestamp", "")],
+                        window_df[("Center", "mean_speed")],
+                        color=line_color,
+                        alpha=line_alpha,
+                        lw=line_width,
+                    )
+                    axes[1].plot(
+                        window_df[("timestamp", "")],
+                        window_df[("Center", "x")],
+                        color=line_color,
+                        alpha=line_alpha,
+                        lw=line_width,
+                    )
+
+        axes[0].plot(t, smooth_envelope, color="k", lw=2)
+        axes[1].plot(t, smooth_envelope, color="k", lw=2)
+
+        axes[0].axvline(0, color="k", linestyle="--", lw=1)
+        axes[1].axvline(0, color="k", linestyle="--", lw=1)
+        axes[1].axhline(
+            trigger_zone_x_threshold,
+            color="pink",
+            linestyle="--",
+            lw=1,
+            label="Trigger zone",
+        )
+
+        axes[0].set_ylabel("Mean speed")
+        axes[1].set_ylabel("X position")
+        axes[1].set_xlabel("Time from sound onset (s)")
+
+        axes[0].set_title(f"{window_label} windows: Center mean_speed")
+        axes[1].set_title(f"{window_label} windows: Center x position")
+
+        axes[1].legend(frameon=False)
+
+        plt.tight_layout()
+        plt.show()
+
+        return fig, axes
+
+    return (plot_behavior_windows_with_sound,)
+
+
+@app.cell
+def _(
+    plot_behavior_windows_with_sound,
+    s_behav_df_dic_hm3_prebin,
+    s_behav_df_dic_hm4_prebin,
+):
+    s_behav_df_dic_prebin = {
+        **s_behav_df_dic_hm3_prebin,
+        **s_behav_df_dic_hm4_prebin,
+    }
+
+    _fig, _axes = plot_behavior_windows_with_sound(
+        s_behav_df_dic_prebin,
+        window_label="Sound-play",
+        line_color="firebrick",
+    )
+    return
+
+
+@app.cell
+def _(
+    ns_behav_df_dic_hm3_prebin,
+    ns_behav_df_dic_hm4_prebin,
+    plot_behavior_windows_with_sound,
+):
+    ns_behav_df_dic_prebin = {
+        **ns_behav_df_dic_hm3_prebin,
+        **ns_behav_df_dic_hm4_prebin,
+    }
+
+    _fig, _axes = plot_behavior_windows_with_sound(
+        ns_behav_df_dic_prebin,
+        window_label="No-sound",
+        line_color="steelblue",
     )
     return
 

@@ -269,6 +269,56 @@ def _(
     )
 
 
+@app.cell
+def _(df_test_vis_hard):
+    df_test_vis_hard['fixation_breaks'].unique()
+    return
+
+
+@app.cell
+def _(df_test_vis_hard):
+    df_test_vis_hard[
+        (
+            (df_test_vis_hard["previous_same_choice_numeric"] == 1)
+            & (df_test_vis_hard["roa_choice_numeric"] == 0)
+            & (df_test_vis_hard["previous_correct_numeric"] == 1)
+            & (df_test_vis_hard["fixation_breaks"] == 0)
+        )
+        |
+        (
+            (df_test_vis_hard["previous_same_choice_numeric"] == 0)
+            & (df_test_vis_hard["roa_choice_numeric"] == 1)
+            & (df_test_vis_hard["previous_correct_numeric"] == 1)
+            & (df_test_vis_hard["fixation_breaks"] == 0)
+        )
+    ][
+        ["subject", "correct", "first_choice", "visual_stimulus_ratio", "roa_choice", "previous_same_choice_numeric", "previous_correct", "fixation_breaks"]
+    ]
+    return
+
+
+@app.cell
+def _(df_test_aud_hard):
+    df_test_aud_hard[
+        (
+            (df_test_aud_hard["previous_same_choice_numeric"] == 1)
+            & (df_test_aud_hard["roa_choice_numeric"] == 0)
+            & (df_test_aud_hard["previous_correct_numeric"] == 1)
+            & (df_test_aud_hard["fixation_breaks"] == 0)
+        )
+        |
+        (
+            (df_test_aud_hard["previous_same_choice_numeric"] == 0)
+            & (df_test_aud_hard["roa_choice_numeric"] == 1)
+            & (df_test_aud_hard["previous_correct_numeric"] == 1)
+            & (df_test_aud_hard["fixation_breaks"] == 0)
+        )
+    ][[
+        "subject", "correct", "first_choice", "total_evidence_strength", "roa_choice", "previous_same_choice_numeric", "previous_correct", "fixation_breaks"
+    ]].sample(10)
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -561,7 +611,7 @@ def _(df_test, np, plt):
         bins=_bins,
         color="red",
         alpha=0.45,
-    
+
         label="wrong",
         density=True
     )
@@ -1012,7 +1062,6 @@ def _(df_test_vis_hard, plots, plt):
     _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_correction_previous.svg")
     _ax.legend()
     _ax.set_title("Previous Correction Previous")
-
     return
 
 

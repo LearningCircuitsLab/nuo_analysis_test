@@ -974,3 +974,12 @@ def add_number_of_pokes(df_raw: pd.DataFrame, port_number: int):
     df[port_hold_column] = df.apply(lambda row: utils.get_trial_port_hold(row, port_number), axis=1)
     df[f"port{port_number}_pokes_num"] = df[port_hold_column].apply(lambda x: len(x))
     return df
+
+
+def add_number_of_centralpokes_after_choice(df_raw: pd.DataFrame):
+    df = df_raw.copy()
+    df["eager_pokes"] = (
+        pd.to_numeric(df["port2_pokes_num"], errors="coerce")
+        - pd.to_numeric(df["fixation_breaks"], errors="coerce") - 1
+    )
+    return df

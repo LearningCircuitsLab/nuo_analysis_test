@@ -490,6 +490,14 @@ def _(df_test, dft, hM3Dq_mice, hM4Di_mice, np, pd, utils_test):
                 port_number=2,
             )
 
+            df_session = utils_test.add_fixation_break_columns(
+                df_session
+            )
+
+            df_session = utils_test.add_number_of_centralpokes_after_choice(
+                df_session
+            )
+
             df_session = dft.add_day_column_to_df(
                 df_session
             )
@@ -529,26 +537,50 @@ def _(df_test, dft, hM3Dq_mice, hM4Di_mice, np, pd, utils_test):
         )
         return df
 
-    def add_break_more_column(df_in, break_sd_criteria=2):
+    def add_eager_more_column(df_in, eager_sd_criteria=2):
         if df_in["subject"].nunique() > 1:
             raise ValueError("The dataframe should contain only one subject.")
 
         df = df_in.copy()
-        port2_pokes = pd.to_numeric(
-            df["port2_pokes_num"],
+        eager_pokes = pd.to_numeric(
+            df["eager_pokes"],
             errors="coerce",
-        )
-        df["port2_pokes_num_log"] = np.log(port2_pokes)
+        ).clip(lower=0)
 
-        median_port2_pokes_log = df["port2_pokes_num_log"].median()
-        std_port2_pokes_log = df["port2_pokes_num_log"].std()
-        break_threshold = (
-            median_port2_pokes_log
-            + break_sd_criteria * std_port2_pokes_log
+        df["eager_pokes_log"] = np.log1p(eager_pokes)
+
+        threshold = (
+            df["eager_pokes_log"].median()
+            + eager_sd_criteria * df["eager_pokes_log"].std()
         )
+
+        df["eager_more"] = (
+            df["eager_pokes_log"] > threshold
+            if np.isfinite(threshold)
+            else False
+        )
+        return df
+
+    def add_breaks_more_column(df_in, break_sd_criteria=2):
+        if df_in["subject"].nunique() > 1:
+            raise ValueError("The dataframe should contain only one subject.")
+
+        df = df_in.copy()
+        fixation_breaks = pd.to_numeric(
+            df["fixation_breaks"],
+            errors="coerce",
+        ).clip(lower=0)
+
+        df["fixation_breaks_log"] = np.log1p(fixation_breaks)
+
+        threshold = (
+            df["fixation_breaks_log"].median()
+            + break_sd_criteria * df["fixation_breaks_log"].std()
+        )
+
         df["break_more"] = (
-            df["port2_pokes_num_log"] > break_threshold
-            if np.isfinite(break_threshold)
+            df["fixation_breaks_log"] > threshold
+            if np.isfinite(threshold)
             else False
         )
         return df
@@ -562,7 +594,7 @@ def _(df_test, dft, hM3Dq_mice, hM4Di_mice, np, pd, utils_test):
             df_subject,
             reaction_sd_criteria=2,
         )
-        df_subject = add_break_more_column(
+        df_subject = add_eager_more_column(
             df_subject,
             break_sd_criteria=2,
         )
@@ -1135,12 +1167,6 @@ def _(mo):
     mo.md(r"""
     ## extract video frame
     """)
-    return
-
-
-@app.cell
-def _(behav_pair_map):
-    behav_pair_map
     return
 
 
