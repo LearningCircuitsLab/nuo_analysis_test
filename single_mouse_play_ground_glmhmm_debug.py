@@ -1044,24 +1044,141 @@ def _():
 
 
 @app.cell
-def _(df_test_vis_hard, plots, plt):
-    _fig, _ax = plt.subplots(1, 1, figsize=(5, 5))
-    for _i, linecolor in zip(df_test_vis_hard[df_test_vis_hard['previous_correct_numeric'] == 1].groupby('previous_port_before_stimulus'), ['brown', 'lightcoral']):
-        plots.psychometric_plot(df = _i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric', 
-                                line_kwargs={'color': linecolor,
+def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
+    _fig, _ax = plt.subplots(1, 2, figsize=(10, 5))
+    for _i, _linecolor in zip(df_test_aud_hard[df_test_aud_hard['previous_correct_numeric'] == 1].groupby('previous_port_before_stimulus'), ['brown', 'lightcoral']):
+        plots.psychometric_plot(df = _i[1], x = 'total_evidence_strength', y = 'first_choice_numeric', 
+                                line_kwargs={'color': _linecolor,
                                              'label': 'Left_previous_correct' if _i[0] == 'left' else 'Right_previous_correct'}, 
                                 point_kwargs={'color': 'black', 'label': None},
-                                ax=_ax)
+                                ax=_ax[1], 
+                                valueType = 'continue')
 
-    for _i, linecolor in zip(df_test_vis_hard[df_test_vis_hard['previous_correct_numeric'] == 0].groupby('previous_port_before_stimulus'), ['darkgreen', 'limegreen']):
-        plots.psychometric_plot(df = _i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric', 
-                                line_kwargs={'color': linecolor,
+    for _i, _linecolor in zip(df_test_aud_hard[df_test_aud_hard['previous_correct_numeric'] == 0].groupby('previous_port_before_stimulus'), ['darkgreen', 'limegreen']):
+        plots.psychometric_plot(df = _i[1], x = 'total_evidence_strength', y = 'first_choice_numeric', 
+                                line_kwargs={'color': _linecolor,
                                              'label': 'Left_previous_incorrect' if _i[0] == 'left' else 'Right_previous_incorrect'}, 
                                 point_kwargs={'color': 'black', 'label': None},
-                                ax=_ax)
-    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_correction_previous.svg")
-    _ax.legend()
-    _ax.set_title("Previous Correction Previous")
+                                ax=_ax[1],
+                                valueType = 'continue')
+    for _i, _linecolor in zip(df_test_vis_hard[df_test_vis_hard['previous_correct_numeric'] == 1].groupby('previous_port_before_stimulus'), ['brown', 'lightcoral']):
+        plots.psychometric_plot(df = _i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric', 
+                                line_kwargs={'color': _linecolor,
+                                             'label': 'Left_previous_correct' if _i[0] == 'left' else 'Right_previous_correct'}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax[0])
+
+    for _i, _linecolor in zip(df_test_vis_hard[df_test_vis_hard['previous_correct_numeric'] == 0].groupby('previous_port_before_stimulus'), ['darkgreen', 'limegreen']):
+        plots.psychometric_plot(df = _i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric', 
+                                line_kwargs={'color': _linecolor,
+                                             'label': 'Left_previous_incorrect' if _i[0] == 'left' else 'Right_previous_incorrect'}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax[0])
+    # _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_correction_previous.svg")
+    _ax[1].legend()
+    _ax[1].set_title("Previous Correction Previous auditory")
+    _ax[0].legend()
+    _ax[0].set_title("Previous Correction Previous visual")
+    return
+
+
+@app.cell
+def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
+    _fig, _ax = plt.subplots(1, 2, figsize=(10, 5))
+    for _i, _linecolor in zip(df_test_vis_hard.groupby('previous_correct_numeric'), ['red', 'green']):
+        plots.psychometric_plot(_i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric',
+                                line_kwargs={'color': _linecolor,
+                                             'label': 'True_previous' if _i[0] == 1 else 'False_previous'}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax[0])
+
+    for _i, _linecolor in zip(df_test_aud_hard.groupby('previous_correct_numeric'), ['red', 'green']):
+        plots.psychometric_plot(_i[1], x = 'total_evidence_strength', y = 'first_choice_numeric',
+                                line_kwargs={'color': _linecolor,
+                                             'label': 'True_previous' if _i[0] == 1 else 'False_previous'}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax[1],
+                                valueType="continue")
+    _ax[0].legend()
+    _ax[0].set_title("Previous outcome visual hard")
+    _ax[1].legend()
+    _ax[1].set_title("Previous outcome auditory hard")
+    return
+
+
+@app.cell
+def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
+    _fig, _ax = plt.subplots(1, 2, figsize=(10, 5))
+    for _i, _linecolor in zip(df_test_vis_hard.groupby('previous_first_choice_numeric'), ['steelblue', 'darkorange']):
+        plots.psychometric_plot(_i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric',
+                                line_kwargs={'color': _linecolor,
+                                             'label': 'Left previous' if _i[0] == 1 else 'Right previous'}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax[0])
+
+    for _i, _linecolor in zip(df_test_aud_hard.groupby('previous_first_choice_numeric'), ['steelblue', 'darkorange']):
+        plots.psychometric_plot(_i[1], x = 'total_evidence_strength', y = 'first_choice_numeric',
+                                line_kwargs={'color': _linecolor,
+                                             'label': 'Left previous' if _i[0] == 1 else 'Right previous'}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax[1],
+                                valueType="continue")
+    _ax[0].legend()
+    _ax[0].set_title("Previous choice visual hard")
+    _ax[1].legend()
+    _ax[1].set_title("Previous choice auditory hard")
+    return
+
+
+@app.cell
+def _(df_test_aud_hard, df_test_vis_hard, np, plots, plt):
+    _fig, _ax = plt.subplots(1, 2, figsize=(10, 5))
+    _df_copy_vis_hard = df_test_vis_hard.copy()
+    _df_copy_aud_hard = df_test_aud_hard.copy()
+    for mouse in _df_copy_vis_hard['subject'].unique():
+        for _session in _df_copy_vis_hard[_df_copy_vis_hard.subject == mouse]['session'].unique():
+            _df_mouse_session = _df_copy_vis_hard[np.logical_and(_df_copy_vis_hard['subject'] == mouse, _df_copy_vis_hard['session'] == _session)]
+            _df_mouse_session['previous_difficulty'] = _df_mouse_session['difficulty'].shift(1, fill_value=np.nan)
+            _df_copy_vis_hard.loc[_df_mouse_session.index, 'previous_difficulty'] = _df_mouse_session['previous_difficulty']
+        for _session in _df_copy_aud_hard[_df_copy_aud_hard.subject == mouse]['session'].unique():
+            _df_mouse_session = _df_copy_aud_hard[np.logical_and(_df_copy_aud_hard['subject'] == mouse, _df_copy_aud_hard['session'] == _session)]
+            _df_mouse_session['previous_difficulty'] = _df_mouse_session['difficulty'].shift(1, fill_value=np.nan)
+            _df_copy_aud_hard.loc[_df_mouse_session.index, 'previous_difficulty'] = _df_mouse_session['previous_difficulty']
+    for _i, _linecolor in zip(_df_copy_vis_hard.groupby('previous_difficulty'), ['lightgreen', 'limegreen', 'green']):
+        plots.psychometric_plot(_i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric',
+                                line_kwargs={'color': _linecolor,
+                                             'label': f"previous {_i[0]}"}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax[0])
+
+    for _i, _linecolor in zip(_df_copy_aud_hard.groupby('previous_difficulty'), ['lightgreen', 'limegreen', 'green']):
+        plots.psychometric_plot(_i[1], x = 'total_evidence_strength', y = 'first_choice_numeric',
+                                line_kwargs={'color': _linecolor,
+                                             'label': f"previous {_i[0]}"}, 
+                                point_kwargs={'color': 'black', 'label': None},
+                                ax=_ax[1],
+                                valueType="continue")
+    _ax[0].legend()
+    _ax[0].set_title("Previous difficulty visual hard")
+    _ax[1].legend()
+    _ax[1].set_title("Previous difficulty auditory hard")
+    return (mouse,)
+
+
+@app.cell
+def _(df_test_vis_hard, mouse, np, pd, plots, plt, sns):
+    vis_bins = np.linspace(0.01, 0.1666, num=11)
+    labels = [f"{round(vis_bins[i], 4)}-{round(vis_bins[i+1], 4)}" for i in range(len(vis_bins)-1)]
+    df_test_vis_hard["wrong_bright_bin"] = pd.cut(df_test_vis_hard["wrong_bright"], bins=vis_bins, labels=labels)
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+    colors = sns.color_palette("viridis", len(labels))
+    for label, color in zip(labels, colors):
+        df_test_vis_bin = df_test_vis_hard[df_test_vis_hard["wrong_bright_bin"] == label]
+        plots.psychometric_plot(df_test_vis_bin, x='visual_stimulus_ratio', y='first_choice_numeric', ax=ax, point_kwargs={'label': None, 'color': color, 'alpha': 0.5}, line_kwargs={'label': None, 'color': color, 'alpha': 0.5})
+    cbar = plt.colorbar(plt.cm.ScalarMappable(cmap=sns.color_palette("viridis", as_cmap=True)), ax=ax, orientation='vertical', shrink=0.3)
+    cbar.set_ticks([])
+    cbar.set_label('0.01 → 0.1666')
+    plt.title(f'Mouse: {mouse} - Last 7 days')
     return
 
 

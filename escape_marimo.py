@@ -3923,7 +3923,15 @@ def _(mo):
 
 @app.cell
 def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
-    def classify_escape_trials(behav_df_dic, session_df_dic, min_leave_frames=60, min_stayhome_frames=60, pk_spd_time_afterleave=0.5):
+    def classify_escape_trials(
+        behav_df_dic,
+        min_leave_frames=60,
+        min_stayhome_frames=60,
+        pk_spd_time_afterleave=0.5,
+        aftersound_stayhome_timewindow=(10.5, 11),
+        soundplay_finished_time=10,
+        soundplay_delay_time=12,
+    ):
         def first_stable_true_time(mask, timestamp, min_frames=60):
             mask = pd.Series(mask, index=timestamp.index).fillna(False).astype(bool)
             stable = mask.rolling(min_frames, min_periods=min_frames).sum() >= min_frames
@@ -3944,27 +3952,43 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
                 "real_stayhome": np.nan,
                 "peak_speed": np.nan,
                 "peak_speed_time": np.nan,
+                "peak_speed_xposition": np.nan,
+                "aftersound_stayhome": False,
             }
 
-        def classify_escape_window(window_df):
+        def classify_escape_window(window_df, soundplay_finished_time=soundplay_finished_time, soundplay_delay_time=soundplay_delay_time):
             metrics = empty_escape_metrics()
 
             timestamp = pd.to_numeric(window_df[("timestamp", "")], errors="coerce")
-            time_mask = (timestamp >= 0) & (timestamp <= 10)
 
-            trial_df = window_df.loc[time_mask].copy()
-            timestamp = timestamp.loc[time_mask]
+            time_mask_soundplay = (
+                (timestamp >= 0)
+                & (timestamp <= soundplay_finished_time)
+            )
+            time_mask_delay = (
+                (timestamp >= 0)
+                & (timestamp <= soundplay_delay_time)
+            )
 
-            if trial_df.empty:
+            trial_df_soundplay = window_df.loc[time_mask_soundplay].copy()
+            timestamp_soundplay = timestamp.loc[time_mask_soundplay]
+
+            trial_df_delay = window_df.loc[time_mask_delay].copy()
+            timestamp_delay = timestamp.loc[time_mask_delay]
+
+            if trial_df_soundplay.empty or trial_df_delay.empty:
                 return metrics
 
-            x = pd.to_numeric(trial_df[("Center", "x")], errors="coerce")
+            x = pd.to_numeric(
+                trial_df_soundplay[("Center", "x")],
+                errors="coerce",
+            )
 
             outside = x < trigger_zone_x_threshold
-            real_leave_time, real_leave_position = first_stable_true_time(
+            real_leave_time, _ = first_stable_true_time(
                 outside,
-                timestamp,
-                min_leave_frames
+                timestamp_soundplay,
+                min_frames=min_leave_frames,
             )
 
             if pd.isna(real_leave_time):
@@ -3972,8 +3996,12 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
 
             metrics["real_leave"] = real_leave_time
 
-            after_leave_df = trial_df.iloc[real_leave_position:].copy()
-            after_leave_timestamp = timestamp.iloc[real_leave_position:]
+            after_leave_mask = timestamp_delay >= real_leave_time
+            after_leave_df = trial_df_delay.loc[after_leave_mask].copy()
+            after_leave_timestamp = timestamp_delay.loc[after_leave_mask]
+
+            if after_leave_df.empty:
+                return metrics
 
             after_leave_x = pd.to_numeric(
                 after_leave_df[("Center", "x")],
@@ -3984,9 +4012,29 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
             real_stayhome_time, _ = first_stable_true_time(
                 stay,
                 after_leave_timestamp,
-                min_frames=min_stayhome_frames
+                min_frames=min_stayhome_frames,
             )
             metrics["real_stayhome"] = real_stayhome_time
+
+            if aftersound_stayhome_timewindow is None:
+                metrics["aftersound_stayhome"] = False
+            else:
+                aftersound_start, aftersound_end = aftersound_stayhome_timewindow
+                aftersound_mask = (
+                    (after_leave_timestamp >= aftersound_start)
+                    & (after_leave_timestamp <= aftersound_end)
+                )
+
+                aftersound_x = pd.to_numeric(
+                    after_leave_df.loc[aftersound_mask, ("Center", "x")],
+                    errors="coerce",
+                )
+
+                metrics["aftersound_stayhome"] = (
+                    not aftersound_x.empty
+                    and aftersound_x.notna().all()
+                    and (aftersound_x < home_zone_x_threshold).all()
+                )
 
             speed = pd.to_numeric(
                 after_leave_df[("Center", "mean_speed")],
@@ -3999,67 +4047,90 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
                 metrics["peak_speed_time"] = float(
                     after_leave_timestamp.loc[peak_speed_index]
                 )
+                peak_speed_xposition = pd.to_numeric(
+                    after_leave_df.loc[peak_speed_index, ("Center", "x")],
+                    errors="coerce",
+                )
+                metrics["peak_speed_xposition"] = (
+                    float(peak_speed_xposition)
+                    if pd.notna(peak_speed_xposition)
+                    else np.nan
+                )
 
             return metrics
 
-        def classify_escape_trial_windows(window_df_list):
-            for window_df in window_df_list:
-                metrics = classify_escape_window(window_df)
-                if pd.notna(metrics["real_leave"]):
-                    return metrics
-            return empty_escape_metrics()
-
-        session_df_dic_classified = {
-            name: df.copy()
-            for name, df in session_df_dic.items()
-        }
-
-        summary_rows = []
-        metric_columns = [
+        classified_columns = [
+            "session",
+            "trial",
+            "window_index",
+            "trigger_time",
             "real_leave",
             "real_stayhome",
             "peak_speed",
             "peak_speed_time",
+            "peak_speed_xposition",
+            "peak_latency",
+            "aftersound_stayhome",
+            "escape",
         ]
 
-        for name, trial_dic in behav_df_dic.items():
-            if name not in session_df_dic_classified:
-                continue
+        classified_df_dic = {}
 
-            for column in metric_columns:
-                session_df_dic_classified[name][column] = np.nan
+        for name, trial_dic in behav_df_dic.items():
+            rows = []
 
             for trial, window_df_list in trial_dic.items():
-                metrics = classify_escape_trial_windows(window_df_list)
+                for window_index, window_df in enumerate(window_df_list):
+                    metrics = classify_escape_window(window_df)
 
-                trial_mask = session_df_dic_classified[name]["trial"].eq(trial)
+                    real_leave = metrics["real_leave"]
+                    real_stayhome = metrics["real_stayhome"]
+                    peak_speed_time = metrics["peak_speed_time"]
+                    aftersound_stayhome = metrics["aftersound_stayhome"]
 
-                if not trial_mask.any():
-                    trial_mask = (
-                        session_df_dic_classified[name]["trial"]
-                        .astype(str)
-                        .eq(str(trial))
+                    if pd.notna(real_leave) and pd.notna(peak_speed_time):
+                        peak_latency = peak_speed_time - real_leave
+                    else:
+                        peak_latency = np.nan
+
+                    escape = (
+                        pd.notna(real_leave)
+                        and pd.notna(real_stayhome)
+                        and pd.notna(peak_speed_time)
+                        and (
+                            aftersound_stayhome_timewindow is None
+                            or aftersound_stayhome
+                        )
+                        and peak_latency >= 0
+                        and peak_latency < pk_spd_time_afterleave
                     )
 
-                if not trial_mask.any():
-                    continue
+                    rows.append(
+                        {
+                            "session": name,
+                            "trial": trial,
+                            "window_index": window_index,
+                            "trigger_time": window_df.attrs.get(
+                                "trigger_time",
+                                np.nan,
+                            ),
+                            "real_leave": real_leave,
+                            "real_stayhome": real_stayhome,
+                            "peak_speed": metrics["peak_speed"],
+                            "peak_speed_time": peak_speed_time,
+                            "peak_latency": peak_latency,
+                            "peak_speed_xposition": metrics["peak_speed_xposition"],
+                            "aftersound_stayhome": aftersound_stayhome,
+                            "escape": bool(escape),
+                        }
+                    )
 
-                for column, value in metrics.items():
-                    session_df_dic_classified[name].loc[trial_mask, column] = value
-
-            real_leave = session_df_dic_classified[name]["real_leave"]
-            real_stayhome = session_df_dic_classified[name]["real_stayhome"]
-            peak_speed_time = session_df_dic_classified[name]["peak_speed_time"]
-
-            session_df_dic_classified[name]["escape"] = (
-                real_leave.notna()
-                & real_stayhome.notna()
-                & peak_speed_time.notna()
-                & ((peak_speed_time - real_leave) < pk_spd_time_afterleave)
+            classified_df_dic[name] = pd.DataFrame(
+                rows,
+                columns=classified_columns,
             )
 
-
-        return session_df_dic_classified
+        return classified_df_dic
 
     return (classify_escape_trials,)
 
@@ -4081,22 +4152,40 @@ def split_escape_behavior_dict(
         if "escape" not in session_df.columns:
             continue
 
-        escape_trials = set(
-            session_df.loc[
-                session_df["escape"],
-                "trial",
-            ]
-        )
-        escape_trials_str = {str(trial) for trial in escape_trials}
+        escape_rows = session_df.loc[session_df["escape"] == True].copy()
+        escape_windows = set()
+        if {"trial", "window_index"}.issubset(escape_rows.columns):
+            escape_windows = {
+                (str(row["trial"]), int(row["window_index"]))
+                for _, row in escape_rows.iterrows()
+            }
+        else:
+            escape_trials = set(escape_rows["trial"])
+            escape_trials_str = {str(trial) for trial in escape_trials}
 
         s_behav_df_dic_prebin_escape[name] = {}
         s_behav_df_dic_prebin_noreaction[name] = {}
 
         for trial, window_df_list in trial_dic.items():
-            if trial in escape_trials or str(trial) in escape_trials_str:
-                s_behav_df_dic_prebin_escape[name][trial] = window_df_list
-            else:
-                s_behav_df_dic_prebin_noreaction[name][trial] = window_df_list
+            for window_index, window_df in enumerate(window_df_list):
+                if {"trial", "window_index"}.issubset(escape_rows.columns):
+                    is_escape = (str(trial), window_index) in escape_windows
+                else:
+                    is_escape = (
+                        trial in escape_trials
+                        or str(trial) in escape_trials_str
+                    )
+
+                if is_escape:
+                    s_behav_df_dic_prebin_escape[name].setdefault(
+                        trial,
+                        [],
+                    ).append(window_df)
+                else:
+                    s_behav_df_dic_prebin_noreaction[name].setdefault(
+                        trial,
+                        [],
+                    ).append(window_df)
 
     return s_behav_df_dic_prebin_escape, s_behav_df_dic_prebin_noreaction
 
@@ -4210,7 +4299,7 @@ def _(
 
         return fig
 
-    return (plot_window_dic_trajectories,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -4223,27 +4312,34 @@ def _(mo):
 
 @app.cell
 def _(
+    aftersound_stayhome_timewindow,
     classify_escape_trials,
+    min_leave_frames,
+    min_stayhome_frames,
     ns_behav_df_dic_prebin,
+    pk_spd_time_afterleave,
     s_behav_df_dic_prebin,
-    session_df_dic,
+    soundplay_delay_time,
+    soundplay_finished_time,
 ):
-    min_leave_frames=60
-    min_stayhome_frames=60
-    pk_spd_time_afterleave=2
+
     s_session_df_dic_classified = classify_escape_trials(
         s_behav_df_dic_prebin,
-        session_df_dic,
         min_leave_frames=min_leave_frames, 
         min_stayhome_frames=min_stayhome_frames, 
-        pk_spd_time_afterleave=pk_spd_time_afterleave
+        pk_spd_time_afterleave=pk_spd_time_afterleave, 
+        aftersound_stayhome_timewindow=aftersound_stayhome_timewindow,
+        soundplay_finished_time=soundplay_finished_time,
+        soundplay_delay_time=soundplay_delay_time,
     )
     ns_session_df_dic_classified = classify_escape_trials(
         ns_behav_df_dic_prebin,
-        session_df_dic,
         min_leave_frames=min_leave_frames, 
         min_stayhome_frames=min_stayhome_frames, 
-        pk_spd_time_afterleave=pk_spd_time_afterleave
+        pk_spd_time_afterleave=pk_spd_time_afterleave,
+        aftersound_stayhome_timewindow=aftersound_stayhome_timewindow,
+        soundplay_finished_time=soundplay_finished_time,
+        soundplay_delay_time=soundplay_delay_time,
     )
     return ns_session_df_dic_classified, s_session_df_dic_classified
 
@@ -4263,123 +4359,548 @@ def _(
             ns_behav_df_dic_prebin,
             ns_session_df_dic_classified,
         )
-    return s_behav_df_dic_prebin_escape, s_behav_df_dic_prebin_noreaction
-
-
-@app.cell
-def _(plot_window_dic_trajectories, s_behav_df_dic_prebin_escape):
-    s_trajectory_fig_escape = plot_window_dic_trajectories(
+    return (
+        ns_behav_df_dic_prebin_escape,
+        ns_behav_df_dic_prebin_noreaction,
         s_behav_df_dic_prebin_escape,
-        title="Sound-play trajectories: 0-10s",
-        cmap="inferno",
-        start_color="w",
-        time_after=10,
-    )
-    return
-
-
-@app.cell
-def _(plot_window_dic_trajectories, s_behav_df_dic_prebin_noreaction):
-    s_trajectory_fig_noreaction = plot_window_dic_trajectories(
         s_behav_df_dic_prebin_noreaction,
-        title="Sound-play trajectories: 0-10s",
-        cmap="inferno",
-        start_color="w",
-        time_after=10,
     )
-    return
 
 
 @app.cell
-def _(plot_behavior_windows_with_sound, s_behav_df_dic_prebin_escape):
-    _fig, _axes = plot_behavior_windows_with_sound(
-        s_behav_df_dic_prebin_escape,
-        window_label="Sound-play escape",
-        line_color="firebrick",
-    )
-    return
+def _(
+    home_zone_x_threshold,
+    ns_behav_df_dic_prebin_escape,
+    ns_behav_df_dic_prebin_noreaction,
+    ns_session_df_dic_classified,
+    pd,
+    plt,
+    s_behav_df_dic_prebin_escape,
+    s_behav_df_dic_prebin_noreaction,
+    s_session_df_dic_classified,
+    smooth_envelope,
+    t,
+    trigger_zone_x_threshold,
+):
+    def _plot_behavior_windows_with_sound_on_axes(
+        behav_df_dic,
+        axes,
+        window_label,
+        line_color,
+        line_alpha=0.25,
+        line_width=1,
+        sound_linestyle="-",
+    ):
+        for _session_name, _trial_dic in behav_df_dic.items():
+            for _, _window_df_list in _trial_dic.items():
+                for _window_df in _window_df_list:
+                    if ("timestamp", "") in _window_df.columns:
+                        _timestamp = _window_df[("timestamp", "")]
+                    else:
+                        _timestamp = _window_df["timestamp"]
 
+                    axes[0].plot(
+                        _timestamp,
+                        _window_df[("Center", "mean_speed")],
+                        color=line_color,
+                        alpha=line_alpha,
+                        lw=line_width,
+                    )
+                    axes[1].plot(
+                        _timestamp,
+                        _window_df[("Center", "x")],
+                        color=line_color,
+                        alpha=line_alpha,
+                        lw=line_width,
+                    )
 
-@app.cell
-def _(plot_behavior_windows_with_sound, s_behav_df_dic_prebin_noreaction):
-    _fig, _axes = plot_behavior_windows_with_sound(
-        s_behav_df_dic_prebin_noreaction,
-        window_label="Sound-play no reaction",
-        line_color="firebrick",
-    )
-    return
+        axes[0].plot(t, smooth_envelope, color="k", linestyle=sound_linestyle, lw=2)
+        axes[1].plot(t, smooth_envelope, color="k", linestyle=sound_linestyle, lw=2)
 
+        axes[0].axvline(0, color="k", linestyle="--", lw=1)
+        axes[1].axvline(0, color="k", linestyle="--", lw=1)
+        axes[1].axhline(
+            trigger_zone_x_threshold,
+            color="pink",
+            linestyle="--",
+            lw=1,
+            label="Trigger zone",
+        )
+        axes[1].axhline(
+            home_zone_x_threshold,
+            color="green",
+            linestyle="--",
+            lw=1,
+            label="Home zone",
+        )
 
-@app.cell
-def _(pd, plt, s_session_df_dic_classified):
-    escape_rows = []
-    noreaction_rows = []
+        axes[0].set_ylabel("Mean speed")
+        axes[1].set_ylabel("X position")
+        axes[1].set_xlabel("Time from trigger (s)")
+        axes[0].set_title(f"{window_label}: Center mean_speed")
+        axes[1].set_title(f"{window_label}: Center x position")
+        axes[1].legend(frameon=False, fontsize=8)
 
-    for _name, _session_df in s_session_df_dic_classified.items():
-        if not {
+    def _build_escape_param_plot_dfs(session_df_dic_classified):
+        _escape_rows = []
+        _noreaction_rows = []
+        _all_withoutescape_rows = []
+
+        _columns = [
+            "trial",
             "escape",
             "real_stayhome",
             "peak_speed",
-        }.issubset(_session_df.columns):
-            continue
+            "peak_speed_xposition",
+            "session",
+        ]
 
-        plot_df = _session_df[
-            [
-                "trial",
+        for _name, _session_df in session_df_dic_classified.items():
+            # collect all non-escape trials, even if other columns are missing
+            _all_withoutescape_plot_df = _session_df.copy()
+            _all_withoutescape_plot_df["session"] = _name
+
+            if "escape" in _all_withoutescape_plot_df.columns:
+                _all_withoutescape_plot_df = _all_withoutescape_plot_df[
+                    _all_withoutescape_plot_df["escape"] != True
+                ]
+
+            _all_withoutescape_rows.append(_all_withoutescape_plot_df)
+
+            if not {
                 "escape",
                 "real_stayhome",
                 "peak_speed",
-            ]
-        ].copy()
+                "peak_speed_xposition",
+            }.issubset(_session_df.columns):
+                continue
 
-        plot_df["session"] = _name
-        plot_df["real_stayhome"] = pd.to_numeric(
-            plot_df["real_stayhome"],
-            errors="coerce",
+            _plot_df = _session_df[
+                [
+                    "trial",
+                    "escape",
+                    "real_stayhome",
+                    "peak_speed",
+                    "peak_speed_xposition",
+                ]
+            ].copy()
+
+            _plot_df["session"] = _name
+            _plot_df["real_stayhome"] = pd.to_numeric(
+                _plot_df["real_stayhome"],
+                errors="coerce",
+            )
+            _plot_df["peak_speed"] = pd.to_numeric(
+                _plot_df["peak_speed"],
+                errors="coerce",
+            )
+            _plot_df["peak_speed_xposition"] = pd.to_numeric(
+                _plot_df["peak_speed_xposition"],
+                errors="coerce",
+            )
+            _plot_df = _plot_df.dropna(
+                subset=["real_stayhome", "peak_speed", "peak_speed_xposition"]
+            )
+
+            _escape_rows.append(_plot_df[_plot_df["escape"] == True])
+            _noreaction_rows.append(_plot_df[_plot_df["escape"] == False])
+
+        if _escape_rows:
+            _escape_plot_df = pd.concat(_escape_rows, ignore_index=True)
+        else:
+            _escape_plot_df = pd.DataFrame(columns=_columns)
+
+        if _noreaction_rows:
+            _noreaction_plot_df = pd.concat(_noreaction_rows, ignore_index=True)
+        else:
+            _noreaction_plot_df = pd.DataFrame(columns=_columns)
+
+        if _all_withoutescape_rows:
+            _all_withoutescape_plot_df = pd.concat(
+                _all_withoutescape_rows,
+                ignore_index=True,
+            )
+        else:
+            _all_withoutescape_plot_df = pd.DataFrame(columns=_columns)
+
+        return (
+            _escape_plot_df,
+            _noreaction_plot_df,
+            _all_withoutescape_plot_df,
         )
-        plot_df["peak_speed"] = pd.to_numeric(
-            plot_df["peak_speed"],
-            errors="coerce",
-        )
 
-        plot_df = plot_df.dropna(subset=["real_stayhome", "peak_speed"])
+    def _plot_escape_param_scatter(ax, plot_df, title, color, marker="o"):
+        if plot_df.empty:
+            ax.text(
+                0.5,
+                0.5,
+                "No data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+        else:
+            ax.scatter(
+                plot_df["peak_speed_xposition"],
+                plot_df["peak_speed"],
+                s=30,
+                alpha=0.7,
+                color=color,
+                marker=marker,
+            )
 
-        escape_rows.append(plot_df[plot_df["escape"] == True])
-        noreaction_rows.append(plot_df[plot_df["escape"] == False])
-
-    _escape_plot_df = pd.concat(escape_rows, ignore_index=True)
-    _noreaction_plot_df = pd.concat(noreaction_rows, ignore_index=True)
-
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4), dpi=150, sharex=True, sharey=True)
-
-    axes[0].scatter(
-        _escape_plot_df["real_stayhome"],
-        _escape_plot_df["peak_speed"],
-        s=30,
-        alpha=0.7,
-        color="firebrick",
-    )
-    axes[0].set_title("Escape trials")
-    axes[0].set_xlabel("real_stayhome")
-    axes[0].set_ylabel("peak_speed")
-
-    axes[1].scatter(
-        _noreaction_plot_df["real_stayhome"],
-        _noreaction_plot_df["peak_speed"],
-        s=30,
-        alpha=0.7,
-        color="steelblue",
-    )
-    axes[1].set_title("No-reaction trials")
-    axes[1].set_xlabel("real_stayhome")
-    axes[1].set_ylabel("peak_speed")
-
-    for ax in axes:
+        ax.set_title(title)
+        ax.set_xlabel("peak_speed_xposition")
+        ax.set_ylabel("peak_speed")
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-    plt.tight_layout()
+    def _plot_escape_frequency_histogram(
+        ax,
+        escape_plot_df,
+        all_withoutescape,
+        title,
+    ):
+        _escape_count = len(escape_plot_df)
+        _all_withoutescape_count = len(all_withoutescape)
+        _total_count = _escape_count + _all_withoutescape_count
+
+        if _total_count == 0:
+            ax.text(
+                0.5,
+                0.5,
+                "No data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_title(title)
+            return
+
+        _frequencies = [
+            _escape_count / _total_count,
+            _all_withoutescape_count / _total_count,
+        ]
+        _counts = [_escape_count, _all_withoutescape_count]
+
+        _bars = ax.bar(
+            [0, 1],
+            _frequencies,
+            color=["firebrick", "steelblue"],
+            alpha=0.75,
+            edgecolor="none",
+        )
+
+        for _bar, _freq, _count in zip(_bars, _frequencies, _counts):
+            ax.text(
+                _bar.get_x() + _bar.get_width() / 2,
+                _freq + 0.03,
+                f"{_freq:.2f}\nn={_count}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
+
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["escape", "non-escape"], rotation=30, ha="right")
+        ax.set_ylim(0, 1.15)
+        ax.set_ylabel("Frequency")
+        ax.set_title(title)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    escape_classification_overview_fig = plt.figure(
+        figsize=(28, 18),
+        dpi=150,
+        constrained_layout=True,
+    )
+    _gs = escape_classification_overview_fig.add_gridspec(
+        5,
+        6,
+        height_ratios=[1, 1, 1, 1, 1.1],
+    )
+
+    _s_escape_axes = [
+        escape_classification_overview_fig.add_subplot(_gs[0, 0:3]),
+        escape_classification_overview_fig.add_subplot(_gs[1, 0:3]),
+    ]
+    _s_noreaction_axes = [
+        escape_classification_overview_fig.add_subplot(_gs[2, 0:3]),
+        escape_classification_overview_fig.add_subplot(_gs[3, 0:3]),
+    ]
+    _ns_escape_axes = [
+        escape_classification_overview_fig.add_subplot(_gs[0, 3:6]),
+        escape_classification_overview_fig.add_subplot(_gs[1, 3:6]),
+    ]
+    _ns_noreaction_axes = [
+        escape_classification_overview_fig.add_subplot(_gs[2, 3:6]),
+        escape_classification_overview_fig.add_subplot(_gs[3, 3:6]),
+    ]
+
+    _plot_behavior_windows_with_sound_on_axes(
+        s_behav_df_dic_prebin_escape,
+        _s_escape_axes,
+        "Sound-play escape",
+        "firebrick",
+    )
+    _plot_behavior_windows_with_sound_on_axes(
+        s_behav_df_dic_prebin_noreaction,
+        _s_noreaction_axes,
+        "Sound-play no reaction",
+        "steelblue",
+    )
+    _plot_behavior_windows_with_sound_on_axes(
+        ns_behav_df_dic_prebin_escape,
+        _ns_escape_axes,
+        "No-sound escape",
+        "firebrick",
+        sound_linestyle="--"
+    )
+    _plot_behavior_windows_with_sound_on_axes(
+        ns_behav_df_dic_prebin_noreaction,
+        _ns_noreaction_axes,
+        "No-sound no reaction",
+        "steelblue",
+        sound_linestyle="--"
+    )
+
+    _s_escape_plot_df, _s_noreaction_plot_df, _s_all_withoutescape_plot_df = (
+        _build_escape_param_plot_dfs(s_session_df_dic_classified)
+    )
+    _ns_escape_plot_df, _ns_noreaction_plot_df, _ns_all_withoutescape_plot_df = (
+        _build_escape_param_plot_dfs(ns_session_df_dic_classified)
+    )
+
+    _scatter_axes = [
+        escape_classification_overview_fig.add_subplot(_gs[4, 0]),
+        escape_classification_overview_fig.add_subplot(_gs[4, 1]),
+        escape_classification_overview_fig.add_subplot(_gs[4, 2]),
+        escape_classification_overview_fig.add_subplot(_gs[4, 3]),
+        escape_classification_overview_fig.add_subplot(_gs[4, 4]),
+        escape_classification_overview_fig.add_subplot(_gs[4, 5]),
+    ]
+    _plot_escape_param_scatter(
+        _scatter_axes[0],
+        _s_escape_plot_df,
+        "Sound-play escape windows",
+        "firebrick",
+    )
+    _plot_escape_param_scatter(
+        _scatter_axes[1],
+        _s_all_withoutescape_plot_df,
+        "Sound-play no-reaction windows",
+        "steelblue",
+    )
+    _plot_escape_frequency_histogram(
+        _scatter_axes[2],
+        _s_escape_plot_df,
+        _s_all_withoutescape_plot_df,
+        "Sound-play window frequency",
+    )
+    _plot_escape_param_scatter(
+        _scatter_axes[3],
+        _ns_escape_plot_df,
+        "No-sound escape windows",
+        "firebrick",
+        marker="x"
+    )
+    _plot_escape_param_scatter(
+        _scatter_axes[4],
+        _ns_all_withoutescape_plot_df,
+        "No-sound no-reaction windows",
+        "steelblue",
+        marker="x"
+    )
+    _plot_escape_frequency_histogram(
+        _scatter_axes[5],
+        _ns_escape_plot_df,
+        _ns_all_withoutescape_plot_df,
+        "No-sound window frequency",
+    )
+
+    escape_classification_overview_fig.suptitle(
+        "Escape trial classification overview",
+        fontsize=16,
+    )
     plt.show()
+    return
+
+
+@app.cell
+def _():
+    min_leave_frames=60
+    min_stayhome_frames=15
+    pk_spd_time_afterleave=2
+    # aftersound_stayhome_timewindow=(10.5, 11)
+    aftersound_stayhome_timewindow=None
+    soundplay_finished_time=10
+    soundplay_delay_time=12
+    return (
+        aftersound_stayhome_timewindow,
+        min_leave_frames,
+        min_stayhome_frames,
+        pk_spd_time_afterleave,
+        soundplay_delay_time,
+        soundplay_finished_time,
+    )
+
+
+@app.cell
+def _():
+    # def _get_timestamp_from_escape_window_df(window_df):
+    #     if ("timestamp", "") in window_df.columns:
+    #         return pd.to_numeric(window_df[("timestamp", "")], errors="coerce")
+    #     return pd.to_numeric(window_df["timestamp"], errors="coerce")
+
+    # def _plot_window_dic_trajectories_on_ax(
+    #     behav_df_dic,
+    #     ax,
+    #     title,
+    #     cmap,
+    #     start_color,
+    #     time_after=10,
+    # ):
+    #     _all_speed = []
+
+    #     for _session_name, _trial_dic in behav_df_dic.items():
+    #         for _trial, _window_df_list in _trial_dic.items():
+    #             for _window_df in _window_df_list:
+    #                 _timestamp = _get_timestamp_from_escape_window_df(
+    #                     _window_df
+    #                 )
+    #                 _time_mask = (_timestamp >= 0) & (_timestamp <= time_after)
+    #                 _speed = pd.to_numeric(
+    #                     _window_df.loc[
+    #                         _time_mask,
+    #                         ("Center", "mean_speed"),
+    #                     ],
+    #                     errors="coerce",
+    #                 ).dropna()
+    #                 if not _speed.empty:
+    #                     _all_speed.append(_speed)
+
+    #     if not _all_speed:
+    #         ax.text(
+    #             0.5,
+    #             0.5,
+    #             "No trajectory data",
+    #             ha="center",
+    #             va="center",
+    #             transform=ax.transAxes,
+    #         )
+    #         ax.set_title(title)
+    #         return
+
+    #     _all_speed = pd.concat(_all_speed)
+    #     _vmin = _all_speed.quantile(0.01)
+    #     _vmax = _all_speed.quantile(0.99)
+    #     _norm = mpl.colors.Normalize(vmin=_vmin, vmax=_vmax)
+
+    #     for _session_name, _trial_dic in behav_df_dic.items():
+    #         for _trial, _window_df_list in _trial_dic.items():
+    #             for _window_df in _window_df_list:
+    #                 _timestamp = _get_timestamp_from_escape_window_df(
+    #                     _window_df
+    #                 )
+    #                 _time_mask = (_timestamp >= 0) & (_timestamp <= time_after)
+
+    #                 _df_traj = _window_df.loc[
+    #                     _time_mask,
+    #                     "Center",
+    #                 ][["x", "y", "mean_speed"]].copy()
+
+    #                 _df_traj[["x", "y", "mean_speed"]] = (
+    #                     _df_traj[["x", "y", "mean_speed"]]
+    #                     .apply(pd.to_numeric, errors="coerce")
+    #                     .interpolate(limit_direction="both")
+    #                 )
+    #                 _df_traj = _df_traj.dropna(
+    #                     subset=["x", "y", "mean_speed"]
+    #                 )
+
+    #                 if _df_traj.empty:
+    #                     continue
+
+    #                 plot_test.plot_traj_speed(
+    #                     _df_traj,
+    #                     cmap=cmap,
+    #                     ax=ax,
+    #                     norm=_norm,
+    #                 )
+    #                 ax.scatter(
+    #                     _df_traj["x"].iloc[0],
+    #                     _df_traj["y"].iloc[0],
+    #                     color=start_color,
+    #                     s=80,
+    #                     marker="o",
+    #                     edgecolors="k",
+    #                     zorder=3,
+    #                 )
+
+    #     ax.set_xlim(0, frame_xy[0] / x_len_tran)
+    #     ax.set_ylim(0, frame_xy[1] / y_len_tran)
+    #     ax.axes.xaxis.set_visible(False)
+    #     ax.axes.yaxis.set_visible(False)
+    #     ax.axvline(
+    #         x=trigger_zone_x_threshold,
+    #         c="k",
+    #         linestyle="--",
+    #         linewidth=2,
+    #     )
+    #     ax.set_title(title)
+
+    #     _sm = mpl.cm.ScalarMappable(norm=_norm, cmap=cmap)
+    #     _cbar = plt.colorbar(
+    #         _sm,
+    #         orientation="vertical",
+    #         ax=ax,
+    #         shrink=0.4,
+    #         pad=0.02,
+    #     )
+    #     _cbar.set_label("speed pixels/s", rotation=90)
+
+    # escape_trajectory_overview_fig, _axes = plt.subplots(
+    #     2,
+    #     2,
+    #     figsize=(18, 12),
+    #     dpi=150,
+    # )
+
+    # _plot_window_dic_trajectories_on_ax(
+    #     s_behav_df_dic_prebin_escape,
+    #     _axes[0, 0],
+    #     "Sound-play escape trajectories: 0-10s",
+    #     "inferno",
+    #     "w",
+    #     time_after=10,
+    # )
+    # _plot_window_dic_trajectories_on_ax(
+    #     s_behav_df_dic_prebin_noreaction,
+    #     _axes[0, 1],
+    #     "Sound-play no-reaction trajectories: 0-10s",
+    #     "inferno",
+    #     "w",
+    #     time_after=10,
+    # )
+    # _plot_window_dic_trajectories_on_ax(
+    #     ns_behav_df_dic_prebin_escape,
+    #     _axes[1, 0],
+    #     "No-sound escape trajectories: 0-10s",
+    #     "viridis",
+    #     "k",
+    #     time_after=10,
+    # )
+    # _plot_window_dic_trajectories_on_ax(
+    #     ns_behav_df_dic_prebin_noreaction,
+    #     _axes[1, 1],
+    #     "No-sound no-reaction trajectories: 0-10s",
+    #     "viridis",
+    #     "k",
+    #     time_after=10,
+    # )
+
+    # escape_trajectory_overview_fig.tight_layout()
+    # plt.show()
     return
 
 
