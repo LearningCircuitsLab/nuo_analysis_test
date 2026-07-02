@@ -265,10 +265,10 @@ def _(mo):
 
 @app.cell
 def _():
-    # hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
-    # hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
-    hM3Dq_mice = ['NUO064', 'NUO065', 'NUO010', 'NUO012']
-    hM4Di_mice = ['NUO060', 'NUO061', 'NUO002']
+    hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
+    # hM3Dq_mice = ['NUO064', 'NUO065', 'NUO010', 'NUO012']
+    # hM4Di_mice = ['NUO060', 'NUO061', 'NUO002']
     return hM3Dq_mice, hM4Di_mice
 
 
@@ -3902,6 +3902,26 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    # compare the conditions by observation
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    observation_select = mo.ui.dropdown(
+        options=["fixation_breaks", "eager_pokes"],
+        value="fixation_breaks",
+        label="observation_select",
+    )
+
+    observation_select
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     # compare the trial with time
     """)
     return
@@ -4621,7 +4641,7 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
 
 @app.cell
 def _(
-    hM3Dq_mice,
+    hM4Di_mice,
     mo,
     plot_five_set_venn,
     plot_upset_from_trial_sets,
@@ -4629,8 +4649,8 @@ def _(
     venn_disengaged_trial_summary,
 ):
     venn_disengaged_trial_summary_selectforplot = venn_disengaged_trial_summary[
-        (venn_disengaged_trial_summary['subject'].isin(hM3Dq_mice)) 
-        # (venn_disengaged_trial_summary['subject'].isin(hM4Di_mice)) 
+        # (venn_disengaged_trial_summary['subject'].isin(hM3Dq_mice)) 
+        (venn_disengaged_trial_summary['subject'].isin(hM4Di_mice)) 
         # & (venn_disengaged_trial_summary['modality'] == 'auditory')
         ]
     _selected_pair_ids = (
@@ -4660,7 +4680,7 @@ def _(
         }
 
     _selected_summary_view = []
-    for _condition_name in ["saline", "dcz"]:
+    for _condition_name, _facecolor in zip(["saline", "dcz"], ["darkblue", "darkred"]):
         _condition_title = f"{_condition_name.upper()}"
         _selected_summary_view.append(mo.md(f"### {_condition_title}"))
         _selected_summary_view.append(
@@ -4673,6 +4693,7 @@ def _(
                     plot_upset_from_trial_sets(
                         _selected_summary_sets[_condition_name],
                         title=f"{_condition_title} UpSet",
+                        facecolor = _facecolor
                     ),
                 ]
             )
@@ -4680,12 +4701,12 @@ def _(
         plot_five_set_venn(
             _selected_summary_sets[_condition_name],title=_condition_title
         ).savefig(
-            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_{_condition_title}_venn.svg"
+            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_{_condition_title}_venn.svg"
         )
         plot_upset_from_trial_sets(
-            _selected_summary_sets[_condition_name],title=_condition_title
+            _selected_summary_sets[_condition_name],title=_condition_title, facecolor = _facecolor
         ).savefig(
-            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_{_condition_title}_upset.svg"
+            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_{_condition_title}_upset.svg"
         )
     mo.vstack(_selected_summary_view)
     return
@@ -4738,7 +4759,7 @@ def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
         _fig.tight_layout()
         return _fig
 
-    def plot_upset_from_trial_sets(trial_sets, title):
+    def plot_upset_from_trial_sets(trial_sets, title, facecolor="k"):
         _labels = list(trial_sets)
         _all_trials = set().union(*trial_sets.values())
         _memberships = [
@@ -4777,6 +4798,8 @@ def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
             show_counts=True,
             show_percentages=True,
             sort_by="cardinality",
+            facecolor=facecolor,
+            shading_color="lightgray",
         )
         _upset.plot(fig=_fig)
         _fig.suptitle(title)
@@ -4800,7 +4823,7 @@ def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
             )
         )
 
-        for _condition_name in ["saline", "dcz"]:
+        for _condition_name, _facecolor in zip(["saline", "dcz"], ["darkblue", "darkred"]):
             _condition_title = _condition_name.upper()
             _venn_disengaged_trial_view.append(
                 mo.hstack(
@@ -4812,6 +4835,7 @@ def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
                         plot_upset_from_trial_sets(
                             _condition_sets[_condition_name],
                             title=f"{_condition_title} UpSet",
+                            facecolor=_facecolor
                         ),
                     ]
                 )
@@ -5270,7 +5294,7 @@ def _(
             format="svg",
             bbox_inches="tight",
         )
-    
+
     condition_performance_view
     return
 

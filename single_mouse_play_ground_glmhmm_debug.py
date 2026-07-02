@@ -765,15 +765,16 @@ def _(mo):
 
 
 @app.cell
-def _(df_test, plt, sns, stim_col, utils_test):
+def _(Path, df_test, plt, sns, stim_col, utils_test):
+    _save_dir = Path("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_curves")
+    _save_dir.mkdir(parents=True, exist_ok=True)
+
     for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
-        plt.figure(figsize=(5, 5), dpi=150)
+        _fig = plt.figure(figsize=(5, 5), dpi=150)
 
         if "vis" in stage_name__:
-            # x_col = "visual_stimulus_ratio"
             valueType = "discrete"
         else:
-            # x_col = "total_evidence_strength"
             valueType = "continue"
 
         if "easy" in stage_name__:
@@ -781,23 +782,16 @@ def _(df_test, plt, sns, stim_col, utils_test):
         else:
             bins = 6
 
-
-        for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
-            color_palette = sns.color_palette(
-                "colorblind",
-                df_stage__['subject'].nunique()
-            )
-
         for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
-            df_stage__.groupby('subject'),
-            sns.color_palette("colorblind", df_stage__['subject'].nunique())
+            df_stage__.groupby("subject"),
+            sns.color_palette("colorblind", df_stage__["subject"].nunique()),
         ):
             utils_test.psychometric_plot_easy_logistic(
                 df_mouse_psycurve,
                 x=stim_col,
                 y="first_choice_numeric",
-                valueType = valueType,
-                bins = bins,
+                valueType=valueType,
+                bins=bins,
                 point_kwargs={
                     "color": color,
                     "label": "",
@@ -813,9 +807,9 @@ def _(df_test, plt, sns, stim_col, utils_test):
         utils_test.psychometric_plot_easy_logistic(
             df_stage__,
             x=stim_col,
-            valueType = valueType,
-            bins = bins,
             y="first_choice_numeric",
+            valueType=valueType,
+            bins=bins,
             point_kwargs={
                 "color": "black",
                 "label": "",
@@ -829,6 +823,13 @@ def _(df_test, plt, sns, stim_col, utils_test):
         plt.title(stage_name__)
         plt.legend(frameon=False)
         plt.tight_layout()
+
+        _safe_stage_name = str(stage_name__).replace("/", "_").replace(" ", "_")
+        _fig.savefig(
+            _save_dir / f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/{_safe_stage_name}_psychometric_curve.svg",
+            bbox_inches="tight",
+        )
+
         plt.show()
     return
 
@@ -1109,14 +1110,14 @@ def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
 @app.cell
 def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
     _fig, _ax = plt.subplots(1, 2, figsize=(10, 5))
-    for _i, _linecolor in zip(df_test_vis_hard.groupby('previous_first_choice_numeric'), ['steelblue', 'darkorange']):
+    for _i, _linecolor in zip(df_test_vis_hard.groupby('previous_first_choice_numeric'), ['blueviolet', 'forestgreen']):
         plots.psychometric_plot(_i[1], x = 'visual_stimulus_ratio', y = 'first_choice_numeric',
                                 line_kwargs={'color': _linecolor,
                                              'label': 'Left previous' if _i[0] == 1 else 'Right previous'}, 
                                 point_kwargs={'color': 'black', 'label': None},
                                 ax=_ax[0])
 
-    for _i, _linecolor in zip(df_test_aud_hard.groupby('previous_first_choice_numeric'), ['steelblue', 'darkorange']):
+    for _i, _linecolor in zip(df_test_aud_hard.groupby('previous_first_choice_numeric'), ['blueviolet', 'forestgreen']):
         plots.psychometric_plot(_i[1], x = 'total_evidence_strength', y = 'first_choice_numeric',
                                 line_kwargs={'color': _linecolor,
                                              'label': 'Left previous' if _i[0] == 1 else 'Right previous'}, 
@@ -1127,6 +1128,8 @@ def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
     _ax[0].set_title("Previous choice visual hard")
     _ax[1].legend()
     _ax[1].set_title("Previous choice auditory hard")
+    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_choice.svg")
+    plt.show()
     return
 
 
@@ -1162,23 +1165,6 @@ def _(df_test_aud_hard, df_test_vis_hard, np, plots, plt):
     _ax[0].set_title("Previous difficulty visual hard")
     _ax[1].legend()
     _ax[1].set_title("Previous difficulty auditory hard")
-    return (mouse,)
-
-
-@app.cell
-def _(df_test_vis_hard, mouse, np, pd, plots, plt, sns):
-    vis_bins = np.linspace(0.01, 0.1666, num=11)
-    labels = [f"{round(vis_bins[i], 4)}-{round(vis_bins[i+1], 4)}" for i in range(len(vis_bins)-1)]
-    df_test_vis_hard["wrong_bright_bin"] = pd.cut(df_test_vis_hard["wrong_bright"], bins=vis_bins, labels=labels)
-    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
-    colors = sns.color_palette("viridis", len(labels))
-    for label, color in zip(labels, colors):
-        df_test_vis_bin = df_test_vis_hard[df_test_vis_hard["wrong_bright_bin"] == label]
-        plots.psychometric_plot(df_test_vis_bin, x='visual_stimulus_ratio', y='first_choice_numeric', ax=ax, point_kwargs={'label': None, 'color': color, 'alpha': 0.5}, line_kwargs={'label': None, 'color': color, 'alpha': 0.5})
-    cbar = plt.colorbar(plt.cm.ScalarMappable(cmap=sns.color_palette("viridis", as_cmap=True)), ax=ax, orientation='vertical', shrink=0.3)
-    cbar.set_ticks([])
-    cbar.set_label('0.01 → 0.1666')
-    plt.title(f'Mouse: {mouse} - Last 7 days')
     return
 
 

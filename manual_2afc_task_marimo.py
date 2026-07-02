@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.4"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -651,6 +651,7 @@ def _(
     hM4Di_mice,
     injection_info_df,
     pd,
+    utils_test,
 ):
     session_performance = df_test_selected.groupby(
         ["subject", "session"]
@@ -675,7 +676,11 @@ def _(
             )
         )
     )
-
+    df_test_selected_upd = utils_test.add_number_of_centralpokes_after_choice(
+        utils_test.add_fixation_break_columns(
+            df_test_selected_upd
+            )
+        )
     metric_paired_dates = behavior_utils.get_paired_injection_dates(
         injection_info_df
     )
@@ -1459,17 +1464,34 @@ def _(plot_metric_by_date):
 
 
 @app.cell
+def _(mo):
+    observation_select = mo.ui.dropdown(
+        options=["fixation_breaks", "eager_pokes", "port2_pokes_num", "reaction_time", "time_between_trials", "trial", "correct"],
+        value="fixation_breaks",
+        label="observation",
+    )
+
+    observation_select
+    return (observation_select,)
+
+
+@app.cell
 def _(
     df_test_selected_hm3,
     df_test_selected_hm4,
     mo,
+    observation_select,
     plot_group,
     plot_metric_by_date,
 ):
+    if observation_select.value == "trial":
+        _aggfunc = "len"
+    else:
+        _aggfunc = "mean"
     mo.vstack(
         [
-            plot_group(df_test_selected_hm4, "hM4Di", metric_col="trial", metric_name="total number of trials", agg_func="len", plot_func=plot_metric_by_date), 
-            plot_group(df_test_selected_hm3, "hM3Di", metric_col="trial", metric_name="total number of trials", agg_func="len", plot_func=plot_metric_by_date)
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col=observation_select.value, metric_name=observation_select.value, agg_func=_aggfunc, plot_func=plot_metric_by_date), 
+            plot_group(df_test_selected_hm3, "hM3Di", metric_col=observation_select.value, metric_name=observation_select.value, agg_func=_aggfunc, plot_func=plot_metric_by_date)
         ]
     )
     return
@@ -1480,13 +1502,18 @@ def _(
     df_test_selected_hm3,
     df_test_selected_hm4,
     mo,
+    observation_select,
     plot_group,
     plot_metric_by_observation,
 ):
+    if observation_select.value == "trial":
+        _aggfunc = "len"
+    else:
+        _aggfunc = "mean"
     mo.hstack(
         [
-            plot_group(df_test_selected_hm4, "hM4Di", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_observation), 
-            plot_group(df_test_selected_hm3, "hM3Dq", metric_col="port2_pokes_num", metric_name="port2_pokes_num", agg_func="mean", plot_func=plot_metric_by_observation)
+            plot_group(df_test_selected_hm4, "hM4Di", metric_col=observation_select.value, metric_name=observation_select.value, agg_func=_aggfunc, plot_func=plot_metric_by_observation), 
+            plot_group(df_test_selected_hm3, "hM3Dq", metric_col=observation_select.value, metric_name=observation_select.value, agg_func=_aggfunc, plot_func=plot_metric_by_observation)
         ]
     )
     return
