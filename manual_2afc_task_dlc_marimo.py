@@ -4487,7 +4487,8 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
                 "engaged = False": set(),
                 "roi_out = True": set(),
                 "react_slow = True": set(),
-                "break_more = True": set(),
+                "break_more = False": set(),
+                "eager_more = True": set(),
             }
 
         if "trial" in df.columns:
@@ -4498,28 +4499,21 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
         condition_masks = {
             "previous_correct = False": (
                 df["previous_correct"].eq(False)
-                if "previous_correct" in df.columns
-                else pd.Series(False, index=df.index)
             ),
             "engaged = False": (
                 df["engaged"].eq(False)
-                if "engaged" in df.columns
-                else pd.Series(False, index=df.index)
             ),
             "roi_out = True": (
                 df["roi_out"].eq(True)
-                if "roi_out" in df.columns
-                else pd.Series(False, index=df.index)
             ),
             "react_slow = True": (
                 df["react_slow"].eq(True)
-                if "react_slow" in df.columns
-                else pd.Series(False, index=df.index)
             ),
-            "break_more = True": (
-                df["break_more"].eq(True)
-                if "break_more" in df.columns
-                else pd.Series(False, index=df.index)
+            "break_more = False": (
+                df["break_more"].eq(False)
+            ),
+            "eager_more = True": (
+                df["eager_more"].eq(True)
             ),
         }
 
@@ -4584,13 +4578,12 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
                 _condition_name
             ] = _trial_sets
 
-            _previous_incorrect = _trial_sets[
-                "previous_correct = False"
-            ]
+            _previous_incorrect = _trial_sets["previous_correct = False"]
             _disengaged = _trial_sets["engaged = False"]
             _roi_out = _trial_sets["roi_out = True"]
             _react_slow = _trial_sets["react_slow = True"]
-            _break_more = _trial_sets["break_more = True"]
+            _break_more = _trial_sets["break_more = False"]
+            _eager_more = _trial_sets["eager_more = True"]
 
             _venn_disengaged_trial_rows.append(
                 {
@@ -4605,7 +4598,8 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
                     "engaged_false": len(_disengaged),
                     "roi_out_true": len(_roi_out),
                     "react_slow_true": len(_react_slow),
-                    "break_more_true": len(_break_more),
+                    "break_more_false": len(_break_more),
+                    "eager_more_true": len(_eager_more),
                     "previous_false_and_disengaged": len(
                         _previous_incorrect & _disengaged
                     ),
@@ -4874,6 +4868,7 @@ def _(
         "react_slow",
         "break_more",
         "previous_correct",
+        "eager_more",
     ]
 
 
