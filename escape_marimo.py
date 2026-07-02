@@ -4369,6 +4369,72 @@ def _(
 
 @app.cell
 def _(
+    behavior_utils,
+    hM3Dq_mice,
+    hM4Di_mice,
+    ns_behav_df_dic_prebin_escape,
+    ns_behav_df_dic_prebin_noreaction,
+    ns_session_df_dic_classified,
+    paired_dlc_dates,
+    s_behav_df_dic_prebin_escape,
+    s_behav_df_dic_prebin_noreaction,
+    s_session_df_dic_classified,
+):
+    def split_by_group_and_condition(data_dic):
+        data_dic_saline, data_dic_dcz, _pair_map, _missing_pairs = (
+            behavior_utils.split_paired_behavior_dicts(
+                data_dic,
+                paired_dlc_dates,
+            )
+        )
+
+        def filter_mice(input_dic, mice):
+            mice = set(mice)
+            return {
+                name: value
+                for name, value in input_dic.items()
+                if name[:6] in mice
+            }
+
+        return {
+            "hm3_saline": filter_mice(data_dic_saline, hM3Dq_mice),
+            "hm3_dcz": filter_mice(data_dic_dcz, hM3Dq_mice),
+            "hm4_saline": filter_mice(data_dic_saline, hM4Di_mice),
+            "hm4_dcz": filter_mice(data_dic_dcz, hM4Di_mice),
+        }
+
+    s_session_df_dic_classified_split = split_by_group_and_condition(
+        s_session_df_dic_classified
+    )
+    ns_session_df_dic_classified_split = split_by_group_and_condition(
+        ns_session_df_dic_classified
+    )
+    s_behav_df_dic_prebin_escape_split = split_by_group_and_condition(
+        s_behav_df_dic_prebin_escape
+    )
+    s_behav_df_dic_prebin_noreaction_split = split_by_group_and_condition(
+        s_behav_df_dic_prebin_noreaction
+    )
+    ns_behav_df_dic_prebin_escape_split = split_by_group_and_condition(
+        ns_behav_df_dic_prebin_escape
+    )
+    ns_behav_df_dic_prebin_noreaction_split = split_by_group_and_condition(
+        ns_behav_df_dic_prebin_noreaction
+    )
+
+    return (
+        ns_behav_df_dic_prebin_escape_split,
+        ns_behav_df_dic_prebin_noreaction_split,
+        ns_session_df_dic_classified_split,
+        s_behav_df_dic_prebin_escape_split,
+        s_behav_df_dic_prebin_noreaction_split,
+        s_session_df_dic_classified_split,
+        split_by_group_and_condition,
+    )
+
+
+@app.cell
+def _(
     home_zone_x_threshold,
     ns_behav_df_dic_prebin_escape,
     ns_behav_df_dic_prebin_noreaction,
@@ -4609,121 +4675,139 @@ def _(
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-    escape_classification_overview_fig = plt.figure(
-        figsize=(28, 18),
-        dpi=150,
-        constrained_layout=True,
-    )
-    _gs = escape_classification_overview_fig.add_gridspec(
-        5,
-        6,
-        height_ratios=[1, 1, 1, 1, 1.1],
-    )
-
-    _s_escape_axes = [
-        escape_classification_overview_fig.add_subplot(_gs[0, 0:3]),
-        escape_classification_overview_fig.add_subplot(_gs[1, 0:3]),
-    ]
-    _s_noreaction_axes = [
-        escape_classification_overview_fig.add_subplot(_gs[2, 0:3]),
-        escape_classification_overview_fig.add_subplot(_gs[3, 0:3]),
-    ]
-    _ns_escape_axes = [
-        escape_classification_overview_fig.add_subplot(_gs[0, 3:6]),
-        escape_classification_overview_fig.add_subplot(_gs[1, 3:6]),
-    ]
-    _ns_noreaction_axes = [
-        escape_classification_overview_fig.add_subplot(_gs[2, 3:6]),
-        escape_classification_overview_fig.add_subplot(_gs[3, 3:6]),
-    ]
-
-    _plot_behavior_windows_with_sound_on_axes(
+    def plot_escape_classification_overview(
+        s_session_df_dic_classified,
+        ns_session_df_dic_classified,
         s_behav_df_dic_prebin_escape,
-        _s_escape_axes,
-        "Sound-play escape",
-        "firebrick",
-    )
-    _plot_behavior_windows_with_sound_on_axes(
         s_behav_df_dic_prebin_noreaction,
-        _s_noreaction_axes,
-        "Sound-play no reaction",
-        "steelblue",
-    )
-    _plot_behavior_windows_with_sound_on_axes(
         ns_behav_df_dic_prebin_escape,
-        _ns_escape_axes,
-        "No-sound escape",
-        "firebrick",
-        sound_linestyle="--"
-    )
-    _plot_behavior_windows_with_sound_on_axes(
         ns_behav_df_dic_prebin_noreaction,
-        _ns_noreaction_axes,
-        "No-sound no reaction",
-        "steelblue",
-        sound_linestyle="--"
-    )
+    ):
+        escape_classification_overview_fig = plt.figure(
+            figsize=(28, 18),
+            dpi=150,
+            constrained_layout=True,
+        )
+        _gs = escape_classification_overview_fig.add_gridspec(
+            5,
+            6,
+            height_ratios=[1, 1, 1, 1, 1.1],
+        )
 
-    _s_escape_plot_df, _s_noreaction_plot_df, _s_all_withoutescape_plot_df = (
-        _build_escape_param_plot_dfs(s_session_df_dic_classified)
-    )
-    _ns_escape_plot_df, _ns_noreaction_plot_df, _ns_all_withoutescape_plot_df = (
-        _build_escape_param_plot_dfs(ns_session_df_dic_classified)
-    )
+        _s_escape_axes = [
+            escape_classification_overview_fig.add_subplot(_gs[0, 0:3]),
+            escape_classification_overview_fig.add_subplot(_gs[1, 0:3]),
+        ]
+        _s_noreaction_axes = [
+            escape_classification_overview_fig.add_subplot(_gs[2, 0:3]),
+            escape_classification_overview_fig.add_subplot(_gs[3, 0:3]),
+        ]
+        _ns_escape_axes = [
+            escape_classification_overview_fig.add_subplot(_gs[0, 3:6]),
+            escape_classification_overview_fig.add_subplot(_gs[1, 3:6]),
+        ]
+        _ns_noreaction_axes = [
+            escape_classification_overview_fig.add_subplot(_gs[2, 3:6]),
+            escape_classification_overview_fig.add_subplot(_gs[3, 3:6]),
+        ]
 
-    _scatter_axes = [
-        escape_classification_overview_fig.add_subplot(_gs[4, 0]),
-        escape_classification_overview_fig.add_subplot(_gs[4, 1]),
-        escape_classification_overview_fig.add_subplot(_gs[4, 2]),
-        escape_classification_overview_fig.add_subplot(_gs[4, 3]),
-        escape_classification_overview_fig.add_subplot(_gs[4, 4]),
-        escape_classification_overview_fig.add_subplot(_gs[4, 5]),
-    ]
-    _plot_escape_param_scatter(
-        _scatter_axes[0],
-        _s_escape_plot_df,
-        "Sound-play escape windows",
-        "firebrick",
-    )
-    _plot_escape_param_scatter(
-        _scatter_axes[1],
-        _s_all_withoutescape_plot_df,
-        "Sound-play no-reaction windows",
-        "steelblue",
-    )
-    _plot_escape_frequency_histogram(
-        _scatter_axes[2],
-        _s_escape_plot_df,
-        _s_all_withoutescape_plot_df,
-        "Sound-play window frequency",
-    )
-    _plot_escape_param_scatter(
-        _scatter_axes[3],
-        _ns_escape_plot_df,
-        "No-sound escape windows",
-        "firebrick",
-        marker="x"
-    )
-    _plot_escape_param_scatter(
-        _scatter_axes[4],
-        _ns_all_withoutescape_plot_df,
-        "No-sound no-reaction windows",
-        "steelblue",
-        marker="x"
-    )
-    _plot_escape_frequency_histogram(
-        _scatter_axes[5],
-        _ns_escape_plot_df,
-        _ns_all_withoutescape_plot_df,
-        "No-sound window frequency",
-    )
+        _plot_behavior_windows_with_sound_on_axes(
+            s_behav_df_dic_prebin_escape,
+            _s_escape_axes,
+            "Sound-play escape",
+            "firebrick",
+        )
+        _plot_behavior_windows_with_sound_on_axes(
+            s_behav_df_dic_prebin_noreaction,
+            _s_noreaction_axes,
+            "Sound-play no reaction",
+            "steelblue",
+        )
+        _plot_behavior_windows_with_sound_on_axes(
+            ns_behav_df_dic_prebin_escape,
+            _ns_escape_axes,
+            "No-sound escape",
+            "firebrick",
+            sound_linestyle="--",
+        )
+        _plot_behavior_windows_with_sound_on_axes(
+            ns_behav_df_dic_prebin_noreaction,
+            _ns_noreaction_axes,
+            "No-sound no reaction",
+            "steelblue",
+            sound_linestyle="--",
+        )
 
-    escape_classification_overview_fig.suptitle(
-        "Escape trial classification overview",
-        fontsize=16,
+        _s_escape_plot_df, _s_noreaction_plot_df, _s_all_withoutescape_plot_df = (
+            _build_escape_param_plot_dfs(s_session_df_dic_classified)
+        )
+        _ns_escape_plot_df, _ns_noreaction_plot_df, _ns_all_withoutescape_plot_df = (
+            _build_escape_param_plot_dfs(ns_session_df_dic_classified)
+        )
+
+        _scatter_axes = [
+            escape_classification_overview_fig.add_subplot(_gs[4, 0]),
+            escape_classification_overview_fig.add_subplot(_gs[4, 1]),
+            escape_classification_overview_fig.add_subplot(_gs[4, 2]),
+            escape_classification_overview_fig.add_subplot(_gs[4, 3]),
+            escape_classification_overview_fig.add_subplot(_gs[4, 4]),
+            escape_classification_overview_fig.add_subplot(_gs[4, 5]),
+        ]
+        _plot_escape_param_scatter(
+            _scatter_axes[0],
+            _s_escape_plot_df,
+            "Sound-play escape windows",
+            "firebrick",
+        )
+        _plot_escape_param_scatter(
+            _scatter_axes[1],
+            _s_all_withoutescape_plot_df,
+            "Sound-play no-reaction windows",
+            "steelblue",
+        )
+        _plot_escape_frequency_histogram(
+            _scatter_axes[2],
+            _s_escape_plot_df,
+            _s_all_withoutescape_plot_df,
+            "Sound-play window frequency",
+        )
+        _plot_escape_param_scatter(
+            _scatter_axes[3],
+            _ns_escape_plot_df,
+            "No-sound escape windows",
+            "firebrick",
+            marker="x",
+        )
+        _plot_escape_param_scatter(
+            _scatter_axes[4],
+            _ns_all_withoutescape_plot_df,
+            "No-sound no-reaction windows",
+            "steelblue",
+            marker="x",
+        )
+        _plot_escape_frequency_histogram(
+            _scatter_axes[5],
+            _ns_escape_plot_df,
+            _ns_all_withoutescape_plot_df,
+            "No-sound window frequency",
+        )
+
+        escape_classification_overview_fig.suptitle(
+            "Escape trial classification overview",
+            fontsize=16,
+        )
+        plt.show()
+        return escape_classification_overview_fig
+
+    escape_classification_overview_fig = plot_escape_classification_overview(
+        s_session_df_dic_classified,
+        ns_session_df_dic_classified,
+        s_behav_df_dic_prebin_escape,
+        s_behav_df_dic_prebin_noreaction,
+        ns_behav_df_dic_prebin_escape,
+        ns_behav_df_dic_prebin_noreaction,
     )
-    plt.show()
-    return
+    return escape_classification_overview_fig, plot_escape_classification_overview
 
 
 @app.cell

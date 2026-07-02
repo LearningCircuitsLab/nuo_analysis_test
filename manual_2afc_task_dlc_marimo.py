@@ -35,6 +35,7 @@ def _():
     import behavior_utils
     import plot_test
     import utils_test
+    from scipy import stats as stats
 
     from lecilab_behavior_analysis import utils as utils
     from lecilab_behavior_analysis import df_transforms as dft
@@ -55,6 +56,7 @@ def _():
         plot_test,
         plots,
         plt,
+        stats,
         utils,
         utils_test,
     )
@@ -265,10 +267,10 @@ def _(mo):
 
 @app.cell
 def _():
-    hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
-    hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
-    # hM3Dq_mice = ['NUO064', 'NUO065', 'NUO010', 'NUO012']
-    # hM4Di_mice = ['NUO060', 'NUO061', 'NUO002']
+    # hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    # hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
+    hM3Dq_mice = ['NUO064', 'NUO065', 'NUO010', 'NUO012']
+    hM4Di_mice = ['NUO060', 'NUO061', 'NUO002']
     return hM3Dq_mice, hM4Di_mice
 
 
@@ -402,9 +404,34 @@ def _(pd):
     return (injection_info_df,)
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # stimulus modality select
+    """)
+    return
+
+
 @app.cell
-def _(df_test_raw, injection_info_df, mouse, pd):
-    df_test = df_test_raw.copy()
+def _(mo):
+    stimulus_modality_select = mo.ui.dropdown(
+        options=["visual", "auditory"],
+        value=None,
+        label="Stimulus modality",
+    )
+    stimulus_modality_select
+    return (stimulus_modality_select,)
+
+
+@app.cell
+def _(df_test_raw, injection_info_df, mouse, pd, stimulus_modality_select):
+    if stimulus_modality_select.value == "visual":
+        df_test = df_test_raw[df_test_raw["stimulus_modality"] == "visual"]
+    elif stimulus_modality_select.value == "auditory":
+        df_test = df_test_raw[df_test_raw["stimulus_modality"] == "auditory"]
+    else:
+        df_test = df_test_raw.copy()
+
     df_test["observations"] = pd.NA
 
     date_col = injection_info_df.columns[0]
@@ -1230,17 +1257,6 @@ def _(Path):
     return behavior_svg_dir, save_behavior_svg
 
 
-@app.cell
-def _(mo):
-    stimulus_modality_select = mo.ui.dropdown(
-        options=["visual", "auditory"],
-        value=None,
-        label="Stimulus modality",
-    )
-    stimulus_modality_select
-    return (stimulus_modality_select,)
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -1892,8 +1908,9 @@ def _(
     roi_per_animal_condition_hm3_diff_split_col,
     roi_per_animal_condition_hm4_diff_split_col,
     split_label,
+    stats,
 ):
-    from scipy import stats as _stats
+
 
     _split_labels = list(split_label)
 
@@ -2065,7 +2082,7 @@ def _(
 
         if len(_split_labels) == 2 and len(_paired_df) >= 2:
             try:
-                _p_value = _stats.ttest_rel(
+                _p_value =  stats.ttest_rel(
                     _paired_df[_split_labels[0]],
                     _paired_df[_split_labels[1]],
                     nan_policy="omit",
@@ -2121,8 +2138,9 @@ def _(
     plt,
     roi_per_animal_condition_hm3,
     roi_per_animal_condition_hm4,
+    stats,
 ):
-    from scipy import stats as _stats
+
 
     def _p_value_to_label(_p_value):
         if pd.isna(_p_value):
@@ -2285,7 +2303,7 @@ def _(
 
             if len(_paired_df) >= 1:
                 try:
-                    _p_value = _stats.wilcoxon(
+                    _p_value =  stats.wilcoxon(
                         _paired_df["saline"],
                         _paired_df["dcz"],
                     ).pvalue
@@ -2772,8 +2790,9 @@ def _(
     speed_per_animal_condition_hm3_diff_split_col,
     speed_per_animal_condition_hm4_diff_split_col,
     split_label,
+    stats,
 ):
-    from scipy import stats as _stats
+ 
 
     _split_labels = list(split_label)
 
@@ -2945,7 +2964,7 @@ def _(
 
         if len(_split_labels) == 2 and len(_paired_df) >= 2:
             try:
-                _p_value = _stats.ttest_rel(
+                _p_value =  stats.ttest_rel(
                     _paired_df[_split_labels[0]],
                     _paired_df[_split_labels[1]],
                     nan_policy="omit",
@@ -3648,8 +3667,9 @@ def _(
     split_label,
     stationary_time_ratio_per_animal_condition_hm3_diff_split_col,
     stationary_time_ratio_per_animal_condition_hm4_diff_split_col,
+    stats,
 ):
-    from scipy import stats as _stats
+ 
 
     _split_labels = list(split_label)
 
@@ -3823,7 +3843,7 @@ def _(
 
         if len(_split_labels) == 2 and len(_paired_df) >= 2:
             try:
-                _p_value = _stats.ttest_rel(
+                _p_value =  stats.ttest_rel(
                     _paired_df[_split_labels[0]],
                     _paired_df[_split_labels[1]],
                     nan_policy="omit",
@@ -4858,9 +4878,10 @@ def _(
     np,
     pd,
     plt,
+    stats,
     utils,
 ):
-    from scipy import stats as _stats
+ 
 
     performance_condition_columns = [
         "roi_out",
@@ -5025,7 +5046,7 @@ def _(
                 return "n/a"
 
             try:
-                p_value = _stats.ttest_rel(
+                p_value =  stats.ttest_rel(
                     paired_values[label_a],
                     paired_values[label_b],
                     nan_policy="omit",
@@ -5291,6 +5312,335 @@ def _(
         )
 
     condition_performance_view
+    return condition_performance_summary, performance_condition_columns
+
+
+@app.cell
+def _(np, pd, plt, stats, stimulus_modality_select):
+    def plot_group_paired_condition_column(
+        summary_df,
+        group_name,
+        split_column,
+    ):
+        def jitter_for_pair(pair_id):
+            jitter_seed = sum(ord(char) for char in str(pair_id))
+            return ((jitter_seed % 1000) / 999 - 0.5) * 0.06
+
+        def p_value_to_label(p_value):
+            if pd.isna(p_value):
+                return "n/a"
+            if p_value < 0.001:
+                return "***"
+            if p_value < 0.01:
+                return "**"
+            if p_value < 0.05:
+                return "*"
+            return "ns"
+
+        def paired_ttest_label(wide_df, label_a, label_b):
+            if label_a not in wide_df.columns or label_b not in wide_df.columns:
+                return "n/a"
+
+            paired_values = wide_df[[label_a, label_b]].dropna()
+            if len(paired_values) < 2:
+                return "n/a"
+
+            try:
+                p_value =stats.ttest_rel(
+                    paired_values[label_a],
+                    paired_values[label_b],
+                    nan_policy="omit",
+                ).pvalue
+            except ValueError:
+                p_value = np.nan
+
+            return p_value_to_label(p_value)
+
+        def add_significance_bar(ax, x1, x2, y, h, label):
+            ax.plot(
+                [x1, x1, x2, x2],
+                [y, y + h, y + h, y],
+                color="black",
+                linewidth=1,
+            )
+            ax.text(
+                (x1 + x2) / 2,
+                y + h,
+                label,
+                ha="center",
+                va="bottom",
+                fontsize=10,
+            )
+
+        fig, ax = plt.subplots(figsize=(7.2, 4.2), dpi=150)
+
+        plot_df = summary_df[
+            (summary_df["mouse_group"] == group_name)
+            & (summary_df["split_column"] == split_column)
+        ].copy()
+
+        if plot_df.empty:
+            ax.text(
+                0.5,
+                0.5,
+                "No values",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            fig.tight_layout()
+            return fig
+
+        split_labels = ["true", "all", "false"]
+        x_positions = {
+            ("true", "saline"): 1,
+            ("true", "dcz"): 2,
+            ("all", "saline"): 4,
+            ("all", "dcz"): 5,
+            ("false", "saline"): 7,
+            ("false", "dcz"): 8,
+        }
+        colors = {
+            "true": "#2A9D8F",
+            "all": "#6C757D",
+            "false": "#E76F51",
+        }
+
+        data = []
+        positions = []
+        box_keys = []
+
+        for split_label in split_labels:
+            for condition_name in ["saline", "dcz"]:
+                values = pd.to_numeric(
+                    plot_df.loc[
+                        (plot_df["split_label"] == split_label)
+                        & (plot_df["condition"] == condition_name),
+                        "performance",
+                    ],
+                    errors="coerce",
+                ).dropna()
+
+                data.append(values)
+                positions.append(x_positions[(split_label, condition_name)])
+                box_keys.append((split_label, condition_name))
+
+        if all(values.empty for values in data):
+            ax.text(
+                0.5,
+                0.5,
+                "No performance values",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            fig.tight_layout()
+            return fig
+
+        boxplot = ax.boxplot(
+            data,
+            positions=positions,
+            widths=0.65,
+            patch_artist=True,
+            showmeans=True,
+            showfliers=False,
+        )
+
+        for patch, (split_label, condition_name) in zip(
+            boxplot["boxes"],
+            box_keys,
+        ):
+            color = colors[split_label]
+            patch.set_edgecolor(color)
+            patch.set_linewidth(1.5)
+
+            if condition_name == "saline":
+                patch.set_facecolor("none")
+                patch.set_alpha(1.0)
+            else:
+                patch.set_facecolor(color)
+                patch.set_alpha(0.25)
+
+        wide_df = plot_df.pivot_table(
+            index=["subject", "pair_id", "split_label"],
+            columns="condition",
+            values="performance",
+            aggfunc="mean",
+        )
+
+        for (subject, pair_id, split_label), row in wide_df.iterrows():
+            if (
+                "saline" not in row
+                or "dcz" not in row
+                or pd.isna(row["saline"])
+                or pd.isna(row["dcz"])
+            ):
+                continue
+
+            jitter = jitter_for_pair(pair_id)
+            ax.plot(
+                [
+                    x_positions[(split_label, "saline")] + jitter,
+                    x_positions[(split_label, "dcz")] + jitter,
+                ],
+                [row["saline"], row["dcz"]],
+                color="gray",
+                alpha=0.35,
+                linewidth=1,
+                zorder=2,
+            )
+
+        for split_label in split_labels:
+            for condition_name in ["saline", "dcz"]:
+                point_df = plot_df[
+                    (plot_df["split_label"] == split_label)
+                    & (plot_df["condition"] == condition_name)
+                ].copy()
+
+                point_df["performance"] = pd.to_numeric(
+                    point_df["performance"],
+                    errors="coerce",
+                )
+                point_df = point_df.dropna(subset=["performance"])
+
+                if point_df.empty:
+                    continue
+
+                ax.scatter(
+                    [
+                        x_positions[(split_label, condition_name)]
+                        + jitter_for_pair(pair_id)
+                        for pair_id in point_df["pair_id"]
+                    ],
+                    point_df["performance"],
+                    color=colors[split_label],
+                    edgecolor="black",
+                    linewidth=0.4,
+                    alpha=0.78,
+                    s=30,
+                    zorder=3,
+                )
+
+        y_values = pd.to_numeric(
+            plot_df["performance"],
+            errors="coerce",
+        ).dropna()
+
+        if not y_values.empty:
+            y_min = y_values.min()
+            y_max = y_values.max()
+            y_range = y_max - y_min
+            if y_range == 0:
+                y_range = abs(y_max) * 0.1 if y_max != 0 else 0.1
+
+            bar_h = y_range * 0.04
+            bar_y_start = y_max + y_range * 0.10
+
+            for idx, split_label in enumerate(split_labels):
+                split_wide_df = wide_df.xs(
+                    split_label,
+                    level="split_label",
+                    drop_level=False,
+                )
+
+                add_significance_bar(
+                    ax,
+                    x_positions[(split_label, "saline")],
+                    x_positions[(split_label, "dcz")],
+                    bar_y_start + idx * y_range * 0.16,
+                    bar_h,
+                    paired_ttest_label(
+                        split_wide_df,
+                        "saline",
+                        "dcz",
+                    ),
+                )
+
+            ax.set_ylim(
+                bottom=max(0, y_min - y_range * 0.14),
+                top=bar_y_start + len(split_labels) * y_range * 0.16 + bar_h,
+            )
+
+        ax.set_title(f"{group_name}: performance by {split_column} in {stimulus_modality_select.value}")
+        ax.set_ylabel("performance")
+        ax.set_xlabel(split_column)
+
+        ax.set_xticks([1, 2, 4, 5, 7, 8])
+        ax.set_xticklabels(
+            [
+                "saline\ntrue",
+                "DCZ\ntrue",
+                "saline\nall",
+                "DCZ\nall",
+                "saline\nfalse",
+                "DCZ\nfalse",
+            ],
+            fontsize=8,
+        )
+
+        ax.grid(True, axis="y", alpha=0.3)
+        fig.tight_layout()
+        return fig
+
+    return (plot_group_paired_condition_column,)
+
+
+@app.cell
+def _(
+    Path,
+    condition_performance_summary,
+    mo,
+    performance_condition_columns,
+    plot_group_paired_condition_column,
+    stimulus_modality_select,
+):
+    condition_performance_paired_figures = {}
+    condition_performance_paired_view_items = []
+
+    for _split_column in performance_condition_columns:
+        hm3_fig = plot_group_paired_condition_column(
+            condition_performance_summary,
+            "hM3Dq",
+            _split_column,
+        )
+        hm4_fig = plot_group_paired_condition_column(
+            condition_performance_summary,
+            "hM4Di",
+            _split_column,
+        )
+
+        condition_performance_paired_figures[
+            (_split_column, "hM3Dq")
+        ] = hm3_fig
+        condition_performance_paired_figures[
+            (_split_column, "hM4Di")
+        ] = hm4_fig
+
+        condition_performance_paired_view_items.append(
+            mo.hstack([hm3_fig, hm4_fig])
+        )
+
+    condition_performance_paired_view = mo.vstack(
+        condition_performance_paired_view_items
+    )
+
+    _performance_by_condition_dir = (
+        Path("/mnt/e/data/LeciLab/behavioral_data/tmp/performance_by_condition")
+        / str(stimulus_modality_select.value)
+    )
+    _performance_by_condition_dir.mkdir(parents=True, exist_ok=True)
+
+    for (_split_column, _group_name), _fig in condition_performance_paired_figures.items():
+        _fig.savefig(
+            _performance_by_condition_dir
+            / f"{_split_column}_{_group_name}_saline_vs_dcz.svg",
+            format="svg",
+            bbox_inches="tight",
+        )
+
+    condition_performance_paired_view
     return
 
 
