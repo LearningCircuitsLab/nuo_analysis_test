@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.4"
 app = marimo.App(width="medium")
 
 
@@ -257,22 +257,16 @@ def _(
 
 
     # add fixation breaks 
-    df_test_vis_easy = utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_vis_easy),port_number=2,)
-    df_test_aud_easy = utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_aud_easy),port_number=2,)
-    df_test_vis_hard = utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_vis_hard),port_number=2,)
-    df_test_aud_hard = utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_aud_hard),port_number=2,)
+    df_test_vis_easy = utils_test.add_number_of_centralpokes_after_choice(utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_vis_easy),port_number=2,))
+    df_test_aud_easy = utils_test.add_number_of_centralpokes_after_choice(utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_aud_easy),port_number=2,))
+    df_test_vis_hard = utils_test.add_number_of_centralpokes_after_choice(utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_vis_hard),port_number=2,))
+    df_test_aud_hard = utils_test.add_number_of_centralpokes_after_choice(utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_aud_hard),port_number=2,))
     return (
         df_test_aud_easy,
         df_test_aud_hard,
         df_test_vis_easy,
         df_test_vis_hard,
     )
-
-
-@app.cell
-def _(df_test_vis_hard):
-    df_test_vis_hard['fixation_breaks'].unique()
-    return
 
 
 @app.cell
@@ -530,7 +524,15 @@ def _(df_test, dft, np, plots, plt):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # number of central pokes
+    # distribution
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## number of central pokes
     """)
     return
 
@@ -546,7 +548,7 @@ def _(df_test, np, plt):
     _bins = np.arange(
         _df_p2h["port2_pokes_num"].min() - 0.5,
         # _df_p2h["port2_pokes_num"].max() + 1.5,
-        25.5,
+        12,
         1,
     )
 
@@ -591,7 +593,7 @@ def _(df_test, np, plt):
     _bins = np.arange(
         _df_break["fixation_breaks"].min() - 0.5,
         # _df_break["fixation_breaks"].max() + 1.5,
-        25.5,
+        12,
         1,
     )
 
@@ -628,11 +630,57 @@ def _(df_test, np, plt):
 
 
 @app.cell
+def _(df_test, np, plt):
+    # pokes after choice histogram, split by correct
+    _df_break = df_test.copy()
+    _nbreaks_correct = _df_break.loc[_df_break["correct"] == True]
+    _nbreaks_wrong = _df_break.loc[_df_break["correct"] == False]
+
+    _bins = np.arange(
+        _df_break["eager_pokes"].min() - 0.5,
+        # _df_break["eager_pokes"].max() + 1.5,
+        12,
+        1,
+    )
+
+    _fig, _ax = plt.subplots(figsize=(5, 4))
+
+    _ax.hist(
+        _nbreaks_correct["eager_pokes"],
+        bins=_bins,
+        color="green",
+        alpha=0.45,
+        label="correct",
+        density=True
+    )
+
+    _ax.hist(
+        _nbreaks_wrong["eager_pokes"],
+        bins=_bins,
+        color="red",
+        alpha=0.45,
+
+        label="wrong",
+        density=True
+    )
+
+    _ax.set_xlabel("Number of pokes after choice")
+    _ax.set_ylabel("Frequency")
+    _ax.spines[["top", "right"]].set_visible(False)
+    _ax.legend(frameon=False)
+
+    _fig.tight_layout()
+    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_eager_pokes_hist.svg")
+    plt.show()
+    return
+
+
+@app.cell
 def _(df_options, df_selector, np, plt, utils):
     # port 2 pokes histogram, split by correct, using df_selector / df_options
     _selected_df_names = df_selector.value
 
-    _bins = np.arange(-0.5, 25.5, 1)
+    _bins = np.arange(-0.5, 15, 1)
 
     _fig, _axes = plt.subplots(
         1,
@@ -672,7 +720,7 @@ def _(df_options, df_selector, np, plt, utils):
         )
 
         _ax.set_title(_df_name)
-        _ax.set_xlabel("Number of pokes in Port2")
+        _ax.set_xlabel("Number of central pokes during trial")
         _ax.spines[["top", "right"]].set_visible(False)
         _ax.legend(frameon=False)
 
@@ -682,6 +730,66 @@ def _(df_options, df_selector, np, plt, utils):
     # _fig.savefig(
     #     "/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_port2_pokes_hist.svg"
     # )
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## reaction time
+    """)
+    return
+
+
+@app.cell
+def _(df_test, dft, np, pd, plt):
+    # pokes after choice histogram, split by correct
+    _df_tmp = df_test.copy()
+    _df_tmp["session_original"] = _df_tmp["session"]
+    _df_tmp["session"] = pd.factorize(_df_tmp["session"])[0]
+
+    _df_break = dft.calculate_time_between_trials_and_reaction_time(_df_tmp)
+
+    _df_break["session"] = _df_break["session_original"]
+
+    _nbreaks_correct = _df_break.loc[_df_break["correct"] == True]
+    _nbreaks_wrong = _df_break.loc[_df_break["correct"] == False]
+
+    _bins = np.arange(
+        _df_break["reaction_time"].min() - 0.1,
+        1.5,
+        0.1,
+    )
+
+    _fig, _ax = plt.subplots(figsize=(5, 4))
+
+    _ax.hist(
+        _nbreaks_correct["reaction_time"],
+        bins=_bins,
+        color="green",
+        alpha=0.45,
+        label="correct",
+        density=True
+    )
+
+    _ax.hist(
+        _nbreaks_wrong["reaction_time"],
+        bins=_bins,
+        color="red",
+        alpha=0.45,
+
+        label="wrong",
+        density=True
+    )
+
+    _ax.set_xlabel("Reaction time")
+    _ax.set_ylabel("Frequency")
+    _ax.spines[["top", "right"]].set_visible(False)
+    _ax.legend(frameon=False)
+
+    _fig.tight_layout()
+    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_reaction_time_hist.svg")
     plt.show()
     return
 
@@ -1100,6 +1208,7 @@ def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
                                 point_kwargs={'color': 'black', 'label': None},
                                 ax=_ax[1],
                                 valueType="continue")
+    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_outcome.svg")
     _ax[0].legend()
     _ax[0].set_title("Previous outcome visual hard")
     _ax[1].legend()
@@ -1177,312 +1286,124 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    heatmap_dataset_selector = mo.ui.dropdown(
-        options=["hard", "easy", "all"],
-        value="hard",
-        label="Dataset",
-    )
-    heatmap_value_selector = mo.ui.dropdown(
-        options=["previous_same_choice_numeric", "roa_choice_numeric"],
-        value="previous_same_choice_numeric",
-        label="Heatmap value",
-    )
-    heatmap_condition_selector = mo.ui.dropdown(
-        options=["previous_correct", "None"],
-        value="previous_correct",
-        label="Row condition",
-    )
+def _(df_test_vis_hard, np, pd, plt, sns):
+    _df_copy = df_test_vis_hard.copy()
+    _fig, _axes = plt.subplots(1, 2, figsize=(12, 5))
+    for _mouse in _df_copy['subject'].unique():
+        for _session in _df_copy[_df_copy.subject == _mouse]['session'].unique():
+            _df_mouse_session = _df_copy[np.logical_and(_df_copy['subject'] == _mouse, _df_copy['session'] == _session)]
+            if _df_mouse_session['stimulus_modality'].unique() == 'visual':
+                _stimulus_col = 'visual_stimulus_ratio'
+                _previous_stimulus_col = 'previous_visual_stimulus_ratio'
+            elif _df_mouse_session['stimulus_modality'].unique() == 'auditory':
+                _stimulus_col = 'total_evidence_strength'
+                _previous_stimulus_col = 'previous_total_evidence_strength'
+            _df_mouse_session[_previous_stimulus_col] = _df_mouse_session[_stimulus_col].shift(1, fill_value=np.nan)
+            _df_copy.loc[_df_mouse_session.index, _previous_stimulus_col] = _df_mouse_session[_previous_stimulus_col]
+    _df_copy["visual_stimulus_ratio"] = (_df_copy["visual_stimulus_ratio"].round(2))
+    _df_copy["previous_visual_stimulus_ratio"] = (_df_copy["previous_visual_stimulus_ratio"].round(2))
+    _df_copy = _df_copy.dropna(subset=["previous_same_choice_numeric"])
+    for _i in _df_copy.groupby('previous_correct_numeric'):
+        _df_precorrect = _i[1].copy()
+        _pivot_table = _df_precorrect.pivot_table(
+            index='previous_visual_stimulus_ratio',
+            columns='visual_stimulus_ratio',
+            values='previous_same_choice_numeric',
+            aggfunc='mean',
+            observed=True,
+        )
+        _pivot_table = _pivot_table.apply(pd.to_numeric, errors="coerce")
+        sns.heatmap(_pivot_table, cmap='coolwarm', annot=True, fmt='.2f', cbar_kws={'label': 'Probability of same Choice'}, vmin=0, vmax=1, annot_kws={'color': 'black'}, ax=_axes[int(_i[0])])
+        _axes[_i[0]].set_xlabel('Visual Stimulus Ratio')
+        _axes[_i[0]].set_ylabel('Previous Visual Stimulus Ratio')
+        _axes[_i[0]].set_title("Heatmap of Probability of same Choice (Previous {})".format('True' if _i[0] == 1 else 'False'))
 
-    mo.hstack(
-        [
-            heatmap_dataset_selector,
-            heatmap_value_selector,
-            heatmap_condition_selector,
-        ]
-    )
-    return (
-        heatmap_condition_selector,
-        heatmap_dataset_selector,
-        heatmap_value_selector,
-    )
+    _fig.tight_layout()
+    plt.show()
+    return
 
 
 @app.cell
-def _(
-    df_test,
-    df_test_aud_easy,
-    df_test_aud_hard,
-    df_test_vis_easy,
-    df_test_vis_hard,
-    heatmap_condition_selector,
-    heatmap_dataset_selector,
-    heatmap_value_selector,
-    mo,
-    pd,
-    plt,
-    sns,
-):
-    def add_previous_col(df, value_col, previous_col):
-        df = df.copy()
-        group_cols = [
-            _col for _col in ["subject", "session"]
-            if _col in df.columns
-        ]
-        if group_cols:
-            df[previous_col] = (
-                df
-                .groupby(group_cols, sort=False)[value_col]
-                .shift(1)
-            )
-        else:
-            df[previous_col] = df[value_col].shift(1)
+def _(df_test_aud_hard, np, pd, plt, sns):
+    _df_copy = df_test_aud_hard.copy()
+    _fig, _axes = plt.subplots(1, 2, figsize=(12, 5))
 
-        return df
+    _bins = 6
+    _bin_groups = pd.cut(_df_copy["total_evidence_strength"], bins=_bins)
+    _labels = _df_copy["total_evidence_strength"].groupby(_bin_groups, observed=True).mean()
+    _df_copy["total_evidence_strength_binned"] = (
+        _bin_groups.map(_labels).astype(float).round(2)
+    )
 
-    def bool_mask(series, value):
-        text_values = series.astype(str).str.lower()
-        if value:
-            return (
-                series.eq(True)
-                | series.eq(1)
-                | text_values.isin(["true", "1"])
-            )
+    for _mouse in _df_copy["subject"].unique():
+        for _session in _df_copy[_df_copy.subject == _mouse]["session"].unique():
+            _df_mouse_session = _df_copy[
+                np.logical_and(
+                    _df_copy["subject"] == _mouse,
+                    _df_copy["session"] == _session,
+                )
+            ]
 
-        return (
-            series.eq(False)
-            | series.eq(0)
-            | text_values.isin(["false", "0"])
+            if _df_mouse_session["stimulus_modality"].unique() == "visual":
+                _stimulus_col = "visual_stimulus_ratio"
+                _previous_stimulus_col = "previous_visual_stimulus_ratio"
+            elif _df_mouse_session["stimulus_modality"].unique() == "auditory":
+                _stimulus_col = "total_evidence_strength_binned"
+                _previous_stimulus_col = "previous_total_evidence_strength_binned"
+
+            _df_mouse_session[_previous_stimulus_col] = _df_mouse_session[
+                _stimulus_col
+            ].shift(1, fill_value=np.nan)
+
+            _df_copy.loc[
+                _df_mouse_session.index,
+                _previous_stimulus_col,
+            ] = _df_mouse_session[_previous_stimulus_col]
+
+    _df_copy["total_evidence_strength_binned"] = (
+        _df_copy["total_evidence_strength_binned"].round(2)
+    )
+    _df_copy["previous_total_evidence_strength_binned"] = (
+        _df_copy["previous_total_evidence_strength_binned"].round(2)
+    )
+
+    _df_copy = _df_copy.dropna(subset=["previous_same_choice_numeric"])
+
+    for _i in _df_copy.groupby("previous_correct_numeric"):
+        df_precorrect = _i[1].copy()
+
+        _pivot_table = df_precorrect.pivot_table(
+            index="previous_total_evidence_strength_binned",
+            columns="total_evidence_strength_binned",
+            values="previous_same_choice_numeric",
+            aggfunc="mean",
+            observed=True,
         )
 
-    def make_pivot_table(
-        df,
-        modality,
-        value_col,
-        condition_col=None,
-        condition_value=None,
-    ):
-        if value_col not in df.columns:
-            return pd.DataFrame()
-
-        if condition_col is not None:
-            if condition_col not in df.columns:
-                return pd.DataFrame()
-
-            df_plot = df[
-                bool_mask(df[condition_col], condition_value)
-            ].copy()
-        else:
-            df_plot = df.copy()
-
-        if df_plot.empty:
-            return pd.DataFrame()
-
-        df_plot[value_col] = (
-            pd.to_numeric(df_plot[value_col], errors="coerce")
-            .astype(float)
-        )
-        df_plot = df_plot.dropna(subset=[value_col])
-        if df_plot.empty:
-            return pd.DataFrame()
-
-        if modality == "visual":
-            stim_col_plot = "visual_stimulus_ratio"
-            previous_stim_col = "previous_visual_stimulus_ratio"
-            if stim_col_plot not in df_plot.columns:
-                return pd.DataFrame()
-
-            df_plot[stim_col_plot] = df_plot[stim_col_plot].round(2)
-            df_plot = add_previous_col(
-                df_plot,
-                value_col=stim_col_plot,
-                previous_col=previous_stim_col,
-            )
-
-        else:
-            stim_col_plot = "total_evidence_strength_binned"
-            previous_stim_col = "previous_total_evidence_strength_binned"
-            if "total_evidence_strength" not in df_plot.columns:
-                return pd.DataFrame()
-
-            df_plot["total_evidence_strength"] = pd.to_numeric(
-                df_plot["total_evidence_strength"],
-                errors="coerce",
-            )
-            df_plot = df_plot.dropna(subset=["total_evidence_strength"])
-            if df_plot.empty:
-                return pd.DataFrame()
-
-            _n_bins = 2 if dataset_choice == "easy" else 6
-            bin_groups = pd.cut(
-                df_plot["total_evidence_strength"],
-                bins=_n_bins,
-            )
-            labels = (
-                df_plot["total_evidence_strength"]
-                .groupby(bin_groups, observed=False)
-                .mean()
-            )
-            fallback_labels = pd.Series(
-                [interval.mid for interval in labels.index],
-                index=labels.index,
-            )
-            labels = labels.fillna(fallback_labels)
-
-            df_plot[stim_col_plot] = (
-                bin_groups
-                .map(labels)
-                .astype(float)
-                .round(2)
-            )
-
-            df_plot = add_previous_col(
-                df_plot,
-                value_col=stim_col_plot,
-                previous_col=previous_stim_col,
-            )
-
-        return (
-            df_plot
-            .pivot_table(
-                index=previous_stim_col,
-                columns=stim_col_plot,
-                values=value_col,
-                aggfunc="mean",
-                observed=True,
-            )
-            .astype(float)
-        )
-
-    def plot_heatmap(table, ax, title, xlabel, ylabel, value_col):
-        if table.empty:
-            ax.text(
-                0.5,
-                0.5,
-                "No data",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-            )
-            ax.set_axis_off()
-            ax.set_title(title)
-            return
+        _pivot_table = _pivot_table.apply(pd.to_numeric, errors="coerce")
 
         sns.heatmap(
-            table,
+            _pivot_table,
             cmap="coolwarm",
             annot=True,
             fmt=".2f",
-            cbar_kws={"label": f"Mean {value_col}"},
+            cbar_kws={"label": "Probability of same Choice"},
             vmin=0,
             vmax=1,
             annot_kws={"color": "black"},
-            ax=ax,
-        )
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.tick_params(axis="x", rotation=45)
-        ax.tick_params(axis="y", rotation=0)
-        ax.set_title(title)
-
-    dataset_choice = heatmap_dataset_selector.value
-    value_col = heatmap_value_selector.value
-    condition_col = heatmap_condition_selector.value
-
-    dataset_map = {
-        "hard": {
-            "Visual": df_test_vis_hard,
-            "Auditory": df_test_aud_hard,
-        },
-        "easy": {
-            "Visual": df_test_vis_easy,
-            "Auditory": df_test_aud_easy,
-        },
-        "all": {
-            "Visual": df_test[
-                df_test["stimulus_modality"] == "visual"
-            ],
-            "Auditory": df_test[
-                df_test["stimulus_modality"] == "auditory"
-            ],
-        },
-    }
-
-    figures = []
-    condition_col = None if condition_col == "None" else condition_col
-    condition_values = [None] if condition_col is None else [True, False]
-
-    for condition_value in condition_values:
-        fig, axes = plt.subplots(
-            1,
-            2,
-            figsize=(10, 4),
-            constrained_layout=True,
+            ax=_axes[int(_i[0])],
         )
 
-        visual_table = make_pivot_table(
-            dataset_map[dataset_choice]["Visual"],
-            modality="visual",
-            value_col=value_col,
-            condition_col=condition_col,
-            condition_value=condition_value,
-        )
-        auditory_table = make_pivot_table(
-            dataset_map[dataset_choice]["Auditory"],
-            modality="auditory",
-            value_col=value_col,
-            condition_col=condition_col,
-            condition_value=condition_value,
+        _axes[int(_i[0])].set_xlabel("Total Evidence Strength")
+        _axes[int(_i[0])].set_ylabel("Previous Total Evidence Strength")
+        _axes[int(_i[0])].set_title(
+            "Heatmap of Probability of same Choice (Previous {})".format(
+                "True" if _i[0] == 1 else "False"
+            )
         )
 
-        if condition_col is None:
-            visual_title = "Visual"
-            auditory_title = "Auditory"
-        else:
-            visual_title = f"Visual | {condition_col} = {condition_value}"
-            auditory_title = f"Auditory | {condition_col} = {condition_value}"
-
-        plot_heatmap(
-            visual_table,
-            axes[0],
-            title=visual_title,
-            xlabel="visual stimulus ratio",
-            ylabel="previous visual stimulus ratio",
-            value_col=value_col,
-        )
-        plot_heatmap(
-            auditory_table,
-            axes[1],
-            title=auditory_title,
-            xlabel="total evidence strength binned",
-            ylabel="previous total evidence strength binned",
-            value_col=value_col,
-        )
-
-        figures.append(fig)
-
-    if condition_col is None:
-        _heatmap_output = mo.vstack(
-            [
-                mo.md(f"## {dataset_choice}: mean `{value_col}`"),
-                figures[0],
-            ]
-        )
-    else:
-        _heatmap_output = mo.vstack(
-            [
-                mo.md(
-                    f"## {dataset_choice}: mean `{value_col}` "
-                    f"by `{condition_col}`"
-                ),
-                mo.md(f"### {condition_col} = True"),
-                figures[0],
-                mo.md(f"### {condition_col} = False"),
-                figures[1],
-            ]
-        )
-
-    _heatmap_output
+    _fig.tight_layout()
+    plt.show()
     return
 
 
@@ -3490,7 +3411,7 @@ def _(hmm_model_dic, mo, np, pd, plt):
                         color=_mouse_colors[_mouse],
                         marker=_state_markers[_state],
                         alpha=0.8,
-                        s=42,
+                        s=100,
                     )
 
             _pca_ax.set_xlabel(f"PC1 ({_pc1_pct:.1f}%)")
@@ -3534,6 +3455,12 @@ def _(hmm_model_dic, mo, np, pd, plt):
             )
 
     _state_pca_output
+    return
+
+
+@app.cell
+def _():
+    # state_pca_fig.savefig('/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/glmhmm_pca_aud_hard.svg')
     return
 
 

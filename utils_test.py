@@ -980,6 +980,6 @@ def add_number_of_centralpokes_after_choice(df_raw: pd.DataFrame):
     df = df_raw.copy()
     df["eager_pokes"] = (
         pd.to_numeric(df["port2_pokes_num"], errors="coerce")
-        - pd.to_numeric(df["fixation_breaks"], errors="coerce") - 1
+        - pd.to_numeric(df["fixation_breaks"], errors="coerce")
     )
     return df

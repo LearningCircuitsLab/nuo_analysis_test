@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.4"
 app = marimo.App(width="medium")
 
 
@@ -267,10 +267,10 @@ def _(mo):
 
 @app.cell
 def _():
-    # hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
-    # hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
-    hM3Dq_mice = ['NUO064', 'NUO065', 'NUO010', 'NUO012']
-    hM4Di_mice = ['NUO060', 'NUO061', 'NUO002']
+    hM3Dq_mice = ['NUO062', 'NUO063', 'NUO064', 'NUO065', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO011', 'NUO012']
+    hM4Di_mice = ['NUO057', 'NUO058', 'NUO059', 'NUO060', 'NUO061', 'NUO001', 'NUO002', 'NUO003', 'NUO005', 'NUO006']
+    # hM3Dq_mice = ['NUO064', 'NUO065', 'NUO010', 'NUO012']
+    # hM4Di_mice = ['NUO060', 'NUO061', 'NUO002']
     return hM3Dq_mice, hM4Di_mice
 
 
@@ -2792,7 +2792,7 @@ def _(
     split_label,
     stats,
 ):
- 
+
 
     _split_labels = list(split_label)
 
@@ -3669,7 +3669,7 @@ def _(
     stationary_time_ratio_per_animal_condition_hm4_diff_split_col,
     stats,
 ):
- 
+
 
     _split_labels = list(split_label)
 
@@ -4508,7 +4508,7 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
                 "roi_out = True": set(),
                 "react_slow = True": set(),
                 "break_more = False": set(),
-                "eager_more = True": set(),
+                # "eager_more = True": set(),
             }
 
         if "trial" in df.columns:
@@ -4532,9 +4532,9 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
             "break_more = False": (
                 df["break_more"].eq(False)
             ),
-            "eager_more = True": (
-                df["eager_more"].eq(True)
-            ),
+            # "eager_more = True": (
+            #     df["eager_more"].eq(True)
+            # ),
         }
 
         return {
@@ -4603,7 +4603,7 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
             _roi_out = _trial_sets["roi_out = True"]
             _react_slow = _trial_sets["react_slow = True"]
             _break_more = _trial_sets["break_more = False"]
-            _eager_more = _trial_sets["eager_more = True"]
+            # _eager_more = _trial_sets["eager_more = True"]
 
             _venn_disengaged_trial_rows.append(
                 {
@@ -4619,7 +4619,7 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
                     "roi_out_true": len(_roi_out),
                     "react_slow_true": len(_react_slow),
                     "break_more_false": len(_break_more),
-                    "eager_more_true": len(_eager_more),
+                    # "eager_more_true": len(_eager_more),
                     "previous_false_and_disengaged": len(
                         _previous_incorrect & _disengaged
                     ),
@@ -4809,7 +4809,7 @@ def _(mo, plt, venn_disengaged_trial_metadata, venn_disengaged_trial_sets):
         _upset = _UpSet(
             _upset_data,
             subset_size="count",
-            show_counts=True,
+            # show_counts=False,
             show_percentages=True,
             sort_by="cardinality",
             facecolor=facecolor,
@@ -4881,7 +4881,7 @@ def _(
     stats,
     utils,
 ):
- 
+
 
     performance_condition_columns = [
         "roi_out",
@@ -4889,7 +4889,7 @@ def _(
         "react_slow",
         "break_more",
         "previous_correct",
-        "eager_more",
+        # "eager_more",
     ]
 
 
@@ -5392,12 +5392,12 @@ def _(np, pd, plt, stats, stimulus_modality_select):
             fig.tight_layout()
             return fig
 
-        split_labels = ["true", "all", "false"]
+        split_labels = ["all", "true", "false"]
         x_positions = {
-            ("true", "saline"): 1,
-            ("true", "dcz"): 2,
-            ("all", "saline"): 4,
-            ("all", "dcz"): 5,
+            ("all", "saline"): 1,
+            ("all", "dcz"): 2,
+            ("true", "saline"): 4,
+            ("true", "dcz"): 5,
             ("false", "saline"): 7,
             ("false", "dcz"): 8,
         }
@@ -5570,10 +5570,10 @@ def _(np, pd, plt, stats, stimulus_modality_select):
         ax.set_xticks([1, 2, 4, 5, 7, 8])
         ax.set_xticklabels(
             [
-                "saline\ntrue",
-                "DCZ\ntrue",
                 "saline\nall",
                 "DCZ\nall",
+                "saline\ntrue",
+                "DCZ\ntrue",
                 "saline\nfalse",
                 "DCZ\nfalse",
             ],
