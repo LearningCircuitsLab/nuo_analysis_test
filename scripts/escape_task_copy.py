@@ -7,7 +7,7 @@ from pathlib import Path
 from bpod_mock import BpodMock
 #from gpiozero import LED
 
-class EscapeBehavior(Task):
+class EscapeBehavior_1(Task):
     def __init__(self):
         super().__init__()
 
@@ -111,8 +111,22 @@ class EscapeBehavior(Task):
                     # check if the time between triggering attempts has passed
                     if (time.time() - self.triggering_time_reset) < self.settings.time_between_sound_triggering_attempts:
                         continue
-                    # if the time has passed, decide whether to play the sound or not
-                    # check if we play the looming sound
+
+                    # Wait a random 1-5 seconds before checking the trigger zone again.
+                    self.next_trigger_zone_check = time.time() + random.uniform(1, 5)
+                    self.change_state_to("waiting_for_random_zone_check")
+
+                case "waiting_for_random_zone_check":
+                    # Keep processing camera frames until the random waiting time has passed.
+                    if time.time() < self.next_trigger_zone_check:
+                        continue
+
+                    # If the animal is outside, choose another random waiting time and retry.
+                    if not self.animal_in_trigger_zone:
+                        self.next_trigger_zone_check = time.time() + random.uniform(1, 5)
+                        continue
+
+                    # The animal is still inside at the random check time: decide sound/no sound.
                     if random.random() < self.settings.looming_sound_probability:
                         # play the sound
                         softcode_functions.function3()
@@ -121,13 +135,11 @@ class EscapeBehavior(Task):
                         self.change_state_to("sound_triggered")
                     else:
                         self.register_event("sound_not_played")
-                        # set a timer to wait before trying to trigger the sound again
-                        self.triggering_time_reset = time.time()
+                        self.change_state_to("sound_not_triggered")
 
-                case "sound_triggered":
-                    # wait for some time to let the animal escape and stuff
+                    # Whether sound was played or not, wait and then finish this trial.
+                case "sound_triggered" | "sound_not_triggered":
                     time.sleep(self.settings.time_to_wait_after_sound)
-                    # finish the trial
                     self.register_event("trial_end")
                     return
 
