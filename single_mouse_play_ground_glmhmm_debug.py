@@ -2416,7 +2416,7 @@ def _(
     hmm_model_dic_by_subjects = {}
     _hmm_model_rows = []
     _model_output_dir = Path(
-        "/mnt/e/data/LeciLab/behavioral_data/tmp/processing/glmhmm_models"
+        f"/mnt/e/data/LeciLab/behavioral_data/tmp/processing/glmhmm_models_state{glmhmm_num_states.value}"
     )
 
     _subject_col = None
@@ -2655,7 +2655,7 @@ def _(
     hmm_model_dic_by_stages = {}
     _hmm_model_rows = []
     _model_output_dir = Path(
-        "/mnt/e/data/LeciLab/behavioral_data/tmp/processing/glmhmm_models"
+        f"/mnt/e/data/LeciLab/behavioral_data/tmp/processing/glmhmm_models_state{glmhmm_num_states.value}"
     )
 
     _subject_col = None
@@ -3455,12 +3455,12 @@ def _(hmm_model_dic, mo, np, pd, plt):
             )
 
     _state_pca_output
-    return
+    return (state_pca_fig,)
 
 
 @app.cell
-def _():
-    # state_pca_fig.savefig('/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/glmhmm_pca_aud_hard.svg')
+def _(df_selector, state_pca_fig):
+    state_pca_fig.savefig(f'/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/glmhmm_pca_{df_selector.value[0]}.svg')
     return
 
 

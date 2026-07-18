@@ -4504,6 +4504,7 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
         if df.empty:
             return {
                 "previous_correct = False": set(),
+                "previous_same_choice = True": set(),
                 "engaged = False": set(),
                 "roi_out = True": set(),
                 "react_slow = True": set(),
@@ -4519,6 +4520,9 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
         condition_masks = {
             "previous_correct = False": (
                 df["previous_correct"].eq(False)
+            ),
+            "previous_same_choice = True": (
+                df["previous_same_choice_numeric"].eq(1)
             ),
             "engaged = False": (
                 df["engaged"].eq(False)
@@ -4599,6 +4603,7 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
             ] = _trial_sets
 
             _previous_incorrect = _trial_sets["previous_correct = False"]
+            _repeat_choice = _trial_sets["previous_same_choice = True"]
             _disengaged = _trial_sets["engaged = False"]
             _roi_out = _trial_sets["roi_out = True"]
             _react_slow = _trial_sets["react_slow = True"]
@@ -4634,6 +4639,7 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
                     ),
                     "all_five": len(
                         _previous_incorrect
+                        & _repeat_choice
                         & _disengaged
                         & _roi_out
                         & _react_slow
@@ -4655,7 +4661,7 @@ def _(df_dic_dcz, df_dic_saline, hM3Dq_mice, hM4Di_mice, pd):
 
 @app.cell
 def _(
-    hM4Di_mice,
+    hM3Dq_mice,
     mo,
     plot_five_set_venn,
     plot_upset_from_trial_sets,
@@ -4663,8 +4669,8 @@ def _(
     venn_disengaged_trial_summary,
 ):
     venn_disengaged_trial_summary_selectforplot = venn_disengaged_trial_summary[
-        # (venn_disengaged_trial_summary['subject'].isin(hM3Dq_mice)) 
-        (venn_disengaged_trial_summary['subject'].isin(hM4Di_mice)) 
+        (venn_disengaged_trial_summary['subject'].isin(hM3Dq_mice)) 
+        # (venn_disengaged_trial_summary['subject'].isin(hM4Di_mice)) 
         # & (venn_disengaged_trial_summary['modality'] == 'auditory')
         ]
     _selected_pair_ids = (
@@ -4715,12 +4721,12 @@ def _(
         plot_five_set_venn(
             _selected_summary_sets[_condition_name],title=_condition_title
         ).savefig(
-            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_{_condition_title}_venn.svg"
+            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_{_condition_title}_venn.svg"
         )
         plot_upset_from_trial_sets(
             _selected_summary_sets[_condition_name],title=_condition_title, facecolor = _facecolor
         ).savefig(
-            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm4_{_condition_title}_upset.svg"
+            f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/hm3_{_condition_title}_upset.svg"
         )
     mo.vstack(_selected_summary_view)
     return
@@ -4890,6 +4896,7 @@ def _(
         "break_more",
         "previous_correct",
         # "eager_more",
+        "previous_same_choice_numeric"
     ]
 
 
@@ -4909,9 +4916,7 @@ def _(
                 "true": True,
                 "false": False,
                 "1": True,
-                "0": False,
-                "yes": True,
-                "no": False,
+                "0": False
             }
         ).astype("boolean")
 
@@ -5212,11 +5217,11 @@ def _(
             y_range = y_max - y_min
             if y_range == 0:
                 y_range = abs(y_max) * 0.1 if y_max != 0 else 0.1
-
             bar_h = y_range * 0.05
             bar_y_1 = y_max + y_range * 0.12
             bar_y_2 = y_max + y_range * 0.29
-
+            bar_y_3 = y_max + y_range * 0.46
+        
             add_significance_bar(
                 ax,
                 x_positions["true"],
@@ -5225,6 +5230,7 @@ def _(
                 bar_h,
                 paired_ttest_label(wide_df, "true", "all"),
             )
+        
             add_significance_bar(
                 ax,
                 x_positions["all"],
@@ -5233,10 +5239,19 @@ def _(
                 bar_h,
                 paired_ttest_label(wide_df, "false", "all"),
             )
-
+        
+            add_significance_bar(
+                ax,
+                x_positions["true"],
+                x_positions["false"],
+                bar_y_3,
+                bar_h,
+                paired_ttest_label(wide_df, "true", "false"),
+            )
+        
             ax.set_ylim(
                 bottom=max(0, y_min - y_range * 0.14),
-                top=bar_y_2 + bar_h + y_range * 0.18,
+                top=bar_y_3 + bar_h + y_range * 0.18,
             )
 
         ax.set_title(f"{group_name} {condition_name}")

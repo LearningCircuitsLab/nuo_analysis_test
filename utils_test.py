@@ -860,12 +860,12 @@ def plot_glmhmm_pipeline_figure(
 
     colors = _state_colors(map_glmhmm.K, colors)
 
-    fig = plt.figure(figsize=(10, 16), dpi=300)
+    fig = plt.figure(figsize=(7.5, 12), dpi=300)
     gs = GridSpec(
         nrows=3,
         ncols=2,
         figure=fig,
-        height_ratios=[1.0, 0.7, 1.2],
+        height_ratios=[1.0, 0.7, 1.0],
         width_ratios=[1.0, 1.0],
     )
 
