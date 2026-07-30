@@ -23,6 +23,7 @@ def _():
     _package_path = REPO_ROOT / "lecilab-behavior-analysis"
     if _package_path.exists() and str(_package_path) not in sys.path:
         sys.path.insert(0, str(_package_path))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
     import matplotlib.cm as cm
     import matplotlib.colors as colors
@@ -161,9 +162,10 @@ def _(mo):
 
 @app.cell
 def _():
-    mouse_select = ['NUO060', 'NUO061', 'NUO064', 'NUO065']
-    # mouse_select = ['NUO001', 'NUO002', 'NUO005', 'NUO007', 'NUO008', 'NUO009', 'NUO010']
-    # mouse_select = ['NUO002','NUO010']
+    # mouse_select = ['NUO060', 'NUO061', 'NUO064', 'NUO065']
+    # mouse_select = ['NUO001', 'NUO002', 'NUO005', 'NUO007', 'NUO008', 'NUO009', 'NUO010', 'NUO060', 'NUO061', 'NUO064', 'NUO065']
+    # mouse_select = ['NUO060', 'NUO061', 'NUO064', 'NUO065', 'NUO002','NUO010']
+    mouse_select = ["mouse_test"]
     return (mouse_select,)
 
 
@@ -272,14 +274,18 @@ def _(
                         local_dir=local_path_dlc_sub,
                         filename=f,
                     )
-
+    
         for csv_path in local_path_dlc_sub.glob("*DLC*.csv"):
             if (
-                csv_path.name[:37] not in deleted_sessions_list
+                csv_path.name[:10] != "mouse_test"
+                and csv_path.name[:37] not in deleted_sessions_list
                 and sub in csv_path.name
             ):
                 random_df = pd.read_csv(csv_path, header=[1, 2])
                 behav_df_dic[csv_path.name[:37]] = random_df
+            else:
+                random_df = pd.read_csv(csv_path, header=[1, 2])
+                behav_df_dic[csv_path.name[:41]] = random_df
 
 
     analyzed_video_names = list(behav_df_dic.keys())
@@ -289,6 +295,8 @@ def _(
 
     for name in analyzed_video_names:
         subject = name[:6]
+        if "mouse_test" in name:
+            subject = "mouse_test"
 
         local_path = Path(utils.get_outpath()) / project / "sessions" / subject
 
@@ -473,7 +481,7 @@ def _(
     for name1 in analyzed_video_names:
         df = behav_df_dic[name1]
         df['timestamp'] = video_df_dic[name1]['timestamp']
-        df = behavior_utils.preprocess_positions(df, likelihood_thr=0.83, distance_thr=200, max_iter=100)
+        df = behavior_utils.preprocess_positions(df, likelihood_thr=0.83, distance_thr=200, speed_thr=480, max_iter=100)
         behav_df_filtered_dic[name1] = df
 
     # interpolate the positions
@@ -613,6 +621,12 @@ def _(mo):
 
 
 @app.cell
+def _(session_):
+    session_
+    return
+
+
+@app.cell
 def _(analyzed_video_names, behav_df_filtered_dic, pd, session_df_dic):
     import ast as _ast
 
@@ -745,6 +759,7 @@ def _(
     behav_df_dic_saline,
     behav_pair_map,
     frame_xy,
+    home_zone_x_threshold,
     mo,
     mouse_dropdown,
     mpl,
@@ -846,7 +861,8 @@ def _(
         ax.set_ylim(0, frame_xy[1]/y_len_tran)
         ax.axes.xaxis.set_visible(False)
         ax.axes.yaxis.set_visible(False)
-        ax.axvline(x=trigger_zone_x_threshold, c="k", linestyle="--", linewidth=2)
+        ax.axvline(x=trigger_zone_x_threshold, c="magenta", linestyle="--", linewidth=2)
+        ax.axvline(x=home_zone_x_threshold, c="green", linestyle="--", linewidth=2)
 
 
     def plot_all_pairs_for_mouse(mouse):
@@ -2048,7 +2064,7 @@ def _(
     s_behav_df_dic_hm3,
     s_behav_df_dic_hm4,
 ):
-    stationary_speed_threshold = 7
+    stationary_speed_threshold = 5
 
     def build_stationary_time_ratio_dictionary(behav_df_dic, time_bin):
         def stationary_ratio(window_df):
@@ -3222,7 +3238,7 @@ def _(
 
                 ax.axhline(
                     y=trigger_zone_x_threshold,
-                    c="k",
+                    c="magenta",
                     linestyle="dotted",
                     linewidth=2,
                 )
@@ -4076,16 +4092,16 @@ def _(
         axes[1].axvline(0, color="k", linestyle="--", lw=1)
         axes[1].axhline(
             trigger_zone_x_threshold,
-            color="pink",
+            color="magenta",
             linestyle="--",
-            lw=1,
+            lw=2,
             label="Trigger zone",
         )
         axes[1].axhline(
             home_zone_x_threshold,
             color="green",
             linestyle="--",
-            lw=1,
+            lw=2,
             label="Trigger zone",
         )
 
@@ -4162,6 +4178,7 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
         aftersound_stayhome_timewindow=(10.5, 11),
         soundplay_finished_time=10,
         soundplay_delay_time=12,
+        path_efficiency_sd_criteria=1,
     ):
         def first_stable_true_time(mask, timestamp, min_frames=60):
             mask = pd.Series(mask, index=timestamp.index).fillna(False).astype(bool)
@@ -4181,11 +4198,73 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
             return {
                 "real_leave": np.nan,
                 "real_stayhome": np.nan,
+                "straight_line_distance": np.nan,
+                "actual_path_distance": np.nan,
+                "path_efficiency": np.nan,
                 "peak_speed": np.nan,
                 "peak_speed_time": np.nan,
                 "peak_speed_xposition": np.nan,
                 "aftersound_stayhome": False,
             }
+
+        def compute_path_efficiency(
+            trial_df_delay,
+            timestamp_delay,
+            real_leave_time,
+            real_stayhome_time,
+        ):
+            if (
+                pd.isna(real_leave_time)
+                or pd.isna(real_stayhome_time)
+                or real_stayhome_time <= real_leave_time
+            ):
+                return np.nan, np.nan, np.nan
+
+            path_mask = (
+                (timestamp_delay >= real_leave_time)
+                & (timestamp_delay <= real_stayhome_time)
+            )
+            path_df = trial_df_delay.loc[path_mask].copy()
+            if path_df.shape[0] < 2:
+                return np.nan, np.nan, np.nan
+
+            xy = path_df.loc[:, [("Center", "x"), ("Center", "y")]].apply(
+                pd.to_numeric,
+                errors="coerce",
+            )
+            xy = xy.dropna()
+            if xy.shape[0] < 2:
+                return np.nan, np.nan, np.nan
+
+            start_xy = xy.iloc[0].to_numpy(dtype=float)
+            end_xy = xy.iloc[-1].to_numpy(dtype=float)
+            straight_line_distance = float(np.linalg.norm(end_xy - start_xy))
+            if (
+                not np.isfinite(straight_line_distance)
+                or straight_line_distance <= 0
+            ):
+                return straight_line_distance, np.nan, np.nan
+
+            if ("Center", "distance") in path_df.columns:
+                distance = pd.to_numeric(
+                    path_df.loc[xy.index, ("Center", "distance")],
+                    errors="coerce",
+                ).iloc[1:]
+                actual_path_distance = float(distance.dropna().sum())
+            else:
+                xy_diff = np.diff(xy.to_numpy(dtype=float), axis=0)
+                actual_path_distance = float(
+                    np.sqrt((xy_diff ** 2).sum(axis=1)).sum()
+                )
+
+            if (
+                not np.isfinite(actual_path_distance)
+                or actual_path_distance <= 0
+            ):
+                return straight_line_distance, actual_path_distance, np.nan
+
+            path_efficiency = actual_path_distance / straight_line_distance
+            return straight_line_distance, actual_path_distance, path_efficiency
 
         def classify_escape_window(window_df, soundplay_finished_time=soundplay_finished_time, soundplay_delay_time=soundplay_delay_time):
             metrics = empty_escape_metrics()
@@ -4246,6 +4325,16 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
                 min_frames=min_stayhome_frames,
             )
             metrics["real_stayhome"] = real_stayhome_time
+            (
+                metrics["straight_line_distance"],
+                metrics["actual_path_distance"],
+                metrics["path_efficiency"],
+            ) = compute_path_efficiency(
+                trial_df_delay,
+                timestamp_delay,
+                real_leave_time,
+                real_stayhome_time,
+            )
 
             if aftersound_stayhome_timewindow is None:
                 metrics["aftersound_stayhome"] = False
@@ -4297,6 +4386,11 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
             "trigger_time",
             "real_leave",
             "real_stayhome",
+            "straight_line_distance",
+            "actual_path_distance",
+            "path_efficiency",
+            "path_efficiency_log",
+            "path_efficiency_pass_filter",
             "peak_speed",
             "peak_speed_time",
             "peak_speed_xposition",
@@ -4347,6 +4441,11 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
                             ),
                             "real_leave": real_leave,
                             "real_stayhome": real_stayhome,
+                            "straight_line_distance": metrics["straight_line_distance"],
+                            "actual_path_distance": metrics["actual_path_distance"],
+                            "path_efficiency": metrics["path_efficiency"],
+                            "path_efficiency_log": np.nan,
+                            "path_efficiency_pass_filter": False,
                             "peak_speed": metrics["peak_speed"],
                             "peak_speed_time": peak_speed_time,
                             "peak_latency": peak_latency,
@@ -4356,10 +4455,40 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
                         }
                     )
 
-            classified_df_dic[name] = pd.DataFrame(
+            classified_df = pd.DataFrame(
                 rows,
                 columns=classified_columns,
             )
+            path_efficiency = pd.to_numeric(
+                classified_df["path_efficiency"],
+                errors="coerce",
+            )
+            path_efficiency = path_efficiency.replace([np.inf, -np.inf], np.nan)
+            valid_path_efficiency = path_efficiency > 0
+
+            classified_df.loc[
+                valid_path_efficiency,
+                "path_efficiency_log",
+            ] = np.log(path_efficiency.loc[valid_path_efficiency])
+
+            path_efficiency_log = classified_df["path_efficiency_log"]
+            median_path_efficiency_log = path_efficiency_log.median()
+            std_path_efficiency_log = path_efficiency_log.std()
+            if pd.isna(std_path_efficiency_log):
+                std_path_efficiency_log = 0
+
+            path_efficiency_threshold = (
+                median_path_efficiency_log
+                + path_efficiency_sd_criteria * std_path_efficiency_log
+            )
+            classified_df["path_efficiency_pass_filter"] = (
+                path_efficiency_log < path_efficiency_threshold
+            )
+            # add path efficiency as one of filters
+            # classified_df["escape"] = (
+            #     classified_df["escape"] & classified_df["path_efficiency_pass_filter"]
+            # )
+            classified_df_dic[name] = classified_df
 
         return classified_df_dic
 
@@ -4424,6 +4553,7 @@ def split_escape_behavior_dict(
 @app.cell
 def _(
     frame_xy,
+    home_zone_x_threshold,
     mpl,
     pd,
     plot_test,
@@ -4517,7 +4647,8 @@ def _(
         ax.set_ylim(0, frame_xy[1]/y_len_tran)
         ax.axes.xaxis.set_visible(False)
         ax.axes.yaxis.set_visible(False)
-        ax.axvline(x=trigger_zone_x_threshold, c="k", linestyle="--", linewidth=2)
+        ax.axvline(x=trigger_zone_x_threshold, c="magenta", linestyle="--", linewidth=2)
+        ax.axvline(x=home_zone_x_threshold, c="green", linestyle="--", linewidth=2)
         ax.set_title(title)
 
         # ========= 4) Colorbar =========
@@ -4703,16 +4834,16 @@ def _(home_zone_x_threshold, pd, smooth_envelope, t, trigger_zone_x_threshold):
         axes[1].axvline(0, color="k", linestyle="--", lw=1)
         axes[1].axhline(
             trigger_zone_x_threshold,
-            color="pink",
+            color="magenta",
             linestyle="--",
-            lw=1,
+            lw=2,
             label="Trigger zone",
         )
         axes[1].axhline(
             home_zone_x_threshold,
             color="green",
             linestyle="--",
-            lw=1,
+            lw=2,
             label="Home zone",
         )
 
@@ -5372,12 +5503,6 @@ def _(
 
 @app.cell
 def _(escape_frequency_df):
-    escape_frequency_df
-    return
-
-
-@app.cell
-def _(escape_frequency_df):
     pair_diff = (
         escape_frequency_df
         .pivot_table(
@@ -5398,7 +5523,7 @@ def _(escape_frequency_df):
 
 
 @app.cell
-def _(escape_frequency_df, plt, sns):
+def _(escape_frequency_df, figures_save_dir, os, plt, sns):
 
     _g = sns.relplot(
         data=escape_frequency_df,
@@ -5421,31 +5546,8 @@ def _(escape_frequency_df, plt, sns):
         ax.set_ylim(-0.05, 1.05)
         ax.grid(alpha=0.25)
 
+    _g.savefig(os.path.join(figures_save_dir, "escape_frequency_by_day.svg"))
     plt.show()
-    return
-
-
-@app.cell
-def _(pair_diff, sns):
-    _g = sns.pointplot(
-        data=pair_diff,
-        x="condition",
-        y="frequency_difference_between_sound_nosound",
-        hue='group',
-        markers=["o", "s"],
-        # linestyle=["-", "--"],
-        palette={
-            "hm3": "firebrick",
-            "hm4": "steelblue",
-        },
-        linewidth=2,
-        estimator='mean', 
-        errwidth = 2,
-        ci='sd',
-        errorbar=('ci', 95),
-        capsize=0.1
-    )
-    _g
     return
 
 
@@ -5591,161 +5693,182 @@ def _(mo):
 
 
 @app.cell
-def _():
-    # def _get_timestamp_from_escape_window_df(window_df):
-    #     if ("timestamp", "") in window_df.columns:
-    #         return pd.to_numeric(window_df[("timestamp", "")], errors="coerce")
-    #     return pd.to_numeric(window_df["timestamp"], errors="coerce")
+def _(
+    frame_xy,
+    home_zone_x_threshold,
+    mpl,
+    ns_behav_df_dic_prebin_escape,
+    ns_behav_df_dic_prebin_noreaction,
+    pd,
+    plot_test,
+    plt,
+    s_behav_df_dic_prebin_escape,
+    s_behav_df_dic_prebin_noreaction,
+    trigger_zone_x_threshold,
+    x_len_tran,
+    y_len_tran,
+):
+    def _get_timestamp_from_escape_window_df(window_df):
+        if ("timestamp", "") in window_df.columns:
+            return pd.to_numeric(window_df[("timestamp", "")], errors="coerce")
+        return pd.to_numeric(window_df["timestamp"], errors="coerce")
 
-    # def _plot_window_dic_trajectories_on_ax(
-    #     behav_df_dic,
-    #     ax,
-    #     title,
-    #     cmap,
-    #     start_color,
-    #     time_after=10,
-    # ):
-    #     _all_speed = []
+    def _plot_window_dic_trajectories_on_ax(
+        behav_df_dic,
+        ax,
+        title,
+        cmap,
+        start_color,
+        time_after=10,
+    ):
+        _all_speed = []
 
-    #     for _session_name, _trial_dic in behav_df_dic.items():
-    #         for _trial, _window_df_list in _trial_dic.items():
-    #             for _window_df in _window_df_list:
-    #                 _timestamp = _get_timestamp_from_escape_window_df(
-    #                     _window_df
-    #                 )
-    #                 _time_mask = (_timestamp >= 0) & (_timestamp <= time_after)
-    #                 _speed = pd.to_numeric(
-    #                     _window_df.loc[
-    #                         _time_mask,
-    #                         ("Center", "mean_speed"),
-    #                     ],
-    #                     errors="coerce",
-    #                 ).dropna()
-    #                 if not _speed.empty:
-    #                     _all_speed.append(_speed)
+        for _session_name, _trial_dic in behav_df_dic.items():
+            for _trial, _window_df_list in _trial_dic.items():
+                for _window_df in _window_df_list:
+                    _timestamp = _get_timestamp_from_escape_window_df(
+                        _window_df
+                    )
+                    _time_mask = (_timestamp >= 0) & (_timestamp <= time_after)
+                    _speed = pd.to_numeric(
+                        _window_df.loc[
+                            _time_mask,
+                            ("Center", "mean_speed"),
+                        ],
+                        errors="coerce",
+                    ).dropna()
+                    if not _speed.empty:
+                        _all_speed.append(_speed)
 
-    #     if not _all_speed:
-    #         ax.text(
-    #             0.5,
-    #             0.5,
-    #             "No trajectory data",
-    #             ha="center",
-    #             va="center",
-    #             transform=ax.transAxes,
-    #         )
-    #         ax.set_title(title)
-    #         return
+        if not _all_speed:
+            ax.text(
+                0.5,
+                0.5,
+                "No trajectory data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_title(title)
+            return
 
-    #     _all_speed = pd.concat(_all_speed)
-    #     _vmin = _all_speed.quantile(0.01)
-    #     _vmax = _all_speed.quantile(0.99)
-    #     _norm = mpl.colors.Normalize(vmin=_vmin, vmax=_vmax)
+        _all_speed = pd.concat(_all_speed)
+        _vmin = _all_speed.quantile(0.01)
+        _vmax = _all_speed.quantile(0.99)
+        _norm = mpl.colors.Normalize(vmin=_vmin, vmax=_vmax)
 
-    #     for _session_name, _trial_dic in behav_df_dic.items():
-    #         for _trial, _window_df_list in _trial_dic.items():
-    #             for _window_df in _window_df_list:
-    #                 _timestamp = _get_timestamp_from_escape_window_df(
-    #                     _window_df
-    #                 )
-    #                 _time_mask = (_timestamp >= 0) & (_timestamp <= time_after)
+        for _session_name, _trial_dic in behav_df_dic.items():
+            for _trial, _window_df_list in _trial_dic.items():
+                for _window_df in _window_df_list:
+                    _timestamp = _get_timestamp_from_escape_window_df(
+                        _window_df
+                    )
+                    _time_mask = (_timestamp >= 0) & (_timestamp <= time_after)
 
-    #                 _df_traj = _window_df.loc[
-    #                     _time_mask,
-    #                     "Center",
-    #                 ][["x", "y", "mean_speed"]].copy()
+                    _df_traj = _window_df.loc[
+                        _time_mask,
+                        "Center",
+                    ][["x", "y", "mean_speed"]].copy()
 
-    #                 _df_traj[["x", "y", "mean_speed"]] = (
-    #                     _df_traj[["x", "y", "mean_speed"]]
-    #                     .apply(pd.to_numeric, errors="coerce")
-    #                     .interpolate(limit_direction="both")
-    #                 )
-    #                 _df_traj = _df_traj.dropna(
-    #                     subset=["x", "y", "mean_speed"]
-    #                 )
+                    _df_traj[["x", "y", "mean_speed"]] = (
+                        _df_traj[["x", "y", "mean_speed"]]
+                        .apply(pd.to_numeric, errors="coerce")
+                        .interpolate(limit_direction="both")
+                    )
+                    _df_traj = _df_traj.dropna(
+                        subset=["x", "y", "mean_speed"]
+                    )
 
-    #                 if _df_traj.empty:
-    #                     continue
+                    if _df_traj.empty:
+                        continue
 
-    #                 plot_test.plot_traj_speed(
-    #                     _df_traj,
-    #                     cmap=cmap,
-    #                     ax=ax,
-    #                     norm=_norm,
-    #                 )
-    #                 ax.scatter(
-    #                     _df_traj["x"].iloc[0],
-    #                     _df_traj["y"].iloc[0],
-    #                     color=start_color,
-    #                     s=80,
-    #                     marker="o",
-    #                     edgecolors="k",
-    #                     zorder=3,
-    #                 )
+                    plot_test.plot_traj_speed(
+                        _df_traj,
+                        cmap=cmap,
+                        ax=ax,
+                        norm=_norm,
+                    )
+                    ax.scatter(
+                        _df_traj["x"].iloc[0],
+                        _df_traj["y"].iloc[0],
+                        color=start_color,
+                        s=80,
+                        marker="o",
+                        edgecolors="k",
+                        zorder=3,
+                    )
 
-    #     ax.set_xlim(0, frame_xy[0] / x_len_tran)
-    #     ax.set_ylim(0, frame_xy[1] / y_len_tran)
-    #     ax.axes.xaxis.set_visible(False)
-    #     ax.axes.yaxis.set_visible(False)
-    #     ax.axvline(
-    #         x=trigger_zone_x_threshold,
-    #         c="k",
-    #         linestyle="--",
-    #         linewidth=2,
-    #     )
-    #     ax.set_title(title)
+        ax.set_xlim(0, frame_xy[0] / x_len_tran)
+        ax.set_ylim(0, frame_xy[1] / y_len_tran)
+        ax.axes.xaxis.set_visible(False)
+        ax.axes.yaxis.set_visible(False)
+        ax.axvline(
+            x=trigger_zone_x_threshold,
+            c="magenta",
+            linestyle="--",
+            linewidth=2,
+        )
+        ax.axvline(
+            x=home_zone_x_threshold,
+            c="green",
+            linestyle="--",
+            linewidth=2,
+        )
+        ax.set_title(title)
 
-    #     _sm = mpl.cm.ScalarMappable(norm=_norm, cmap=cmap)
-    #     _cbar = plt.colorbar(
-    #         _sm,
-    #         orientation="vertical",
-    #         ax=ax,
-    #         shrink=0.4,
-    #         pad=0.02,
-    #     )
-    #     _cbar.set_label("speed pixels/s", rotation=90)
+        _sm = mpl.cm.ScalarMappable(norm=_norm, cmap=cmap)
+        _cbar = plt.colorbar(
+            _sm,
+            orientation="vertical",
+            ax=ax,
+            shrink=0.4,
+            pad=0.02,
+        )
+        _cbar.set_label("speed cm/s", rotation=90)
 
-    # escape_trajectory_overview_fig, _axes = plt.subplots(
-    #     2,
-    #     2,
-    #     figsize=(18, 12),
-    #     dpi=150,
-    # )
+    escape_trajectory_overview_fig, _axes = plt.subplots(
+        2,
+        2,
+        figsize=(18, 10),
+        dpi=150,
+    )
 
-    # _plot_window_dic_trajectories_on_ax(
-    #     s_behav_df_dic_prebin_escape,
-    #     _axes[0, 0],
-    #     "Sound-play escape trajectories: 0-10s",
-    #     "inferno",
-    #     "w",
-    #     time_after=10,
-    # )
-    # _plot_window_dic_trajectories_on_ax(
-    #     s_behav_df_dic_prebin_noreaction,
-    #     _axes[0, 1],
-    #     "Sound-play no-reaction trajectories: 0-10s",
-    #     "inferno",
-    #     "w",
-    #     time_after=10,
-    # )
-    # _plot_window_dic_trajectories_on_ax(
-    #     ns_behav_df_dic_prebin_escape,
-    #     _axes[1, 0],
-    #     "No-sound escape trajectories: 0-10s",
-    #     "viridis",
-    #     "k",
-    #     time_after=10,
-    # )
-    # _plot_window_dic_trajectories_on_ax(
-    #     ns_behav_df_dic_prebin_noreaction,
-    #     _axes[1, 1],
-    #     "No-sound no-reaction trajectories: 0-10s",
-    #     "viridis",
-    #     "k",
-    #     time_after=10,
-    # )
+    _plot_window_dic_trajectories_on_ax(
+        s_behav_df_dic_prebin_escape,
+        _axes[0, 0],
+        "Sound-play escape trajectories: 0-10s",
+        "inferno",
+        "w",
+        time_after=10,
+    )
+    _plot_window_dic_trajectories_on_ax(
+        s_behav_df_dic_prebin_noreaction,
+        _axes[0, 1],
+        "Sound-play no-reaction trajectories: 0-10s",
+        "inferno",
+        "w",
+        time_after=10,
+    )
+    _plot_window_dic_trajectories_on_ax(
+        ns_behav_df_dic_prebin_escape,
+        _axes[1, 0],
+        "No-sound escape trajectories: 0-10s",
+        "viridis",
+        "k",
+        time_after=10,
+    )
+    _plot_window_dic_trajectories_on_ax(
+        ns_behav_df_dic_prebin_noreaction,
+        _axes[1, 1],
+        "No-sound no-reaction trajectories: 0-10s",
+        "viridis",
+        "k",
+        time_after=10,
+    )
 
-    # escape_trajectory_overview_fig.tight_layout()
-    # plt.show()
+    escape_trajectory_overview_fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/escape/classified_trials/classified_escapeor not_trajectory.png")
+    escape_trajectory_overview_fig.tight_layout()
+    plt.show()
     return
 
 
