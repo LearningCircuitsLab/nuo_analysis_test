@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import re
 from statsmodels.tsa.stattools import acf
-
+from scipy.signal import hilbert as _hilbert
 
 def observation_group(observation):
     observation = str(observation).lower()
@@ -1014,3 +1014,51 @@ def compute_distance_speed(behav_df_filtered: pd.DataFrame, window_size: int = 5
         mean_speed = speed.rolling(window_size, center=True, min_periods=2).mean()
         df_copy[(bp, 'mean_speed')] = mean_speed
     return df_copy
+
+def crescendo_looming_sound(
+    amp_start: float = 20,
+    amp_end: float = 90,
+    ramp_duration: float = 0.4,
+    ramp_down_duration: float = 0.005,
+    hold_duration: float = 0.595,
+    n_repeats: int = 10,
+) -> np.ndarray:
+    # convert n_repeats to an int
+    n_repeats = int(n_repeats)
+    fs = 192000  # Sampling frequency
+    # Generate ramp + rampdown + hold for one repetition
+    n_ramp = int(fs * ramp_duration)
+    n_hold = int(fs * hold_duration)
+    n_ramp_down = int(fs * ramp_down_duration)
+    # convert amplitudes to dB
+    db_start = 20 * np.log10(amp_start)
+    db_end = 20 * np.log10(amp_end)
+    # Linear amplitude ramp (in dB scale)
+    db_ramp = np.linspace(db_start, db_end, n_ramp)
+    db_ramp_down = np.linspace(db_end, db_start, n_ramp_down)
+    # Convert back to amplitudes (exponential in linear scale)
+    ramp_amplitudes = 10 ** (db_ramp / 20)
+    ramp_down_amplitudes = 10 ** (db_ramp_down / 20)
+    hold_amplitudes = np.ones(n_hold) * amp_start
+    # Create one cycle of noise
+    noise_ramp = np.random.randn(n_ramp) * ramp_amplitudes
+    noise_hold = np.random.randn(n_hold) * hold_amplitudes
+    noise_ramp_down = np.random.randn(n_ramp_down) * ramp_down_amplitudes
+    cycle = np.concatenate([noise_ramp, noise_ramp_down, noise_hold])
+    # Repeat 10 times
+    stimulus = np.tile(cycle, n_repeats)
+
+    return stimulus, np.arange(len(stimulus)) / fs
+
+def compute_stimulus_envelope():
+    stimulus, t = crescendo_looming_sound()
+    analytic_signal = _hilbert(stimulus)
+    amplitude_envelope = np.abs(analytic_signal)
+
+    window_size = 10000
+    smooth_envelope = np.convolve(
+        amplitude_envelope,
+        np.ones(window_size) / window_size,
+        mode="same",
+    )
+    return smooth_envelope, t
