@@ -23,6 +23,7 @@ def _():
     _package_path = REPO_ROOT / "lecilab-behavior-analysis"
     if _package_path.exists() and str(_package_path) not in sys.path:
         sys.path.insert(0, str(_package_path))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
     import matplotlib.cm as cm
     import matplotlib.colors as colors

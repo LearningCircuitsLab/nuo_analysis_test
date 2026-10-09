@@ -6,10 +6,12 @@ from scipy.signal import hilbert as _hilbert
 
 def observation_group(observation):
     observation = str(observation).lower()
-    if "dcz" in observation:
-        return "DCZ"
+    if "mk801" in observation:
+        return "mk801"
     if "saline" in observation:
         return "saline"
+    if "dcz" in observation:
+        return "DCZ"
     return None
 
 
@@ -59,6 +61,7 @@ def get_injection_observation_dates(
 
 def get_paired_injection_dates(
     injection_info_df: pd.DataFrame,
+    drug_name: str = "DCZ",
     mice_selected=None,
     date_col=None,
     subject_col: str = "subject",
@@ -76,8 +79,8 @@ def get_paired_injection_dates(
     saline_dates = observation_dates[
         observation_dates["observation_group"] == "saline"
     ].copy()
-    dcz_dates = observation_dates[
-        observation_dates["observation_group"] == "DCZ"
+    drug_dates = observation_dates[
+        observation_dates["observation_group"] == drug_name
     ].copy()
 
     if saline_position not in {"before", "after"}:
@@ -85,14 +88,14 @@ def get_paired_injection_dates(
 
     paired_rows = []
 
-    for _, dcz_row in dcz_dates.sort_values([subject_col, "date"]).iterrows():
+    for _, drug_row in drug_dates.sort_values([subject_col, "date"]).iterrows():
         same_mouse_saline = saline_dates[
-            saline_dates[subject_col] == dcz_row[subject_col]
+            saline_dates[subject_col] == drug_row[subject_col]
         ]
 
         if saline_position == "before":
             candidate_saline = same_mouse_saline[
-                same_mouse_saline["date"] < dcz_row["date"]
+                same_mouse_saline["date"] < drug_row["date"]
             ].sort_values("date")
 
             if candidate_saline.empty:
@@ -102,7 +105,7 @@ def get_paired_injection_dates(
 
         else:
             candidate_saline = same_mouse_saline[
-                same_mouse_saline["date"] > dcz_row["date"]
+                same_mouse_saline["date"] > drug_row["date"]
             ].sort_values("date")
 
             if candidate_saline.empty:
@@ -112,12 +115,12 @@ def get_paired_injection_dates(
 
         paired_rows.append(
             {
-                subject_col: dcz_row[subject_col],
+                subject_col: drug_row[subject_col],
                 "saline_date": saline_row["date"],
-                "DCZ_date": dcz_row["date"],
-                "days_between": abs((dcz_row["date"] - saline_row["date"]).days),
+                f"{drug_name}_date": drug_row["date"],
+                "days_between": abs((drug_row["date"] - saline_row["date"]).days),
                 "saline_observation": saline_row[observation_col],
-                "DCZ_observation": dcz_row[observation_col],
+                f"{drug_name}_observation": drug_row[observation_col],
                 "saline_position": saline_position,
             }
         )
@@ -129,17 +132,17 @@ def get_paired_injection_dates(
             columns=[
                 subject_col,
                 "saline_date",
-                "DCZ_date",
+                f"{drug_name}_date",
                 "days_between",
                 "saline_observation",
-                "DCZ_observation",
+                f"{drug_name}_observation",
                 "saline_position",
                 "pair_index",
                 "pair_id",
             ]
         )
 
-    paired_dates = paired_dates.sort_values([subject_col, "DCZ_date"])
+    paired_dates = paired_dates.sort_values([subject_col, f"{drug_name}_date"])
     paired_dates["pair_index"] = paired_dates.groupby(subject_col).cumcount() + 1
     paired_dates["pair_id"] = (
         paired_dates[subject_col].astype(str)
@@ -156,6 +159,7 @@ def add_metric_values_to_pairs(
     metric_col: str,
     subject_col: str = "subject",
     date_col: str = "year_month_day",
+    drug_name: str = "DCZ"
 ):
     if observation_summary.empty or paired_dates.empty:
         return pd.DataFrame()
@@ -172,8 +176,8 @@ def add_metric_values_to_pairs(
         paired_summary["saline_date"],
         errors="coerce",
     ).dt.strftime("%Y-%m-%d")
-    paired_summary["_DCZ_date_key"] = pd.to_datetime(
-        paired_summary["DCZ_date"],
+    paired_summary[f"_{drug_name}_date_key"] = pd.to_datetime(
+        paired_summary[f"{drug_name}_date"],
         errors="coerce",
     ).dt.strftime("%Y-%m-%d")
 
@@ -185,10 +189,10 @@ def add_metric_values_to_pairs(
         .copy()
     )
     dcz_values = (
-        summary[summary["observation_group"] == "DCZ"][
+        summary[summary["observation_group"] == drug_name][
             [subject_col, "_date_key", metric_col]
         ]
-        .rename(columns={"_date_key": "_DCZ_date_key", metric_col: "DCZ"})
+        .rename(columns={"_date_key": f"_{drug_name}_date_key", metric_col: drug_name})
         .copy()
     )
 
@@ -198,20 +202,20 @@ def add_metric_values_to_pairs(
         how="left",
     ).merge(
         dcz_values,
-        on=[subject_col, "_DCZ_date_key"],
+        on=[subject_col, f"_{drug_name}_date_key"],
         how="left",
     )
     paired_summary["saline"] = pd.to_numeric(
         paired_summary["saline"],
         errors="coerce",
     )
-    paired_summary["DCZ"] = pd.to_numeric(
-        paired_summary["DCZ"],
+    paired_summary[drug_name] = pd.to_numeric(
+        paired_summary[drug_name],
         errors="coerce",
     )
-    paired_summary = paired_summary.dropna(subset=["saline", "DCZ"])
+    paired_summary = paired_summary.dropna(subset=["saline", drug_name])
     return paired_summary.drop(
-        columns=["_saline_date_key", "_DCZ_date_key"],
+        columns=["_saline_date_key", f"_{drug_name}_date_key"],
         errors="ignore",
     )
 

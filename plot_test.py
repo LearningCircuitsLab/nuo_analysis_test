@@ -395,6 +395,7 @@ def _filter_paired_psychometric_trials(
     paired_dates,
     subject_col="subject",
     date_col="year_month_day",
+    drug_name="DCZ"
 ):
     if paired_dates is None or paired_dates.empty:
         return df.copy()
@@ -415,7 +416,7 @@ def _filter_paired_psychometric_trials(
         pair_id = pair_row["pair_id"]
         for condition, date_column in [
             ("saline", "saline_date"),
-            ("DCZ", "DCZ_date"),
+            (drug_name, f"{drug_name}_date"),
         ]:
             date_key = pd.to_datetime(
                 pair_row[date_column],
@@ -462,10 +463,11 @@ def plot_condition_psychometric_curves(
     valueType="continue",
     bins=6,
     log=False,
+    drug_name="DCZ"
 ):
     import utils_test
 
-    colors = colors or {"saline": "blue", "DCZ": "red"}
+    colors = colors or {"saline": "blue", drug_name: "red"}
 
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -490,6 +492,7 @@ def plot_condition_psychometric_curves(
         plot_df = _filter_paired_psychometric_trials(
             df,
             paired_dates,
+            drug_name=drug_name
         )
     else:
         plot_df = df.copy()
@@ -506,7 +509,7 @@ def plot_condition_psychometric_curves(
         ax.text(
             0.5,
             0.5,
-            f"No saline/DCZ psychometric data for {group_name}",
+            f"No saline/{drug_name} psychometric data for {group_name}",
             ha="center",
             va="center",
             transform=ax.transAxes,
@@ -522,7 +525,7 @@ def plot_condition_psychometric_curves(
             group_cols = ["observation_group"]
 
     summary_rows = []
-    label_added = {"saline": False, "DCZ": False}
+    label_added = {"saline": False, drug_name: False}
     for group_keys, df_one in plot_df.groupby(group_cols + ["observation_group"], sort=True):
         if len(df_one) < min_trials:
             continue
@@ -569,7 +572,7 @@ def plot_condition_psychometric_curves(
             row[column] = value
         summary_rows.append(row)
 
-    ax.set_title(f"{group_name} saline/DCZ psychometric curves")
+    ax.set_title(f"{group_name} saline/{drug_name} psychometric curves")
     ax.set_xlabel(x_col)
     ax.set_ylabel("P(left choice)")
     ax.set_ylim(0, 1)
@@ -5326,6 +5329,7 @@ def _point_offsets_away_from_center(n_points, width):
 def plot_condition_session_values_by_mouse(
     output_per_mouse_dic,
     group_name,
+    drug_name="dcz",
     ylabel="Session value",
     title=None,
     figsize=(10, 5),
@@ -5370,15 +5374,15 @@ def plot_condition_session_values_by_mouse(
 
     condition_order = [
         "vis_saline",
-        "vis_dcz",
+        f"vis_{drug_name}",
         "aud_saline",
-        "aud_dcz",
+        f"aud_{drug_name}",
     ]
     condition_labels = [
         "vis saline",
-        "vis DCZ",
+        f"vis {drug_name.upper()}",
         "aud saline",
-        "aud DCZ",
+        f"aud {drug_name.upper()}",
     ]
     split_labels = (
         list(split_labels)

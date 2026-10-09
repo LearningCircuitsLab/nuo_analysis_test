@@ -68,14 +68,6 @@ def _():
 
 
 @app.cell
-def _(behavior_utils, plot_test):
-    import importlib
-    importlib.reload(behavior_utils)
-    importlib.reload(plot_test)
-    return
-
-
-@app.cell
 def _(Path):
     figure_export_root = Path("/home/nuo/Documents/data/LeciLab/behavioral_data/tmp/escape")
 
@@ -856,56 +848,51 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
                 errors="coerce",
             )
 
-            sound_mask = (
-                (timestamp >= 0)
-                & (timestamp <= soundplay_finished_time)
-            )
             delay_mask = (
                 (timestamp >= 0)
                 & (timestamp <= soundplay_delay_time)
             )
-
-            sound_df = window_df.loc[sound_mask]
             delay_df = window_df.loc[delay_mask]
-            sound_timestamp = timestamp.loc[sound_mask]
             delay_timestamp = timestamp.loc[delay_mask]
 
-            if sound_df.empty or delay_df.empty:
+            if delay_df.empty:
                 return metrics
 
-            sound_x = pd.to_numeric(
-                sound_df[("Center", "x")],
+            x = pd.to_numeric(
+                delay_df[("Center", "x")],
                 errors="coerce",
             )
-            real_leave = first_stable_true_time(
-                sound_x < trigger_zone_x_threshold,
-                sound_timestamp,
-                min_leave_frames,
-            )
 
-            if pd.isna(real_leave):
-                return metrics
-
-            metrics["real_leave"] = real_leave
-
-            after_leave_mask = delay_timestamp >= real_leave
-            after_leave_df = delay_df.loc[after_leave_mask]
-            after_leave_timestamp = delay_timestamp.loc[after_leave_mask]
-
-            if after_leave_df.empty:
-                return metrics
-
-            after_leave_x = pd.to_numeric(
-                after_leave_df[("Center", "x")],
-                errors="coerce",
-            )
+            # 1. 先找到稳定进入 home zone 的时间
             real_stayhome = first_stable_true_time(
-                after_leave_x < home_zone_x_threshold,
-                after_leave_timestamp,
+                x < home_zone_x_threshold,
+                delay_timestamp,
                 min_stayhome_frames,
             )
 
+            if pd.isna(real_stayhome):
+                return metrics
+
             metrics["real_stayhome"] = real_stayhome
+
+            # 2. 在 real_stayhome 前寻找最近一次离开 trigger zone 的时间
+            before_stayhome = delay_timestamp < real_stayhome
+            outside_trigger = x < trigger_zone_x_threshold
+
+            # 从 trigger zone 内跨越到外面的时刻
+            leave_crossing = (
+                outside_trigger
+                & ~outside_trigger.shift(1, fill_value=False)
+                & before_stayhome
+            )
+
+            leave_times = delay_timestamp.loc[leave_crossing]
+
+            if leave_times.empty:
+                return metrics
+
+            real_leave = float(leave_times.iloc[-1])
+            metrics["real_leave"] = real_leave
 
             (
                 metrics["straight_line_distance"],
@@ -917,6 +904,11 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
                 real_leave,
                 real_stayhome,
             )
+
+            # real_leave 之后、delay 时间窗内计算 peak speed
+            after_leave_mask = delay_timestamp >= real_leave
+            after_leave_df = delay_df.loc[after_leave_mask]
+            after_leave_timestamp = delay_timestamp.loc[after_leave_mask]
 
             speed = pd.to_numeric(
                 after_leave_df[("Center", "mean_speed")],
@@ -1028,9 +1020,9 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
             )
 
             # 如需把 path efficiency 加入 escape 判断，取消下面注释
-            classified_df["escape"] &= (
-                classified_df["path_efficiency_pass_filter"]
-            )
+            # classified_df["escape"] &= (
+            #     classified_df["path_efficiency_pass_filter"]
+            # )
 
             classified_df_dic[session] = classified_df
 
@@ -1250,12 +1242,6 @@ def _(
         s_behav_df_dic_prebin_escape,
         s_behav_df_dic_prebin_noreaction,
     )
-
-
-@app.cell
-def _(behavior_utils):
-    sound_stimulus, sound_stim_t = behavior_utils.compute_stimulus_envelope()
-    return sound_stim_t, sound_stimulus
 
 
 @app.cell
@@ -1539,8 +1525,6 @@ def _(
             escape_classification_overview_fig.add_subplot(_gs[4, 1]),
             escape_classification_overview_fig.add_subplot(_gs[4, 2]),
             escape_classification_overview_fig.add_subplot(_gs[4, 3]),
-            escape_classification_overview_fig.add_subplot(_gs[4, 4]),
-            escape_classification_overview_fig.add_subplot(_gs[4, 5]),
         ]
         plot_escape_param_scatter(
             _scatter_axes[0],
@@ -1561,21 +1545,21 @@ def _(
             "Sound-play window frequency",
         )
         plot_escape_param_scatter(
-            _scatter_axes[3],
+            _scatter_axes[0],
             _ns_escape_plot_df,
             "No-sound escape windows",
             "firebrick",
             marker="x",
         )
         plot_escape_param_scatter(
-            _scatter_axes[4],
+            _scatter_axes[1],
             _ns_noreaction_plot_df,
             "No-sound no-reaction windows",
             "steelblue",
             marker="x",
         )
         plot_escape_frequency_histogram(
-            _scatter_axes[5],
+            _scatter_axes[3],
             _ns_escape_plot_df,
             _ns_noreaction_plot_df,
             "No-sound window frequency",
@@ -1586,25 +1570,7 @@ def _(
             fontsize=16,
         )
 
-        plt.show()
-
-        _axes_dict = {
-            "s_escape_speed": _s_escape_axes[0],
-            "s_escape_x": _s_escape_axes[1],
-            "s_noreaction_speed": _s_noreaction_axes[0],
-            "s_noreaction_x": _s_noreaction_axes[1],
-            "ns_escape_speed": _ns_escape_axes[0],
-            "ns_escape_x": _ns_escape_axes[1],
-            "ns_noreaction_speed": _ns_noreaction_axes[0],
-            "ns_noreaction_x": _ns_noreaction_axes[1],
-            "s_escape_scatter": _scatter_axes[0],
-            "s_noreaction_scatter": _scatter_axes[1],
-            "s_frequency": _scatter_axes[2],
-            "ns_escape_scatter": _scatter_axes[3],
-            "ns_noreaction_scatter": _scatter_axes[4],
-            "ns_frequency": _scatter_axes[5],
-        }
-        return escape_classification_overview_fig, _axes_dict
+        return escape_classification_overview_fig
 
 
     return (plot_escape_classification_overview,)
@@ -1624,7 +1590,7 @@ def _(
     ):
         escape_classification_summary_fig, _scatter_axes = plt.subplots(
             1,
-            6,
+            4,
             figsize=(28, 4),
             dpi=150,
             constrained_layout=True,
@@ -1656,21 +1622,21 @@ def _(
             "Sound-play window frequency",
         )
         plot_escape_param_scatter(
-            _scatter_axes[3],
+            _scatter_axes[0],
             _ns_escape_plot_df,
             "No-sound escape windows",
             "firebrick",
             marker="x",
         )
         plot_escape_param_scatter(
-            _scatter_axes[4],
+            _scatter_axes[1],
             _ns_all_withoutescape_plot_df,
             "No-sound no-reaction windows",
             "steelblue",
             marker="x",
         )
         plot_escape_frequency_histogram(
-            _scatter_axes[5],
+            _scatter_axes[3],
             _ns_escape_plot_df,
             _ns_all_withoutescape_plot_df,
             "No-sound window frequency",
@@ -1690,6 +1656,28 @@ def _(
 def _(
     ns_behav_df_dic_prebin_escape,
     ns_behav_df_dic_prebin_noreaction,
+    s_behav_df_dic_prebin_escape,
+    s_behav_df_dic_prebin_noreaction,
+):
+    behavior_dicts = {
+        "s_escape": s_behav_df_dic_prebin_escape,
+        "s_noreaction": s_behav_df_dic_prebin_noreaction,
+        "ns_escape": ns_behav_df_dic_prebin_escape,
+        "ns_noreaction": ns_behav_df_dic_prebin_noreaction,
+    }
+
+    for dic_name, behav_dic in behavior_dicts.items():
+        for session, trial_dic in behav_dic.items():
+            for trial, value in trial_dic.items():
+                if isinstance(value, list):
+                    print(dic_name, session, trial, len(value))
+    return
+
+
+@app.cell
+def _(
+    ns_behav_df_dic_prebin_escape,
+    ns_behav_df_dic_prebin_noreaction,
     ns_session_df_dic_classified_prebin,
     plot_escape_classification_overview,
     s_behav_df_dic_prebin_escape,
@@ -1697,7 +1685,7 @@ def _(
     s_session_df_dic_classified_prebin,
     save_figures_to_folder,
 ):
-    _escape_classification_overview_fig, _ = plot_escape_classification_overview(
+    _escape_classification_overview_fig = plot_escape_classification_overview(
         s_session_df_dic_classified_prebin,
         ns_session_df_dic_classified_prebin,
         s_behav_df_dic_prebin_escape,
@@ -1712,6 +1700,78 @@ def _(
         file_format="png",
         dpi=300,
     )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## plot in different days
+    """)
+    return
+
+
+@app.cell
+def _(analyzed_video_names):
+
+    mouse_dates = {}
+
+    for _session_name in analyzed_video_names:
+        mouse = _session_name.split("_")[0]
+        date = _session_name.split("_")[-2]
+        mouse_dates.setdefault(mouse, set()).add(date)
+
+    # 每只鼠的日期分别排序
+    mouse_dates = {
+        mouse: sorted(dates)
+        for mouse, dates in mouse_dates.items()
+    }
+    return (mouse_dates,)
+
+
+@app.cell
+def _(mouse_dates):
+    def select_day(dic, day):
+        day_index = day - 1
+
+        return {
+            key: value
+            for key, value in dic.items()
+            if key.split("_")[-2] == mouse_dates[key.split("_")[0]][day_index]
+        }
+
+    return (select_day,)
+
+
+@app.cell
+def _(
+    ns_behav_df_dic_prebin_escape,
+    ns_behav_df_dic_prebin_noreaction,
+    ns_session_df_dic_classified_prebin,
+    plot_escape_classification_overview,
+    s_behav_df_dic_prebin_escape,
+    s_behav_df_dic_prebin_noreaction,
+    s_session_df_dic_classified_prebin,
+    save_figures_to_folder,
+    select_day,
+):
+    for day in range(1, 5):
+        _escape_classification_overview_fig = plot_escape_classification_overview(
+            select_day(s_session_df_dic_classified_prebin, day),
+            select_day(ns_session_df_dic_classified_prebin, day),
+            select_day(s_behav_df_dic_prebin_escape, day),
+            select_day(s_behav_df_dic_prebin_noreaction, day),
+            select_day(ns_behav_df_dic_prebin_escape, day),
+            select_day(ns_behav_df_dic_prebin_noreaction, day),
+        )
+        save_figures_to_folder(
+            figure_items = [(f"escape_classification_overview_day{day}", _escape_classification_overview_fig)],
+            folder_name = "classification",
+            file_format="png",
+            dpi=300,
+        )
+    
+    
     return
 
 
@@ -5134,6 +5194,36 @@ def _(ns_behav_df_dic_prebin, plot_behavior_windows_with_sound):
         line_color="steelblue",
     )
     return
+
+
+@app.cell
+def _(behavior_utils, plot_test):
+    import importlib
+    importlib.reload(behavior_utils)
+    importlib.reload(plot_test)
+    return
+
+
+@app.cell
+def _():
+    min_leave_frames=60
+    min_stayhome_frames=20
+    pk_spd_time_afterleave=1
+    soundplay_finished_time=10
+    soundplay_delay_time=12
+    return (
+        min_leave_frames,
+        min_stayhome_frames,
+        pk_spd_time_afterleave,
+        soundplay_delay_time,
+        soundplay_finished_time,
+    )
+
+
+@app.cell
+def _(behavior_utils):
+    sound_stimulus, sound_stim_t = behavior_utils.compute_stimulus_envelope()
+    return sound_stim_t, sound_stimulus
 
 
 if __name__ == "__main__":
