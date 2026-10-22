@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.15"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium")
 
 
@@ -295,85 +295,109 @@ def _(df_day, pd, selected_mouse_dates):
         _day_keys.isin(_selected_keys)
     ].copy()
 
-    df_day_injection
     return (df_day_injection,)
 
 
 @app.cell
 def _(df_day_injection, dft, injection_select, plots, plt):
-    _mice = df_day_injection["subject"].dropna().unique()
     _window = 50
 
-    # 每只鼠一行，每行三个图
-    _fig, _all_axes = plt.subplots(
-        nrows=len(_mice),
-        ncols=3,
-        figsize=(18, 5 * len(_mice)),
-        squeeze=False,  # 只有一只鼠时也保持二维 axes
-    )
+    for _date, _df_date in df_day_injection.groupby(
+        "year_month_day",
+        sort=True,
+        observed=True,
+    ):
+        _mice = _df_date["subject"].dropna().unique()
 
-    for _row, _mouse in enumerate(_mice):
-        _df_mouse = df_day_injection.loc[
-            df_day_injection["subject"].eq(_mouse)
-        ].copy()
+        if len(_mice) == 0:
+            continue
 
-        _axes = _all_axes[_row]
-
-        # 图 1：正确反应数量
-        plots.number_of_correct_responses_plot(
-            _df_mouse,
-            ax=_axes[0],
+        # 每个日期创建一张新图
+        _fig, _all_axes = plt.subplots(
+            nrows=len(_mice),
+            ncols=3,
+            figsize=(18, 5 * len(_mice)),
+            squeeze=False,
         )
 
-        # 图 2：repeat / alternate 正确率
-        _roap = dft.get_performance_through_trials(
-            _df_mouse.copy(),
-            window=_window,
-        ).reset_index(drop=True)
+        for _row, _mouse in enumerate(_mice):
+            # 只取当前日期、当前小鼠的数据
+            _df_mouse = (
+                _df_date.loc[_df_date["subject"].eq(_mouse)]
+                .sort_values(["session", "trial"])
+                .copy()
+            )
 
-        _roap["total_trial"] = range(1, len(_roap) + 1)
+            _axes = _all_axes[_row]
 
-        _session_changes = _roap.index[
-            _roap["session"].ne(_roap["session"].shift())
-        ]
+            # p1：正确与错误 trial 数
+            plots.number_of_correct_responses_plot(
+                _df_mouse,
+                ax=_axes[0],
+            )
 
-        _roap["repeat_or_alternate"] = (
-            dft.get_repeat_or_alternate_series(_roap["correct_side"])
+            # p2：repeat / alternate 表现
+            _roap = dft.get_performance_through_trials(
+                _df_mouse.copy(),
+                window=_window,
+            ).reset_index(drop=True)
+
+            # 每只鼠每天从第 1 个 trial 开始编号
+            _roap["total_trial"] = range(1, len(_roap) + 1)
+
+            _session_changes = _roap.index[
+                _roap["session"].ne(_roap["session"].shift())
+            ]
+
+            _roap["repeat_or_alternate"] = (
+                dft.get_repeat_or_alternate_series(
+                    _roap["correct_side"]
+                )
+            )
+
+            _roap = dft.get_repeat_or_alternate_performance(
+                _roap,
+                window=_window,
+            )
+
+            plots.repeat_or_alternate_performance_plot(
+                _roap,
+                ax=_axes[1],
+                session_changes=_session_changes,
+            )
+
+            # p3：psychometric curve，沿用你的 auditory 设置
+            _psych_df = dft.get_performance_by_difficulty_ratio(
+                _df_mouse
+            )
+
+            plots.psychometric_plot(
+                _psych_df,
+                x="total_evidence_strength",
+                y="first_choice_numeric",
+                valueType="continus",
+                ax=_axes[2],
+            )
+
+            _axes[1].set_title(
+                f"Mouse: {_mouse}",
+                fontsize=14,
+                pad=40,
+            )
+
+        _fig.suptitle(
+            f"{injection_select.value} | {_date}",
+            fontsize=16,
+            fontweight="bold",
         )
-        _roap = dft.get_repeat_or_alternate_performance(
-            _roap,
-            window=_window,
+
+        _fig.tight_layout(
+            rect=[0, 0, 1, 0.96],
+            h_pad=4,
         )
 
-        plots.repeat_or_alternate_performance_plot(
-            _roap,
-            ax=_axes[1],
-            session_changes=_session_changes,
-        )
-
-        # 图 3：psychometric 曲线
-        _psych_df = dft.get_performance_by_difficulty_ratio(_df_mouse)
-
-        plots.psychometric_plot(
-            _psych_df,
-            x="total_evidence_strength",
-            y="first_choice_numeric",
-            valueType="continus",
-            ax=_axes[2],
-        )
-
-        # 每一行的鼠名，放在中间子图上方；留出图例空间
-        _axes[1].set_title(
-            f"Mouse: {_mouse}",
-            fontsize=14,
-            pad=40,
-        )
-
-    # 整张图的标题：注射条件
-    _fig.suptitle(str(injection_select.value), fontsize=16, fontweight="bold",)
-    _fig.tight_layout(rect=[0, 0, 1, 0.96], h_pad=4)
-                                                                                                                                                                                                                                                         
-    _fig
+        # 必须在日期循环里面，逐张显示
+        plt.show()
     return
 
 

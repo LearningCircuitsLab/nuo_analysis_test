@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.15"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium")
 
 
@@ -37,6 +37,7 @@ def _():
     import plot_test
     import utils_test
     import seaborn as sns
+    import scipy.stats as stats
 
     from lecilab_behavior_analysis import utils as utils
     from lecilab_behavior_analysis import df_transforms as dft
@@ -57,6 +58,8 @@ def _():
         plot_test,
         plots,
         plt,
+        sns,
+        stats,
         utils,
         utils_test,
     )
@@ -122,9 +125,8 @@ def _(mo, tv_projects):
 
 
 @app.cell
-def _(project_select, tv_projects):
+def _(project_select):
     project = project_select.value
-    project_idx = tv_projects.index(project)
     return (project,)
 
 
@@ -189,7 +191,7 @@ def _(mo):
     )
 
     run_mode_select
-    return
+    return (run_mode_select,)
 
 
 @app.cell(hide_code=True)
@@ -214,9 +216,10 @@ def _(df_all, dft, np):
 
 @app.cell
 def _(available_dates, mo):
-    # mix1 using time: 2026-07-18 to 2026-07-31
-    # mix2 using time: 2026-08-18 to 2026-08-28
-    # mix3 using time: 2026-09-03 to now
+    # Manual selection of date range for analysis
+    # mix1 (0.01mg/ml from Alexis) using time: 2026-07-18 to 2026-07-31
+    # mix2 (0.01mg/ml from Nuo) using time: 2026-08-18 to 2026-09-02
+    # mix3 (0.02mg/ml from Nuo) using time: 2026-09-03 to now
     date_select_start, date_select_end = (
         mo.ui.dropdown(
             options=available_dates,
@@ -224,7 +227,7 @@ def _(available_dates, mo):
             label=f"Date_{label}",
         )
         for label, default in [
-            ("start", "2026-07-18"),
+            ("start", available_dates[0]),
             ("end", available_dates[-1]),
         ]
     )
@@ -285,16 +288,16 @@ def _(
     date_select_start,
     dft,
     fit_mouse_select,
-    mouse,
     pd,
     project,
+    run_mode_select,
     safe_rsync_cluster_data,
-    stimulus_modality_select,
     update_processData_button,
     utils,
 ):
+    _run_mode = run_mode_select.value
     parameters_output_dir = (
-        Path(utils.get_outpath()) / project / "processed" / "parameters_for_fit" / "manual"
+        Path(utils.get_outpath()) / project / "processed" / "parameters_for_fit" / _run_mode.lower()
     )
     stim_columns = {
         "df_test_vis": "visual",
@@ -302,8 +305,6 @@ def _(
     }
 
     selected_mice = list(fit_mouse_select.value)
-    if not selected_mice:
-        selected_mice = [mouse]
 
     def load_or_compute_mouse_parameters(_mouse):
         parameters_output_path = parameters_output_dir / f"{_mouse}_parameters_for_fit.pkl"
@@ -327,7 +328,7 @@ def _(
             return {output_name: pd.DataFrame() for output_name in stim_columns}
 
         df_all_mouse = pd.read_csv(_csv_path, sep=";")
-        df_manual = df_all_mouse[df_all_mouse["run_mode"] == "Manual"]
+        df_manual = df_all_mouse[df_all_mouse["run_mode"] == _run_mode]
         computed_results = {}
         for output_name, stim_name in stim_columns.items():
             df_stim = df_manual[df_manual["stimulus_modality"] == stim_name]
@@ -353,41 +354,23 @@ def _(
                     df_mouse_result["subject"] = _mouse
                 combined_results[output_name].append(df_mouse_result)
 
-    df_test_vis_raw = (
+    _df_test_vis_raw = (
         pd.concat(combined_results["df_test_vis"], ignore_index=True)
         if combined_results["df_test_vis"]
         else pd.DataFrame()
     )
-    df_test_aud_raw = (
+
+    _df_test_aud_raw = (
         pd.concat(combined_results["df_test_aud"], ignore_index=True)
         if combined_results["df_test_aud"]
         else pd.DataFrame()
     )
-    if not df_test_vis_raw.empty:
-        df_test_vis_raw = df_test_vis_raw.copy()
-        df_test_vis_raw["stimulus_modality"] = "visual"
-    if not df_test_aud_raw.empty:
-        df_test_aud_raw = df_test_aud_raw.copy()
-        df_test_aud_raw["stimulus_modality"] = "auditory"
 
-    if stimulus_modality_select.value == "visual":
-        df_test_selected_raw = df_test_vis_raw
-    elif stimulus_modality_select.value == "auditory":
-        df_test_selected_raw = df_test_aud_raw
-    else:
-        selected_raw_dfs = [
-            df_raw
-            for df_raw in [df_test_vis_raw, df_test_aud_raw]
-            if not df_raw.empty
-        ]
-        df_test_selected_raw = (
-            pd.concat(selected_raw_dfs, ignore_index=True)
-            if selected_raw_dfs
-            else pd.DataFrame()
-        )
+    df_test_selected_raw = pd.concat(
+        [_df_test_vis_raw, _df_test_aud_raw],
+        ignore_index=True,
+    )
 
-    df_test_selected_raw = dft.add_day_column_to_df(df_test_selected_raw.copy())
-    df_test_selected_raw = dft.add_trial_of_day_column_to_df(df_test_selected_raw)
     _dates = pd.to_datetime(df_test_selected_raw["year_month_day"], errors="coerce").dt.normalize()
 
     _start_date = pd.to_datetime(date_select_start.value).normalize()
@@ -497,33 +480,11 @@ def _(df_test_selected_raw, injection_info_df, pd):
         injection_lookup.get((trial_date, trial_mouse), pd.NA)
         for trial_date, trial_mouse in zip(trial_dates, trial_mice)
     ]
-
-    df_test_selected['observations']
     return (df_test_selected,)
 
 
 @app.cell
-def _(pd, utils):
-    def add_number_of_pokes(df_raw: pd.DataFrame, port_number: int):
-        df = df_raw.copy()
-        port_hold_column = f"port{port_number}_holds"
-        df[port_hold_column] = df.apply(lambda row: utils.get_trial_port_hold(row, port_number), axis=1)
-        df[f"port{port_number}_pokes_num"] = df[port_hold_column].apply(lambda x: len(x))
-        return df
-
-    return (add_number_of_pokes,)
-
-
-@app.cell
-def _(
-    add_number_of_pokes,
-    behavior_utils,
-    df_test_selected,
-    dft,
-    injection_info_df,
-    pd,
-    utils_test,
-):
+def _(behavior_utils, df_test_selected, dft, injection_info_df, pd):
     session_performance = df_test_selected.groupby(
         ["subject", "session"]
     )["correct"].transform("mean")
@@ -540,18 +501,10 @@ def _(
         ~drop_mask
     ].copy()
 
-    df_test_selected_upd = dft.add_trial_duration_column_to_df(
-        dft.calculate_time_between_trials_and_reaction_time(
-            dft.add_day_column_to_df(
-                add_number_of_pokes(df_test_selected_upd, port_number=2)
-            )
-        )
-    )
-    df_test_selected_upd = utils_test.add_number_of_centralpokes_after_choice(
-        utils_test.add_fixation_break_columns(
-            df_test_selected_upd
-            )
-        )
+    for _subject in df_test_selected_upd['subject'].unique():
+        _df_sub = df_test_selected_upd.loc[df_test_selected_upd['subject'] == _subject]
+        _df_sub = dft.add_engagement_column(_df_sub, engagement_sd_criteria=2)
+        df_test_selected_upd.loc[df_test_selected_upd['subject'] == _subject, 'engaged'] = _df_sub['engaged']
     metric_paired_dates = behavior_utils.get_paired_injection_dates(injection_info_df, drug_name="mk801")
     df_test_selected_upd["observation_group"] = df_test_selected_upd[
         "observations"
@@ -651,6 +604,37 @@ def _(
 
     df_test_selected_upd = df_test_selected_upd[df_test_selected_upd["session_duration"] <= 2400].copy()
     return df_test_selected_upd, metric_paired_dates
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # mixed correlation matrix
+    """)
+    return
+
+
+@app.cell
+def _():
+    continuous_cols = [
+        "reaction_time",
+        "trial_duration",
+        "inter_trial_interval",
+    ]
+
+    binary_cols = [
+        "correct_numeric",
+        "previous_same_choice_numeric",
+        "roa_choice_numeric",
+    ]
+
+    count_cols = [
+        "fixation_breaks",
+        "eager_pokes",
+    ]
+
+    features = continuous_cols + binary_cols + count_cols
+    return
 
 
 @app.cell(hide_code=True)
@@ -814,7 +798,7 @@ def _(mo):
             "ylabel": "Session mean reaction time",
         },
         "time interval": {
-            "metric_col": "time_between_trials",
+            "metric_col": "inter_trial_interval",
             "agg_func": "mean",
             "ylabel": "Session mean time interval",
         },
@@ -1091,12 +1075,6 @@ def _(
     return
 
 
-@app.cell
-def _(df_test_selected_upd):
-    df_test_selected_upd.abs_total_evidence_strength
-    return
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -1279,7 +1257,7 @@ def _(mo):
 
 @app.cell
 def _(np, pd, plt):
-    def plot_pooled_metric_by_evidence_bins(
+    def plot_metric_by_evidence_bins(
         df,
         metric_col,
         agg_func="mean",
@@ -1287,11 +1265,12 @@ def _(np, pd, plt):
         title=None,
         drug_name="mk801",
         n_bins=3,
-        test_method="mannwhitneyu",
+        test_method="ttest_ind",
     ):
         from scipy import stats
 
         groups = ["saline", drug_name]
+
         colors = {
             "saline": "blue",
             drug_name: "red",
@@ -1299,11 +1278,13 @@ def _(np, pd, plt):
 
         plot_df = df.copy()
 
+        # 将 evidence 转换为数值
         plot_df["abs_total_evidence_strength"] = pd.to_numeric(
             plot_df["abs_total_evidence_strength"],
             errors="coerce",
         )
 
+        # 只保留 saline、drug 和有效 evidence
         plot_df = plot_df[
             plot_df["observation_group"].isin(groups)
         ].dropna(
@@ -1311,37 +1292,92 @@ def _(np, pd, plt):
                 "observation_group",
                 "abs_total_evidence_strength",
             ]
+        ).copy()
+
+        is_count = (
+            agg_func in {"len", "size", "count"}
+            or agg_func is len
         )
 
-        is_count = agg_func in {"len", "size", "count"}
-
+        # 非计数指标必须转换为数值
         if not is_count:
             plot_df[metric_col] = pd.to_numeric(
                 plot_df[metric_col],
                 errors="coerce",
             )
-            plot_df = plot_df.dropna(subset=[metric_col])
 
-        # 等宽分成3段
+            plot_df = plot_df.dropna(
+                subset=[metric_col]
+            ).copy()
+
+        # 没有有效数据
+        if plot_df.empty:
+            fig, ax = plt.subplots(figsize=(7, 5))
+
+            ax.text(
+                0.5,
+                0.5,
+                "No valid data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+
+            ax.set_axis_off()
+
+            return (
+                fig,
+                pd.DataFrame(),
+                pd.DataFrame(),
+            )
+
+        # 按 evidence 数值范围等宽分箱
         plot_df["evidence_bin"] = pd.cut(
             plot_df["abs_total_evidence_strength"],
             bins=n_bins,
             include_lowest=True,
         )
 
-        bin_order = list(
-            plot_df["evidence_bin"].cat.categories
-        )
+        # 保留有数据的 bin
+        bin_order = [
+            interval
+            for interval in plot_df[
+                "evidence_bin"
+            ].cat.categories
+            if (
+                plot_df["evidence_bin"] == interval
+            ).any()
+        ]
 
+        # 每个 bin 的横坐标使用区间中心
         bin_centers = {
             interval: interval.mid
             for interval in bin_order
         }
 
+        # 每个 bin 的数据范围和 trial 数
+        bin_info = (
+            plot_df.groupby(
+                "evidence_bin",
+                observed=True,
+            )["abs_total_evidence_strength"]
+            .agg(
+                evidence_mean="mean",
+                evidence_min="min",
+                evidence_max="max",
+                n_trials="size",
+            )
+            .reset_index()
+        )
+
         if is_count:
+            # 每个 treatment、每个 evidence bin 的总 trial 数
             summary = (
                 plot_df.groupby(
-                    ["observation_group", "evidence_bin"],
+                    [
+                        "observation_group",
+                        "evidence_bin",
+                    ],
                     observed=True,
                 )
                 .size()
@@ -1349,32 +1385,65 @@ def _(np, pd, plt):
                 .reset_index()
             )
 
-            # 总计数不存在 trial-level 标准差；
-            # sqrt(N) 是 Poisson count error
-            summary["error"] = np.sqrt(summary["value"])
             summary["n_trials"] = summary["value"]
 
+            # 总计数不能直接计算普通 SEM/95% CI；
+            # sqrt(N) 作为 Poisson count error
+            summary["error"] = np.sqrt(
+                summary["value"]
+            )
+
         else:
+            # pooled trials 的均值、标准差和样本数
             summary = (
                 plot_df.groupby(
-                    ["observation_group", "evidence_bin"],
+                    [
+                        "observation_group",
+                        "evidence_bin",
+                    ],
                     observed=True,
                 )[metric_col]
                 .agg(
                     value="mean",
-                    error="sem",
+                    std="std",
                     n_trials="size",
                 )
                 .reset_index()
             )
 
+            # 标准误
+            summary["sem"] = (
+                summary["std"]
+                / np.sqrt(summary["n_trials"])
+            )
+
+            # 95% confidence interval 的半宽
+            summary["error"] = (
+                stats.t.ppf(
+                    0.975,
+                    df=summary["n_trials"] - 1,
+                )
+                * summary["sem"]
+            )
+
+            summary["ci95_lower"] = (
+                summary["value"]
+                - summary["error"]
+            )
+
+            summary["ci95_upper"] = (
+                summary["value"]
+                + summary["error"]
+            )
+
+        # 为每个 bin 添加横坐标中心
         summary["bin_center"] = (
             summary["evidence_bin"]
             .map(bin_centers)
             .astype(float)
         )
 
-        # 每个 evidence bin 中比较所有 saline 和 drug trials
+        # 每个 evidence bin 内进行 saline–drug 比较
         comparison_rows = []
 
         if not is_count:
@@ -1418,7 +1487,362 @@ def _(np, pd, plt):
 
                 comparison_rows.append({
                     "evidence_bin": evidence_bin,
-                    "bin_center": bin_centers[evidence_bin],
+                    "bin_center": bin_centers[
+                        evidence_bin
+                    ],
+                    "n_saline": len(saline_values),
+                    f"n_{drug_name}": len(
+                        drug_values
+                    ),
+                    "p_value": p_value,
+                })
+
+        comparisons = pd.DataFrame(
+            comparison_rows
+        )
+
+        def _p_label(p_value):
+            if pd.isna(p_value):
+                return "n/a"
+            if p_value < 0.001:
+                return "***"
+            if p_value < 0.01:
+                return "**"
+            if p_value < 0.05:
+                return "*"
+            return "ns"
+
+        # 绘图
+        fig, ax = plt.subplots(
+            figsize=(7, 5)
+        )
+
+        for group in groups:
+            group_summary = (
+                summary[
+                    summary["observation_group"]
+                    == group
+                ]
+                .sort_values("bin_center")
+            )
+
+            if group_summary.empty:
+                continue
+
+            ax.errorbar(
+                group_summary["bin_center"],
+                group_summary["value"],
+                yerr=group_summary[
+                    "error"
+                ].fillna(0),
+                marker="o",
+                markersize=7,
+                linewidth=2,
+                capsize=4,
+                color=colors[group],
+                label=group,
+            )
+
+        # 添加显著性标记
+        if not comparisons.empty:
+            y_upper = (
+                summary["value"]
+                + summary["error"].fillna(0)
+            )
+
+            y_lower = (
+                summary["value"]
+                - summary["error"].fillna(0)
+            )
+
+            y_max = y_upper.max()
+            y_min = y_lower.min()
+            y_range = y_max - y_min
+
+            if (
+                not np.isfinite(y_range)
+                or y_range == 0
+            ):
+                y_range = (
+                    abs(y_max) * 0.1
+                    if np.isfinite(y_max)
+                    and y_max != 0
+                    else 1
+                )
+
+            significance_y = (
+                y_max + y_range * 0.08
+            )
+
+            for _, row in comparisons.iterrows():
+                ax.text(
+                    row["bin_center"],
+                    significance_y,
+                    _p_label(
+                        row["p_value"]
+                    ),
+                    ha="center",
+                    va="bottom",
+                    fontsize=11,
+                )
+
+            ax.set_ylim(
+                top=y_max + y_range * 0.20
+            )
+
+        # 横坐标位置
+        ax.set_xticks(
+            [
+                bin_centers[interval]
+                for interval in bin_order
+            ]
+        )
+
+        # 显示每个 bin 的 evidence 范围
+        ax.set_xticklabels(
+            [
+                (
+                    f"{interval.left:.2f}–"
+                    f"{interval.right:.2f}"
+                )
+                for interval in bin_order
+            ],
+            rotation=30,
+            ha="right",
+        )
+
+        ax.set_xlabel(
+            "Absolute total evidence strength"
+        )
+
+        if ylabel is not None:
+            ax.set_ylabel(ylabel)
+
+        elif is_count:
+            ax.set_ylabel(
+                f"Total number of {metric_col}"
+            )
+
+        else:
+            ax.set_ylabel(
+                f"Mean {metric_col} (95% CI)"
+            )
+
+        if title is not None:
+            ax.set_title(title)
+
+        else:
+            ax.set_title(
+                f"{metric_col} by evidence "
+                "strength and treatment"
+            )
+
+        ax.legend(frameon=False)
+        ax.grid(
+            axis="y",
+            alpha=0.25,
+        )
+        ax.spines[
+            ["top", "right"]
+        ].set_visible(False)
+
+        fig.tight_layout()
+
+        # 保存附加信息
+        summary.attrs["bin_info"] = (
+            bin_info
+        )
+
+        summary.attrs["binning"] = (
+            "equal-width evidence bins"
+        )
+
+        summary.attrs["error_bars"] = (
+            "95% CI across pooled trials"
+            if not is_count
+            else "Poisson sqrt(N) count error"
+        )
+
+        return (
+            fig,
+            summary,
+            comparisons,
+        )
+
+    return (plot_metric_by_evidence_bins,)
+
+
+@app.cell
+def _(
+    compare_agg_func,
+    compare_metric_col,
+    compare_value_select,
+    compare_y_label,
+    df_test_selected_upd,
+    plot_metric_by_evidence_bins,
+):
+    plot_metric_by_evidence_bins(
+        df_test_selected_upd,
+        metric_col=compare_metric_col,
+        agg_func=compare_agg_func,
+        ylabel=compare_y_label, 
+        title=compare_value_select.value,
+        drug_name="mk801",
+        n_bins=5,
+    )
+    return
+
+
+@app.cell
+def _(np, pd, plt, stats):
+    def plot_metric_by_difficulty(
+        df,
+        metric_col,
+        agg_func="mean",
+        ylabel=None,
+        title=None,
+        drug_name="mk801",
+        test_method="ttest_ind",
+    ):
+
+        difficulty_order = ["easy", "medium", "hard"]
+        groups = ["saline", drug_name]
+
+        colors = {
+            "saline": "blue",
+            drug_name: "red",
+        }
+
+        plot_df = df.copy()
+
+        plot_df = plot_df[
+            plot_df["difficulty"].isin(difficulty_order)
+            & plot_df["observation_group"].isin(groups)
+        ].copy()
+
+        is_count = agg_func in {"len", "size", "count"}
+
+        if not is_count:
+            plot_df[metric_col] = pd.to_numeric(
+                plot_df[metric_col],
+                errors="coerce",
+            )
+            plot_df = plot_df.dropna(subset=[metric_col])
+
+        plot_df["difficulty"] = pd.Categorical(
+            plot_df["difficulty"],
+            categories=difficulty_order,
+            ordered=True,
+        )
+
+        # 所有小鼠的 trial 合并后，按 difficulty 和 treatment 聚合
+        if is_count:
+            summary = (
+                plot_df.groupby(
+                    ["observation_group", "difficulty"],
+                    observed=True,
+                )
+                .size()
+                .rename("value")
+                .reset_index()
+            )
+
+            # 对总计数使用 Poisson 误差，而不是 SEM
+            summary["error"] = np.sqrt(summary["value"])
+            summary["n_trials"] = summary["value"]
+
+        summary = (
+            plot_df.groupby(
+                ["observation_group", "difficulty"],
+                observed=True,
+            )[metric_col]
+            .agg(
+                value="mean",
+                std="std",
+                n_trials="size",
+            )
+            .reset_index()
+        )
+
+        summary["sem"] = (
+            summary["std"]
+            / np.sqrt(summary["n_trials"])
+        )
+
+        # 95% CI 的半宽
+        summary["error"] = (
+            stats.t.ppf(
+                0.975,
+                df=summary["n_trials"] - 1,
+            )
+            * summary["sem"]
+        )
+
+        summary["ci95_lower"] = (
+            summary["value"] - summary["error"]
+        )
+
+        summary["ci95_upper"] = (
+            summary["value"] + summary["error"]
+        )
+
+        difficulty_positions = {
+            difficulty: position
+            for position, difficulty in enumerate(difficulty_order)
+        }
+
+        summary["x_position"] = (
+            summary["difficulty"]
+            .astype(str)
+            .map(difficulty_positions)
+        )
+
+        # 每个 difficulty 内比较 saline 和 MK801
+        comparison_rows = []
+
+        if not is_count:
+            for difficulty in difficulty_order:
+                df_difficulty = plot_df[
+                    plot_df["difficulty"] == difficulty
+                ]
+
+                saline_values = df_difficulty.loc[
+                    df_difficulty["observation_group"] == "saline",
+                    metric_col,
+                ].dropna()
+
+                drug_values = df_difficulty.loc[
+                    df_difficulty["observation_group"] == drug_name,
+                    metric_col,
+                ].dropna()
+
+                if saline_values.empty or drug_values.empty:
+                    p_value = np.nan
+
+                elif test_method == "mannwhitneyu":
+                    p_value = stats.mannwhitneyu(
+                        saline_values,
+                        drug_values,
+                        alternative="two-sided",
+                    ).pvalue
+
+                elif test_method == "ttest_ind":
+                    p_value = stats.ttest_ind(
+                        saline_values,
+                        drug_values,
+                        equal_var=False,
+                        nan_policy="omit",
+                    ).pvalue
+
+                else:
+                    raise ValueError(
+                        "test_method must be "
+                        "'mannwhitneyu' or 'ttest_ind'"
+                    )
+
+                comparison_rows.append({
+                    "difficulty": difficulty,
+                    "x_position": difficulty_positions[difficulty],
                     "n_saline": len(saline_values),
                     f"n_{drug_name}": len(drug_values),
                     "p_value": p_value,
@@ -1444,8 +1868,347 @@ def _(np, pd, plt):
                 summary[
                     summary["observation_group"] == group
                 ]
+                .sort_values("x_position")
+            )
+
+            ax.errorbar(
+                group_summary["x_position"],
+                group_summary["value"],
+                yerr=group_summary["error"].fillna(0),
+                marker="o",
+                markersize=7,
+                linewidth=2,
+                capsize=4,
+                color=colors[group],
+                label=group,
+            )
+
+        # 每个 difficulty 上方显示显著性
+        if not comparisons.empty:
+            y_upper = (
+                summary["value"]
+                + summary["error"].fillna(0)
+            )
+            y_lower = (
+                summary["value"]
+                - summary["error"].fillna(0)
+            )
+
+            y_max = y_upper.max()
+            y_min = y_lower.min()
+            y_range = y_max - y_min
+
+            if y_range == 0:
+                y_range = abs(y_max) * 0.1 if y_max != 0 else 1
+
+            for _, row in comparisons.iterrows():
+                ax.text(
+                    row["x_position"],
+                    y_max + y_range * 0.08,
+                    _p_label(row["p_value"]),
+                    ha="center",
+                    va="bottom",
+                    fontsize=11,
+                )
+
+            ax.set_ylim(
+                top=y_max + y_range * 0.20
+            )
+
+        ax.set_xticks(range(len(difficulty_order)))
+        ax.set_xticklabels(
+            ["Easy", "Medium", "Hard"]
+        )
+
+        ax.set_xlabel("Difficulty")
+
+        if ylabel is not None:
+            ax.set_ylabel(ylabel)
+        elif is_count:
+            ax.set_ylabel(f"Total number of {metric_col}")
+        else:
+            ax.set_ylabel(f"Mean {metric_col} ± SEM")
+
+        if title is not None:
+            ax.set_title(title)
+        else:
+            ax.set_title(
+                f"{metric_col} by evidence "
+                "strength and treatment"
+            )
+        ax.legend(frameon=False)
+        ax.grid(axis="y", alpha=0.25)
+        ax.spines[["top", "right"]].set_visible(False)
+
+        fig.tight_layout()
+
+        return fig, summary, comparisons
+
+    return (plot_metric_by_difficulty,)
+
+
+@app.cell
+def _(
+    compare_metric_col,
+    compare_value_select,
+    compare_y_label,
+    df_test_selected_upd,
+    plot_metric_by_difficulty,
+):
+    plot_metric_by_difficulty(
+        df_test_selected_upd,
+        metric_col=compare_metric_col,
+        agg_func="mean",
+        ylabel=compare_y_label,
+        title=compare_value_select.value,
+        drug_name="mk801",
+        test_method="ttest_ind",
+    )
+    return
+
+
+@app.cell
+def _(np, pd, plt):
+    def plot_metric_by_evidence_bin(
+        df,
+        metric_col,
+        agg_func="mean",
+        ylabel=None,
+        title=None,
+        drug_name="mk801",
+        n_bins=5,
+        test_method="ttest_ind",
+    ):
+        from scipy import stats
+
+        groups = ["saline", drug_name]
+
+        colors = {
+            "saline": "blue",
+            drug_name: "red",
+        }
+
+        plot_df = df.copy()
+
+        # 转换 evidence 为数值
+        plot_df["abs_total_evidence_strength"] = pd.to_numeric(
+            plot_df["abs_total_evidence_strength"],
+            errors="coerce",
+        )
+
+        # 只保留 saline、drug 和有效 evidence
+        plot_df = plot_df[
+            plot_df["observation_group"].isin(groups)
+        ].dropna(
+            subset=[
+                "observation_group",
+                "abs_total_evidence_strength",
+            ]
+        ).copy()
+
+        is_count = (
+            agg_func in {"len", "size", "count"}
+            or agg_func is len
+        )
+
+        # 非计数指标需要转换为数值
+        if not is_count:
+            plot_df[metric_col] = pd.to_numeric(
+                plot_df[metric_col],
+                errors="coerce",
+            )
+
+            plot_df = plot_df.dropna(
+                subset=[metric_col]
+            ).copy()
+
+        if plot_df.empty:
+            fig, ax = plt.subplots(figsize=(7, 5))
+            ax.text(
+                0.5,
+                0.5,
+                "No valid data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.set_axis_off()
+            return fig, pd.DataFrame(), pd.DataFrame()
+
+        # 按 evidence 排序后，根据 trial 数进行等频分箱
+        # rank(method="first") 可以使每个 bin 的 trial 数尽量相等
+        plot_df["evidence_rank"] = (
+            plot_df["abs_total_evidence_strength"]
+            .rank(method="first")
+        )
+
+        actual_n_bins = min(
+            n_bins,
+            len(plot_df),
+        )
+
+        plot_df["evidence_bin_number"] = pd.qcut(
+            plot_df["evidence_rank"],
+            q=actual_n_bins,
+            labels=False,
+        )
+
+        # 每个 bin 的实际中心、范围和 trial 数
+        bin_info = (
+            plot_df.groupby(
+                "evidence_bin_number",
+                observed=True,
+            )["abs_total_evidence_strength"]
+            .agg(
+                center="mean",
+                left="min",
+                right="max",
+                n_trials="size",
+            )
+        )
+
+        bin_order = bin_info.index.tolist()
+        bin_centers = bin_info["center"].to_dict()
+
+        # 所有小鼠的 trial 合并后计算
+        if is_count:
+            summary = (
+                plot_df.groupby(
+                    [
+                        "observation_group",
+                        "evidence_bin_number",
+                    ],
+                    observed=True,
+                )
+                .size()
+                .rename("value")
+                .reset_index()
+            )
+
+            # 总 trial 数没有 SEM；
+            # sqrt(N) 表示 Poisson count error
+            summary["error"] = np.sqrt(
+                summary["value"]
+            )
+            summary["n_trials"] = summary["value"]
+
+        else:
+            summary = (
+                plot_df.groupby(
+                    [
+                        "observation_group",
+                        "evidence_bin_number",
+                    ],
+                    observed=True,
+                )[metric_col]
+                .agg(
+                    value="mean",
+                    std="std",
+                    n_trials="size",
+                )
+                .reset_index()
+            )
+
+            summary["sem"] = (
+                summary["std"]
+                / np.sqrt(summary["n_trials"])
+            )
+
+            summary["error"] = (
+                stats.t.ppf(
+                    0.975,
+                    df=summary["n_trials"] - 1,
+                )
+                * summary["sem"]
+            )
+
+        # 横坐标使用每个 bin 内实际 evidence 的平均值
+        summary["bin_center"] = (
+            summary["evidence_bin_number"]
+            .map(bin_centers)
+            .astype(float)
+        )
+
+        # 每个 evidence bin 内比较 saline 和 drug
+        comparison_rows = []
+
+        if not is_count:
+            for evidence_bin_number, df_bin in plot_df.groupby(
+                "evidence_bin_number",
+                observed=True,
+            ):
+                saline_values = df_bin.loc[
+                    df_bin["observation_group"] == "saline",
+                    metric_col,
+                ].dropna()
+
+                drug_values = df_bin.loc[
+                    df_bin["observation_group"] == drug_name,
+                    metric_col,
+                ].dropna()
+
+                if saline_values.empty or drug_values.empty:
+                    p_value = np.nan
+
+                elif test_method == "mannwhitneyu":
+                    p_value = stats.mannwhitneyu(
+                        saline_values,
+                        drug_values,
+                        alternative="two-sided",
+                    ).pvalue
+
+                elif test_method == "ttest_ind":
+                    p_value = stats.ttest_ind(
+                        saline_values,
+                        drug_values,
+                        equal_var=False,
+                        nan_policy="omit",
+                    ).pvalue
+
+                else:
+                    raise ValueError(
+                        "test_method must be "
+                        "'mannwhitneyu' or 'ttest_ind'"
+                    )
+
+                comparison_rows.append({
+                    "evidence_bin_number": (
+                        evidence_bin_number
+                    ),
+                    "bin_center": (
+                        bin_centers[evidence_bin_number]
+                    ),
+                    "n_saline": len(saline_values),
+                    f"n_{drug_name}": len(drug_values),
+                    "p_value": p_value,
+                })
+
+        comparisons = pd.DataFrame(comparison_rows)
+
+        def _p_label(p_value):
+            if pd.isna(p_value):
+                return "n/a"
+            if p_value < 0.001:
+                return "***"
+            if p_value < 0.01:
+                return "**"
+            if p_value < 0.05:
+                return "*"
+            return "ns"
+
+        fig, ax = plt.subplots(figsize=(7, 5))
+
+        # 绘制 saline 和 drug 的均值 ± SEM
+        for group in groups:
+            group_summary = (
+                summary[
+                    summary["observation_group"] == group
+                ]
                 .sort_values("bin_center")
             )
+
+            if group_summary.empty:
+                continue
 
             ax.errorbar(
                 group_summary["bin_center"],
@@ -1459,93 +2222,126 @@ def _(np, pd, plt):
                 label=group,
             )
 
-        # 显著性标记
+        # 添加每个 bin 的显著性结果
         if not comparisons.empty:
-            y_max = (
-                summary["value"] + summary["error"].fillna(0)
-            ).max()
-            y_min = (
-                summary["value"] - summary["error"].fillna(0)
-            ).min()
+            y_upper = (
+                summary["value"]
+                + summary["error"].fillna(0)
+            )
+            y_lower = (
+                summary["value"]
+                - summary["error"].fillna(0)
+            )
+
+            y_max = y_upper.max()
+            y_min = y_lower.min()
             y_range = y_max - y_min
 
-            if y_range == 0:
-                y_range = abs(y_max) * 0.1 if y_max != 0 else 1
+            if not np.isfinite(y_range) or y_range == 0:
+                y_range = (
+                    abs(y_max) * 0.1
+                    if np.isfinite(y_max) and y_max != 0
+                    else 1
+                )
+
+            significance_y = y_max + y_range * 0.08
 
             for _, row in comparisons.iterrows():
                 ax.text(
                     row["bin_center"],
-                    y_max + y_range * 0.08,
+                    significance_y,
                     _p_label(row["p_value"]),
                     ha="center",
                     va="bottom",
+                    fontsize=11,
                 )
 
             ax.set_ylim(
-                top=y_max + y_range * 0.2
+                top=y_max + y_range * 0.20
             )
 
+        # 横坐标位于每个 bin 的实际 evidence 平均值
         ax.set_xticks(
-            [bin_centers[interval] for interval in bin_order]
-        )
-        ax.set_xticklabels(
             [
-                f"{interval.left:.2f}–{interval.right:.2f}"
-                for interval in bin_order
+                bin_centers[bin_number]
+                for bin_number in bin_order
             ]
         )
 
-        ax.set_xlabel("Absolute total evidence strength")
-
-        if is_count:
-            ax.set_ylabel(f"Total number of {metric_col}")
-        else:
-            ax.set_ylabel(f"Mean {metric_col}")
-
-        ax.set_title(
-            f"{metric_col} by evidence strength and treatment"
+        # 标签显示每个 bin 的实际 evidence 范围
+        ax.set_xticklabels(
+            [
+                (
+                    f"{bin_info.loc[bin_number, 'left']:.2f}–"
+                    f"{bin_info.loc[bin_number, 'right']:.2f}"
+                )
+                for bin_number in bin_order
+            ]
         )
+
+        ax.set_xlabel(
+            "Absolute total evidence strength"
+        )
+
+        if ylabel is not None:
+            ax.set_ylabel(ylabel)
+        elif is_count:
+            ax.set_ylabel(
+                f"Total number of {metric_col}"
+            )
+        else:
+            ax.set_ylabel(
+                f"Mean {metric_col} (95% CI)"
+            )
+
+        if title is not None:
+            ax.set_title(title)
+        else:
+            ax.set_title(
+                f"{metric_col} by evidence strength "
+                f"and treatment"
+            )
+
         ax.legend(frameon=False)
         ax.grid(axis="y", alpha=0.25)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
+
         fig.tight_layout()
+
+        # 将 bin 信息附加到输出，方便检查
+        summary.attrs["bin_info"] = bin_info
+        summary.attrs["binning"] = (
+            "equal number of pooled trials"
+        )
 
         return fig, summary, comparisons
 
-    return (plot_pooled_metric_by_evidence_bins,)
+    return (plot_metric_by_evidence_bin,)
 
 
 @app.cell
 def _(
-    compare_agg_func,
     compare_metric_col,
     compare_value_select,
     compare_y_label,
     df_test_selected_upd,
-    plot_pooled_metric_by_evidence_bins,
+    plot_metric_by_evidence_bin,
 ):
-    evidence_fig, evidence_summary, evidence_tests = (
-        plot_pooled_metric_by_evidence_bins(
-            df_test_selected_upd,
-            metric_col=compare_metric_col,
-            agg_func=compare_agg_func,
-            ylabel=compare_y_label, 
-            title=compare_value_select.value,
-            drug_name="mk801",
-            n_bins=5,
-        )
+    plot_metric_by_evidence_bin(
+        df_test_selected_upd,
+        metric_col=compare_metric_col,
+        title=compare_value_select.value,
+        agg_func="mean",
+        ylabel=compare_y_label,
+        drug_name="mk801",
+        test_method="ttest_ind",
+        n_bins=5
     )
-
-    evidence_fig
     return
 
 
 @app.cell
-def _(behavior_utils, metric_paired_dates, pd, plt):
-    from scipy import stats
-
+def _(behavior_utils, metric_paired_dates, pd, plt, stats):
     def observation_to_color(observation):
         observation = str(observation).lower()
         if "mk801" in observation:
@@ -1852,7 +2648,6 @@ def _(behavior_utils, metric_paired_dates, pd, plt):
         p_value_to_label,
         plot_metric_by_date,
         plot_metric_by_observation,
-        stats,
     )
 
 
@@ -1926,6 +2721,961 @@ def _(
         _aggfunc = "mean"
     plot_group(_df_max, "lapse", metric_col=observation_select.value, metric_name=observation_select.value, agg_func=_aggfunc, plot_func=plot_metric_by_observation)
     return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # work bout
+    """)
+    return
+
+
+@app.cell
+def _(df_test_selected_upd, plt, sns):
+    _fig, _ax = plt.subplots(figsize=(7, 5))
+    _palette = {"saline": "blue", "mk801": "red"}
+    sns.ecdfplot(
+        data=df_test_selected_upd,
+        x="inter_trial_interval",
+        hue="observation_group",
+        stat="proportion",
+        ax=_ax,
+        palette=_palette
+    )
+
+    _ax.set_xscale("log")
+    _ax.set_xlabel("Inter-trial interval (s)")
+    _ax.set_ylabel("Cumulative probability")
+    _ax.set_ylim(0, 1)
+    _ax.grid(alpha=0.2)
+
+    plt.tight_layout()
+    plt.show()
+    return
+
+
+@app.cell
+def _(df_test_selected_upd, np, pd):
+    import ast
+
+    _keys = ["subject", "year_month_day", "session", "observation_group"]
+    _df = df_test_selected_upd.sort_values(_keys + ["trial"]).copy()
+    _g = _df.groupby(_keys)
+
+    _df["bout_id"] = (
+        _g.cumcount().eq(0)
+        | _g["engaged"].shift().ne(_df["engaged"])
+    ).cumsum()
+
+    work_bouts = (
+        _df.groupby(_keys + ["bout_id"], observed=True)
+        .agg(
+            engaged=("engaged", "first"),
+            n_trials=("trial", "size"),
+            start_time=("TRIAL_START", "first"),
+            end_time=("TRIAL_END", "last"),
+        )
+        .reset_index()
+    )
+
+    work_bouts["duration_s"] = (
+        work_bouts["end_time"] - work_bouts["start_time"]
+    )
+
+    _bg = work_bouts.groupby(_keys, observed=True)
+
+    work_bouts["break_onset"] = (
+        ~work_bouts["engaged"]
+        & _bg["engaged"].shift().eq(True)
+    )
+
+    work_bouts["complete"] = (
+        _bg.cumcount().gt(0)
+        & _bg.cumcount(ascending=False).gt(0)
+    )
+
+    def has_poke(value):
+        if isinstance(value, str):
+            value = ast.literal_eval(value)
+        return np.isfinite(np.asarray(value, dtype=float)).any()
+
+    initiated_counts = (
+        _df.assign(initiated=_df["Port2In"].apply(has_poke))
+        .groupby(_keys, observed=True)["initiated"]
+        .sum()
+    )
+
+    _rows = []
+
+    for _key, _bout in work_bouts.groupby(_keys, observed=True):
+        working = _bout[_bout["engaged"].eq(True)]
+        complete_working = working[working["complete"]]
+        complete_breaks = _bout[_bout["engaged"].eq(False) & _bout["complete"]]
+
+        # 观测窗口：第一个 trial 开始至最后一个 trial 结束
+        session_s = _bout["end_time"].max() - _bout["start_time"].min()
+        session_s = session_s if session_s > 0 else np.nan
+        session_h = session_s / 3600
+
+        _rows.append({
+            **dict(zip(_keys, _key)),
+            "session_duration_s": session_s,
+
+            # 观察到的 True → False 次数 / 小时
+            "break_frequency": _bout["break_onset"].sum() / session_h,
+
+            # 每个 session 内完整 break 的平均时长
+            "break_duration": complete_breaks["duration_s"].mean(),
+
+            # 每个 session 内完整工作段的平均 trial 数和时长
+            "trials_per_bout": complete_working["n_trials"].mean(),
+            "bout_duration": complete_working["duration_s"].mean(),
+
+            # 包含首尾不完整工作段的已观测时间
+            "working_time_fraction": working["duration_s"].sum() / session_s,
+
+            # 有中央 poke 的 trial 数 / 小时
+            "trial_initiation_rate": initiated_counts.loc[_key] / session_h,
+
+            "n_break_onsets": int(_bout["break_onset"].sum()),
+            "n_initiated_trials": int(initiated_counts.loc[_key]),
+            "working_time_s": working["duration_s"].sum(),
+        })
+
+    session_metrics = pd.DataFrame(_rows)
+    session_metrics
+    return session_metrics, work_bouts
+
+
+@app.cell
+def _(work_bouts):
+    work_bouts
+    return
+
+
+@app.cell
+def _(mo, work_bouts):
+    # mean_bout_duration_s = work_bouts.groupby(["subject", "year_month_day", "observation_group", "engaged"])["duration_s"].mean().reset_index().rename(columns={"duration_s": "mean_bout_duration_s"})
+    # sum_bout_n_trials = work_bouts.groupby(["subject", "year_month_day", "observation_group", "engaged"])["n_trials"].sum().reset_index().rename(columns={"n_trials": "sum_bout_n_trials"})
+    # sum_bout_break_onset = work_bouts.groupby(["subject", "year_month_day", "observation_group", "engaged"], observed=True)["break_onset"].sum().reset_index().rename(columns={"break_onset": "sum_bout_break_onset"})
+    mean_bout_duration_s = work_bouts.groupby(["bout_id", "observation_group", "engaged"])["duration_s"].mean().reset_index().rename(columns={"duration_s": "mean_bout_duration_s"})
+    sum_bout_n_trials = work_bouts.groupby(["bout_id", "observation_group", "engaged"])["n_trials"].sum().reset_index().rename(columns={"n_trials": "sum_bout_n_trials"})
+    sum_bout_break_onset = work_bouts.groupby(["bout_id", "observation_group", "engaged"], observed=True)["break_onset"].sum().reset_index().rename(columns={"break_onset": "sum_bout_break_onset"})
+
+    merit_select = mo.ui.dropdown(
+        options=[
+            "mean_bout_duration_s",
+            "sum_bout_n_trials",
+            "sum_bout_break_onset",
+        ],
+        value="mean_bout_duration_s",
+        label="choose meric",
+        allow_select_none=False,
+    )
+
+    merit_select
+    return (
+        mean_bout_duration_s,
+        merit_select,
+        sum_bout_break_onset,
+        sum_bout_n_trials,
+    )
+
+
+@app.cell
+def _(
+    mean_bout_duration_s,
+    merit_select,
+    plt,
+    sns,
+    sum_bout_break_onset,
+    sum_bout_n_trials,
+):
+    _metric_configs = {
+        "mean_bout_duration_s": (
+            mean_bout_duration_s,
+            "Mean bout duration (s)",
+        ),
+        "sum_bout_n_trials": (
+            sum_bout_n_trials,
+            "Total trials",
+        ),
+        "sum_bout_break_onset": (
+            sum_bout_break_onset,
+            "Total break-onset",
+        ),
+    }
+
+    _column = merit_select.value
+    _data, _ylabel = _metric_configs[_column]
+
+    _order = ["saline", "mk801"]
+    _palette = {"saline": "blue", "mk801": "red"}
+
+    _fig, _axes = plt.subplots(2, 2, figsize=(12, 10))
+
+    for _j, _engaged in enumerate([True, False]):
+        _box_ax = _axes[0, _j]
+        _ecdf_ax = _axes[1, _j]
+        _title = "Working bouts" if _engaged else "Break bouts"
+
+        _plot_df = (
+            _data.loc[
+                _data["engaged"].eq(_engaged)
+                & _data["observation_group"].isin(_order)
+            ]
+            .dropna(subset=[_column])
+        )
+
+        if _plot_df.empty:
+            for _ax in [_box_ax, _ecdf_ax]:
+                _ax.set_title(_title)
+                _ax.text(
+                    0.5, 0.5, "No data",
+                    ha="center", va="center",
+                    transform=_ax.transAxes,
+                )
+            continue
+
+        # 第一排：空心箱线图
+        sns.boxplot(
+            data=_plot_df,
+            x="observation_group",
+            y=_column,
+            hue="observation_group",
+            order=_order,
+            hue_order=_order,
+            palette=_palette,
+            fill=False,
+            linewidth=1.5,
+            dodge=False,
+            legend=False,
+            ax=_box_ax,
+        )
+
+        _box_ax.set_title(_title)
+        _box_ax.set_xlabel("Observation group")
+        _box_ax.set_ylabel(_ylabel)
+
+        # 第二排：累计分布图
+        sns.ecdfplot(
+            data=_plot_df,
+            x=_column,
+            hue="observation_group",
+            hue_order=_order,
+            palette=_palette,
+            stat="proportion",
+            linewidth=2,
+            ax=_ecdf_ax,
+        )
+
+        # 计数指标可能为 0，symlog 可以保留这些值
+        if _column in {"mean_bout_duration_s", "sum_bout_n_trials"}:
+            _ecdf_ax.set_xscale("log")
+        _ecdf_ax.set_title(f"{_title} (ECDF)")
+        _ecdf_ax.set_xlabel(_ylabel)
+        _ecdf_ax.set_ylabel("Cumulative probability")
+        _ecdf_ax.set_ylim(0, 1)
+        _ecdf_ax.grid(alpha=0.2)
+
+    plt.tight_layout()
+    plt.show()
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(
+    behavior_utils,
+    metric_paired_dates,
+    np,
+    pd,
+    plt,
+    session_metrics,
+    stats,
+):
+    _metrics = {
+        "break_frequency": "Break onsets / observed hour",
+        "break_duration": "Mean break duration (s)",
+        "trials_per_bout": "Mean trials per working bout",
+        "bout_duration": "Mean working bout duration (s)",
+        "working_time_fraction": "Working time fraction",
+        "trial_initiation_rate": "Trials initiated / observed hour",
+    }
+
+    _groups = ["saline", "mk801"]
+    _colors = {"saline": "blue", "mk801": "red"}
+
+    # 1. 统一动物编号和日期格式
+    _sessions = session_metrics.dropna(
+        subset=["subject", "year_month_day", "observation_group"]
+    ).copy()
+
+    _sessions["subject"] = _sessions["subject"].astype(str)
+    _sessions["year_month_day"] = pd.to_datetime(
+        _sessions["year_month_day"],
+        errors="coerce",
+    ).dt.normalize()
+
+    _sessions[list(_metrics)] = _sessions[list(_metrics)].replace(
+        [np.inf, -np.inf], np.nan
+    )
+
+    # 同鼠、同日、同条件多个 session：取 session 指标的算术平均
+    _daily = (
+        _sessions.groupby(
+            ["subject", "year_month_day", "observation_group"],
+            observed=True,
+            as_index=False,
+        )[list(_metrics)]
+        .mean()
+    )
+
+    # 2. 绘图及统计
+    _fig, _axes = plt.subplots(2, 3, figsize=(18, 11))
+
+    bout_date_pairs = {}
+    bout_mouse_pairs = {}
+    _test_rows = []
+
+    for _ax, (_metric, _label) in zip(_axes.flat, _metrics.items()):
+
+        # 使用已有日期配对表；函数会删除当前指标不完整的配对
+        _paired = behavior_utils.add_metric_values_to_pairs(
+            observation_summary=_daily,
+            paired_dates=metric_paired_dates,
+            metric_col=_metric,
+            subject_col="subject",
+            date_col="year_month_day",
+            drug_name="mk801",
+        )
+
+        bout_date_pairs[_metric] = _paired
+
+        if _paired.empty:
+            _ax.set_title(_label)
+            _ax.text(
+                0.5, 0.5, "No complete date pairs",
+                ha="center", va="center",
+                transform=_ax.transAxes,
+            )
+            _ax.set_axis_off()
+
+            _test_rows.append({
+                "metric": _metric,
+                "n_date_pairs": 0,
+                "n_mice": 0,
+                "t_statistic": np.nan,
+                "p_value": np.nan,
+                "note": "No complete date pairs",
+            })
+            continue
+
+        # 3. 图上展示全部日期对
+        _box = _ax.boxplot(
+            [
+                _paired["saline"].to_numpy(),
+                _paired["mk801"].to_numpy(),
+            ],
+            tick_labels=_groups,
+            patch_artist=True,
+            showmeans=True,
+            showfliers=False,
+        )
+
+        for _patch, _group in zip(_box["boxes"], _groups):
+            _patch.set_facecolor(_colors[_group])
+            _patch.set_edgecolor(_colors[_group])
+            _patch.set_alpha(0.2)
+
+        for _, _row in _paired.iterrows():
+            _ax.plot(
+                [1, 2],
+                [_row["saline"], _row["mk801"]],
+                color="gray",
+                alpha=0.35,
+                linewidth=1,
+                zorder=2,
+            )
+
+        for _position, _group in enumerate(_groups, start=1):
+            _ax.scatter(
+                np.full(len(_paired), _position),
+                _paired[_group],
+                color=_colors[_group],
+                edgecolor="black",
+                linewidth=0.5,
+                s=45,
+                alpha=0.8,
+                zorder=3,
+            )
+
+        # 4. 检验使用每只鼠的完整日期对均值
+        # 先删除不完整日期对，再同时平均两个条件，保持配对关系
+        _mouse_pairs = (
+            _paired.groupby("subject", observed=True)[_groups]
+            .mean()
+        )
+        bout_mouse_pairs[_metric] = _mouse_pairs
+
+        _n_mice = len(_mouse_pairs)
+        _t = np.nan
+        _p = np.nan
+        _note = ""
+
+        if _n_mice < 2:
+            _note = "Fewer than 2 paired mice"
+        else:
+            _diff = _mouse_pairs["mk801"] - _mouse_pairs["saline"]
+
+            if _diff.std(ddof=1) == 0:
+                _note = "Zero variance of paired differences"
+            else:
+                _test = stats.ttest_rel(
+                    _mouse_pairs["mk801"].to_numpy(),
+                    _mouse_pairs["saline"].to_numpy(),
+                    alternative="two-sided",
+                )
+                _t = float(_test.statistic)
+                _p = float(_test.pvalue)
+
+        _test_rows.append({
+            "metric": _metric,
+            "n_date_pairs": len(_paired),
+            "n_mice": _n_mice,
+            "t_statistic": _t,
+            "p_value": _p,
+            "note": _note,
+        })
+
+        # p 值直接显示在标题中
+        _p_text = (
+            f"Paired t-test across mice: p = {_p:.3g}"
+            if np.isfinite(_p)
+            else _note or "Test unavailable"
+        )
+
+        _ax.set_title(
+            f"{_label}\n"
+            f"{len(_paired)} date pairs, {_n_mice} mice\n"
+            f"{_p_text}",
+            fontsize=10,
+        )
+        _ax.set_xlabel("")
+        _ax.set_ylabel(_label)
+        _ax.grid(axis="y", alpha=0.3)
+        _ax.set_axisbelow(True)
+
+        if _metric == "working_time_fraction":
+            _ax.set_ylim(-0.02, 1.02)
+
+    _fig.tight_layout()
+    plt.show()
+
+    # 每个指标的配对数量、动物数量和检验结果
+    bout_date_test_results = pd.DataFrame(_test_rows)
+    bout_date_test_results
+    return
+
+
+@app.cell
+def _(session_metrics, work_bouts):
+    _subject_keys = ["subject", "observation_group"]
+
+    # 1. 每只动物、每个实验组：累加各 session 的时间和计数
+    # 使用你文件里现有的 session_duration_s 列名
+    metrics_df = (
+        session_metrics
+        .groupby(_subject_keys, observed=True, as_index=False)
+        .agg(
+            n_sessions=("session", "size"),
+            observed_duration_s=("session_duration_s", "sum"),
+            n_break_onsets=("n_break_onsets", "sum"),
+            n_initiated_trials=("n_initiated_trials", "sum"),
+            working_time_s=("working_time_s", "sum"),
+        )
+    )
+
+    # 2. 完整工作 bout：每个 bout 权重相同
+    _working_means = (
+        work_bouts.loc[
+            work_bouts["engaged"].eq(True)
+            & work_bouts["complete"]
+        ]
+        .groupby(_subject_keys, observed=True, as_index=False)
+        .agg(
+            mean_trials_per_bout=("n_trials", "mean"),
+            mean_bout_duration_s=("duration_s", "mean"),
+        )
+    )
+
+    # 3. 完整休息 bout：每个 bout 权重相同
+    _break_means = (
+        work_bouts.loc[
+            work_bouts["engaged"].eq(False)
+            & work_bouts["complete"]
+        ]
+        .groupby(_subject_keys, observed=True, as_index=False)
+        .agg(
+            mean_break_duration_s=("duration_s", "mean"),
+        )
+    )
+
+    # 4. 合并；没有完整 bout 时，对应均值保留 NaN
+    metrics_df = (
+        metrics_df
+        .merge(_working_means, on=_subject_keys, how="left")
+        .merge(_break_means, on=_subject_keys, how="left")
+    )
+
+    # 5. 计算频率和时间占比
+    _observed_s = metrics_df["observed_duration_s"].where(
+        metrics_df["observed_duration_s"] > 0
+    )
+    _observed_h = _observed_s / 3600
+
+    metrics_df["break_frequency_per_h"] = (
+        metrics_df["n_break_onsets"] / _observed_h
+    )
+
+    metrics_df["working_time_fraction"] = (
+        metrics_df["working_time_s"] / _observed_s
+    )
+
+    metrics_df["trial_initiation_rate_per_h"] = (
+        metrics_df["n_initiated_trials"] / _observed_h
+    )
+
+    metrics_df
+    return (metrics_df,)
+
+
+@app.cell
+def _(np, plt, stats):
+    def plot_bouts_group_by_subjects(
+        df,
+        metric_col="correct",
+        agg_func="mean",
+        drug_name="mk801",
+        ylabel=None,
+        title=None,
+        test_method="wilcoxon",
+        ax=None,
+    ):
+        if test_method not in ["wilcoxon", "ttest_rel"]:
+            raise ValueError(
+                "test_method must be 'wilcoxon' or 'ttest_rel'"
+            )
+
+        groups = ["saline", drug_name]
+        colors = {
+            "saline": "blue",
+            drug_name: "red",
+        }
+
+        # 提取有效数据
+        plot_df = df[
+            ["subject", "observation_group", metric_col]
+        ].copy()
+
+        plot_df[metric_col] = plot_df[metric_col].replace(
+            [np.inf, -np.inf], np.nan
+        )
+
+        plot_df = (
+            plot_df
+            .dropna(subset=["subject", "observation_group", metric_col])
+            .loc[lambda x: x["observation_group"].isin(groups)]
+        )
+
+        # 每只鼠、每个条件汇总
+        # metrics_df 已经每鼠每条件一行，因此 mean 不会改变数值
+        aggregation = "size" if agg_func == "len" else agg_func
+
+        mouse_summary = (
+            plot_df.groupby(
+                ["subject", "observation_group"],
+                observed=True,
+                as_index=False,
+            )
+            .agg(value=(metric_col, aggregation))
+        )
+
+        # 保留原函数的特殊处理
+        if metric_col == "previous_same_choice_numeric":
+            mouse_summary["value"] -= 0.5
+
+        # 每只鼠一行，只保留两个条件都有有效值的鼠
+        paired_summary = (
+            mouse_summary
+            .pivot(
+                index="subject",
+                columns="observation_group",
+                values="value",
+            )
+            .reindex(columns=groups)
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna(subset=groups)
+            .reset_index()
+        )
+
+        n_pairs = len(paired_summary)
+
+        paired_summary.attrs.update({
+            "test_method": test_method,
+            "n_pairs": n_pairs,
+            "p_value": np.nan,
+            "test_note": "",
+        })
+
+        # 支持独立画图，也支持外部传入子图
+        own_figure = ax is None
+        if own_figure:
+            fig, ax = plt.subplots(figsize=(6, 5))
+        else:
+            fig = ax.figure
+
+        ax.set_xlabel("Observation")
+        ax.set_ylabel(ylabel or metric_col)
+        ax.set_title(
+            f"{title or metric_col}\n"
+            f"n = {n_pairs} paired mice"
+        )
+        ax.grid(True, axis="y", alpha=0.3)
+        ax.set_axisbelow(True)
+
+        # 没有配对数据
+        if n_pairs == 0:
+            ax.set_xticks([1, 2], groups)
+            ax.set_xlim(0.5, 2.5)
+            ax.text(
+                0.5, 0.5, "No paired data",
+                ha="center", va="center",
+                transform=ax.transAxes,
+            )
+            paired_summary.attrs["test_note"] = "No paired data"
+
+            if own_figure:
+                fig.tight_layout()
+
+            return fig, paired_summary
+
+        # 箱线图
+        data = [
+            paired_summary[group].to_numpy(dtype=float)
+            for group in groups
+        ]
+
+        boxplot = ax.boxplot(
+            data,
+            tick_labels=groups,
+            patch_artist=True,
+            showmeans=True,
+        )
+
+        for patch, group in zip(boxplot["boxes"], groups):
+            patch.set_facecolor(colors[group])
+            patch.set_edgecolor(colors[group])
+            patch.set_alpha(0.2)
+
+        # 每只鼠一条配对线
+        for _, row in paired_summary.iterrows():
+            ax.plot(
+                [1, 2],
+                [row["saline"], row[drug_name]],
+                color="gray",
+                alpha=0.35,
+                linewidth=1,
+                zorder=2,
+            )
+
+        # 每只鼠的散点
+        for position, group in enumerate(groups, start=1):
+            ax.scatter(
+                np.full(n_pairs, position),
+                paired_summary[group],
+                color=colors[group],
+                edgecolor="black",
+                linewidth=0.5,
+                s=45,
+                alpha=0.8,
+                zorder=3,
+            )
+
+        # 配对检验
+        saline_values, drug_values = data
+        differences = drug_values - saline_values
+
+        p_value = np.nan
+        test_note = ""
+
+        if n_pairs < 2:
+            test_note = "Too few pairs for testing"
+        elif np.all(differences == 0):
+            # 全部差值为零时，跳过检验并明确标记
+            test_note = "All paired differences = 0"
+        elif test_method == "wilcoxon":
+            p_value = stats.wilcoxon(
+                differences,
+                alternative="two-sided",
+            ).pvalue
+        else:
+            p_value = stats.ttest_rel(
+                drug_values,
+                saline_values,
+            ).pvalue
+
+        if not np.isfinite(p_value) and not test_note:
+            test_note = "Test unavailable"
+
+        paired_summary.attrs["p_value"] = p_value
+        paired_summary.attrs["test_note"] = test_note
+
+        # 显著性标记
+        if np.isfinite(p_value):
+            if p_value < 0.0001:
+                significance = "****"
+            elif p_value < 0.001:
+                significance = "***"
+            elif p_value < 0.01:
+                significance = "**"
+            elif p_value < 0.05:
+                significance = "*"
+            else:
+                significance = "ns"
+
+            y_values = np.concatenate(data)
+            y_min = y_values.min()
+            y_max = y_values.max()
+            y_range = y_max - y_min
+
+            if y_range == 0:
+                y_range = abs(y_max) * 0.1 if y_max != 0 else 0.1
+
+            bar_y = y_max + y_range * 0.12
+            bar_h = y_range * 0.06
+
+            ax.plot(
+                [1, 1, 2, 2],
+                [bar_y, bar_y + bar_h, bar_y + bar_h, bar_y],
+                color="black",
+                linewidth=1,
+            )
+            ax.text(
+                1.5,
+                bar_y + bar_h,
+                significance,
+                ha="center",
+                va="bottom",
+            )
+            ax.set_ylim(
+                top=bar_y + bar_h + y_range * 0.15
+            )
+        else:
+            ax.text(
+                0.5, 0.98,
+                test_note,
+                ha="center",
+                va="top",
+                fontsize=9,
+                transform=ax.transAxes,
+            )
+
+        if own_figure:
+            fig.tight_layout()
+
+        return fig, paired_summary
+
+    return (plot_bouts_group_by_subjects,)
+
+
+@app.cell
+def _(metrics_df, pd, plot_bouts_group_by_subjects, plt):
+    metrics = {
+        "break_frequency_per_h": "Break onsets / observed hour",
+        "mean_break_duration_s": "Mean break duration (s)",
+        "mean_trials_per_bout": "Mean trials per working bout",
+        "mean_bout_duration_s": "Mean working bout duration (s)",
+        "working_time_fraction": "Working time fraction",
+        "trial_initiation_rate_per_h": "Trials initiated / observed hour",
+    }
+
+    _fig, _axes = plt.subplots(2, 3, figsize=(18, 10))
+
+    bout_paired_results = {}
+    _test_rows = []
+
+    for _ax, (_metric, _label) in zip(_axes.flat, metrics.items()):
+        _, _paired = plot_bouts_group_by_subjects(
+            df=metrics_df,
+            metric_col=_metric,
+            agg_func="mean",
+            drug_name="mk801",
+            ylabel=_label,
+            title=_label,
+            test_method="wilcoxon",
+            ax=_ax,
+        )
+
+        bout_paired_results[_metric] = _paired
+
+        _test_rows.append({
+            "metric": _metric,
+            "n_pairs": _paired.attrs["n_pairs"],
+            "test_method": _paired.attrs["test_method"],
+            "p_value": _paired.attrs["p_value"],
+            "note": _paired.attrs["test_note"],
+        })
+
+        if _metric == "working_time_fraction" and len(_paired) > 0:
+            # 上方保留显著性标记所需的空间
+            _ax.set_ylim(bottom=0)
+
+    _fig.tight_layout()
+    plt.show()
+
+    # 查看每个指标的样本量和 p 值
+    bout_test_results = pd.DataFrame(_test_rows)
+    bout_test_results
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(df_test_selected_upd, np):
+    keys = ["subject", "session"]
+
+    # 1. Trial level
+    trials = (
+        df_test_selected_upd
+        .sort_values(keys + ["trial"])
+        .copy()
+    )
+
+    assert trials["engaged"].notna().all()
+    trials["engaged"] = trials["engaged"].astype(bool)
+
+    g = trials.groupby(keys, observed=True)
+
+    trials["interval_end"] = (
+        g["TRIAL_START"].shift(-1)
+        .fillna(trials["TRIAL_END"])
+    )
+
+    trials["bout_id"] = (
+        g["engaged"].shift().ne(trials["engaged"])
+        | g.cumcount().eq(0)
+    ).cumsum()
+
+    # 2. Bout level
+    bouts = (
+        trials.groupby(keys + ["bout_id"], observed=True)
+        .agg(
+            engaged=("engaged", "first"),
+            n_trials=("trial", "size"),
+            start_time=("TRIAL_START", "first"),
+            end_time=("interval_end", "last"),
+        )
+        .reset_index()
+    )
+
+    bouts["duration_s"] = (
+        bouts["end_time"] - bouts["start_time"]
+    )
+
+    bg = bouts.groupby(keys, observed=True)
+
+    bouts["break_onset"] = (
+        ~bouts["engaged"]
+        & bg["engaged"].shift().eq(True)
+    )
+
+    bouts["complete"] = (
+        bg.cumcount().gt(0)
+        & bg.cumcount(ascending=False).gt(0)
+    )
+
+    # 3. Session level
+    session_metrics = (
+        bouts.assign(
+            working=bouts["engaged"].astype(int),
+            breaking=(~bouts["engaged"]).astype(int),
+            complete_working=(
+                bouts["complete"] & bouts["engaged"]
+            ).astype(int),
+            complete_break=(
+                bouts["complete"] & ~bouts["engaged"]
+            ).astype(int),
+            working_duration=bouts["duration_s"].where(
+                bouts["engaged"], 0
+            ),
+            break_duration=bouts["duration_s"].where(
+                bouts["complete"] & ~bouts["engaged"]
+            ),
+            bout_duration=bouts["duration_s"].where(
+                bouts["complete"] & bouts["engaged"]
+            ),
+            bout_trials=bouts["n_trials"].where(
+                bouts["complete"] & bouts["engaged"]
+            ),
+        )
+        .groupby(keys, observed=True)
+        .agg(
+            n_trials=("n_trials", "sum"),
+            n_working_bouts=("working", "sum"),
+            n_break_bouts=("breaking", "sum"),
+            n_break_onsets=("break_onset", "sum"),
+            n_complete_working_bouts=("complete_working", "sum"),
+            n_complete_break_bouts=("complete_break", "sum"),
+            mean_break_duration_s=("break_duration", "mean"),
+            mean_trials_per_bout=("bout_trials", "mean"),
+            mean_bout_duration_s=("bout_duration", "mean"),
+            working_duration_s=("working_duration", "sum"),
+            session_start=("start_time", "min"),
+            session_end=("end_time", "max"),
+        )
+        .reset_index()
+    )
+
+    # 4. Derived metrics
+    session_metrics["observed_duration_s"] = (
+        session_metrics["session_end"]
+        - session_metrics["session_start"]
+    )
+
+    hours = session_metrics["observed_duration_s"] / 3600
+    hours = hours.replace(0, np.nan)
+
+    session_metrics["break_frequency_per_h"] = (
+        session_metrics["n_break_onsets"] / hours
+    )
+
+    session_metrics["trial_rate_per_h"] = (
+        session_metrics["n_trials"] / hours
+    )
+
+    session_metrics["working_time_fraction"] = (
+        session_metrics["working_duration_s"]
+        / session_metrics["observed_duration_s"].replace(0, np.nan)
+    )
+
+    session_metrics = session_metrics.drop(
+        columns=[
+            "working_duration_s",
+            "session_start",
+            "session_end",
+        ]
+    )
+    return (session_metrics,)
 
 
 @app.cell(hide_code=True)

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.4"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium")
 
 
@@ -13,8 +13,19 @@ def _():
 
 @app.cell
 def _():
+    import json
+    from pathlib import Path
+    import sys
+
+    REPO_ROOT = Path("/home/kudongdong/code/brainCircuitsLab")
+    _package_path = REPO_ROOT / "lecilab-behavior-analysis"
+    if _package_path.exists() and str(_package_path) not in sys.path:
+        sys.path.insert(0, str(_package_path))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
     import pandas as pd
     import lecilab_behavior_analysis.utils as utils
+    utils.IDIBAPS_TV_PROJECTS = "/archive/training_village/"
     import lecilab_behavior_analysis.plots as plots
     from pathlib import Path
     import numpy as np
@@ -371,7 +382,7 @@ def _(df_options, df_selector, pd):
         if selected_df.empty:
             continue
         selected_df["selected_df_option"] = option_name
-        selected_df["session"] = selected_df["session"].astype(str) + "__" + option_name
+        # selected_df["session"] = selected_df["session"].astype(str) + "__" + option_name
         selected_df["model_stimulus"] = selected_df[selected["stim_col"]]
         selected_dfs.append(selected_df)
 
@@ -516,7 +527,7 @@ def _(df_test, dft, np, plots, plt):
     _perf_ax.set_xlim(left=_x_start)
     _perf_ax.set_title(f"{_random_mouse} | {random_sessions[0]}")
     _fig.tight_layout()
-    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/random_mouse_performance_plot.svg")
+    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/random_mouse_performance_plot.svg")
     plt.show()
     return
 
@@ -578,7 +589,7 @@ def _(df_test, np, plt):
     _ax.legend(frameon=False)
 
     _fig.tight_layout()
-    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_port2_pokes_hist.svg")
+    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_port2_pokes_hist.svg")
     plt.show()
     return
 
@@ -624,7 +635,7 @@ def _(df_test, np, plt):
     _ax.legend(frameon=False)
 
     _fig.tight_layout()
-    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_fixation_breaks_hist.svg")
+    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_fixation_breaks_hist.svg")
     plt.show()
     return
 
@@ -670,7 +681,7 @@ def _(df_test, np, plt):
     _ax.legend(frameon=False)
 
     _fig.tight_layout()
-    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_eager_pokes_hist.svg")
+    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_eager_pokes_hist.svg")
     plt.show()
     return
 
@@ -728,7 +739,7 @@ def _(df_options, df_selector, np, plt, utils):
 
     _fig.tight_layout()
     # _fig.savefig(
-    #     "/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_port2_pokes_hist.svg"
+    #     "/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_port2_pokes_hist.svg"
     # )
     plt.show()
     return
@@ -789,7 +800,7 @@ def _(df_test, dft, np, pd, plt):
     _ax.legend(frameon=False)
 
     _fig.tight_layout()
-    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_reaction_time_hist.svg")
+    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_reaction_time_hist.svg")
     plt.show()
     return
 
@@ -854,12 +865,8 @@ def _(df_test, plt, utils):
     _ax.legend(frameon=False)
 
     _fig.tight_layout()
-    _fig.savefig(
-        "/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/random_5_sessions_trial_start_time_plot.png"
-    )
-    _fig.savefig(
-        "/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/random_5_sessions_trial_start_time_plot.svg"
-    )
+    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/random_5_sessions_trial_start_time_plot.png")
+    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/random_5_sessions_trial_start_time_plot.svg")
     plt.show()
     return
 
@@ -874,7 +881,7 @@ def _(mo):
 
 @app.cell
 def _(Path, df_test, plt, sns, stim_col, utils_test):
-    _save_dir = Path("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_curves")
+    _save_dir = Path("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_curves")
     _save_dir.mkdir(parents=True, exist_ok=True)
 
     for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
@@ -933,10 +940,10 @@ def _(Path, df_test, plt, sns, stim_col, utils_test):
         plt.tight_layout()
 
         _safe_stage_name = str(stage_name__).replace("/", "_").replace(" ", "_")
-        _fig.savefig(
-            _save_dir / f"/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/{_safe_stage_name}_psychometric_curve.svg",
-            bbox_inches="tight",
-        )
+        # _fig.savefig(
+        #     _save_dir / f"/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/{_safe_stage_name}_psychometric_curve.svg",
+        #     bbox_inches="tight",
+        # )
 
         plt.show()
     return
@@ -1183,7 +1190,7 @@ def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
                                              'label': 'Left_previous_incorrect' if _i[0] == 'left' else 'Right_previous_incorrect'}, 
                                 point_kwargs={'color': 'black', 'label': None},
                                 ax=_ax[0])
-    # _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_correction_previous.svg")
+    # _fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_correction_previous.svg")
     _ax[1].legend()
     _ax[1].set_title("Previous Correction Previous auditory")
     _ax[0].legend()
@@ -1208,7 +1215,7 @@ def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
                                 point_kwargs={'color': 'black', 'label': None},
                                 ax=_ax[1],
                                 valueType="continue")
-    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_outcome.svg")
+    # _fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_outcome.svg")
     _ax[0].legend()
     _ax[0].set_title("Previous outcome visual hard")
     _ax[1].legend()
@@ -1237,7 +1244,7 @@ def _(df_test_aud_hard, df_test_vis_hard, plots, plt):
     _ax[0].set_title("Previous choice visual hard")
     _ax[1].legend()
     _ax[1].set_title("Previous choice auditory hard")
-    _fig.savefig("/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_choice.svg")
+    # _fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_plot_previous_choice.svg")
     plt.show()
     return
 
@@ -1692,10 +1699,10 @@ def _(
         per_mouse_logit_lags_plot = _fig
         _save_dir = Path(r"E:\data\LeciLab\behavioral_data\tmp")
         if not _save_dir.is_absolute() and str(_save_dir).startswith("E:\\"):
-            _save_dir = Path("/mnt/e/data/LeciLab/behavioral_data/tmp")
+            _save_dir = Path("/home/nuo/文档/data/LeciLab/behavioral_data/tmp")
         _save_dir.mkdir(parents=True, exist_ok=True)
         _save_path = _save_dir / f"{_plot_title}.svg"
-        _fig.savefig(_save_path, format="svg", bbox_inches="tight")
+        # _fig.savefig(_save_path, format="svg", bbox_inches="tight")
         print(f"Saved per-mouse logit lag plot: {_save_path}")
 
     per_mouse_logit_lags_plot
@@ -1755,7 +1762,7 @@ def _(
     _selected_mice = list(mouse_select.value)
     _alpha_output_dir = Path(r"E:\data\LeciLab\behavioral_data\tmp\processing")
     if not _alpha_output_dir.is_absolute() and str(_alpha_output_dir).startswith("E:\\"):
-        _alpha_output_dir = Path("/mnt/e/data/LeciLab/behavioral_data/tmp/processing")
+        _alpha_output_dir = Path("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/processing")
     _alpha_act_paths = {
         _mouse: (
             _alpha_output_dir
@@ -2078,6 +2085,166 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    # factor analysis
+    """)
+    return
+
+
+@app.cell
+def _():
+    from factor_analyzer import FactorAnalyzer
+    from latentcor import latentcor
+
+    return FactorAnalyzer, latentcor
+
+
+@app.cell
+def _(pd, utils):
+    def add_number_of_pokes(df_raw: pd.DataFrame, port_number: int):
+        df = df_raw.copy()
+        port_hold_column = f"port{port_number}_holds"
+        df[port_hold_column] = df.apply(lambda row: utils.get_trial_port_hold(row, port_number), axis=1)
+        df[f"port{port_number}_pokes_num"] = df[port_hold_column].apply(lambda x: len(x))
+        return df
+
+    return (add_number_of_pokes,)
+
+
+@app.cell
+def _(add_number_of_pokes, df_test, dft, utils_test):
+    df_test_upd = dft.add_trial_duration_column_to_df(
+        dft.calculate_time_between_trials_and_reaction_time(
+            dft.add_day_column_to_df(
+                add_number_of_pokes(df_test, port_number=2)
+            )
+        )
+    )
+    df_test_upd = dft.add_inter_trial_interval_column_to_df(utils_test.add_number_of_centralpokes_after_choice(
+        utils_test.add_fixation_break_columns(
+            df_test_upd
+            )
+        ))
+    return (df_test_upd,)
+
+
+@app.cell
+def _(df_test_upd, latentcor, np, pd, plt, sns):
+    continuous_cols = [
+        'fixation_breaks',
+        'eager_pokes',
+        'trial_duration', 
+        'inter_trial_interval',
+        'reaction_time', ]
+
+    binary_cols = [
+        'correct_numeric',
+        'previous_correct_numeric',
+        'previous_same_choice_numeric',
+        'roa_choice_numeric',
+    ]
+
+    features = continuous_cols + binary_cols
+
+    X = df_test_upd[features].dropna().copy()
+
+    # 与 DataFrame 列顺序一一对应
+    types = (
+        ["con"] * len(continuous_cols)
+        + ["bin"] * len(binary_cols)
+    )
+
+    # 检查 binary 数据
+    for _col in binary_cols:
+        assert set(X[_col].unique()).issubset({0, 1})
+
+    # 计算 latent correlation matrix
+    result = latentcor(
+        X.to_numpy(dtype=float),
+        tps=types,
+        method='original', 
+    )
+
+    corr = pd.DataFrame(
+        np.asarray(result["R"]),
+        index=features,
+        columns=features,
+    )
+
+    sns.heatmap(
+        corr,
+        annot=True,
+        cmap="coolwarm",
+        center=0,
+        vmin=-1,
+        vmax=1,
+    )
+
+    plt.title("Latent Correlation Matrix of Features")
+    plt.show()
+    return corr, features
+
+
+@app.cell
+def _(corr, np, plt):
+    eigenvalues = np.linalg.eigvalsh(corr.values)[::-1]
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(
+        range(1, len(eigenvalues) + 1),
+        eigenvalues,
+        "o-",
+    )
+
+    plt.axhline(1, color="gray", linestyle="--")
+
+    plt.xlabel("Factor / Component Number")
+    plt.ylabel("Eigenvalue")
+    plt.title("Scree Plot")
+    plt.xticks(range(1, len(eigenvalues) + 1))
+    plt.show()
+    return
+
+
+@app.cell
+def _(FactorAnalyzer, corr, features, pd):
+    fa = FactorAnalyzer(
+        n_factors=4,
+        rotation="oblimin",
+        method="minres",
+        is_corr_matrix=True,
+    )
+
+    fa.fit(corr)
+
+    loadings = pd.DataFrame(
+        fa.loadings_,
+        index=features,
+        columns=["Factor1", "Factor2", "Factor3", "Factor4"],
+    )
+
+    print(loadings)
+    return (loadings,)
+
+
+@app.cell
+def _(loadings, plt, sns):
+    sns.heatmap(
+        loadings,
+        annot=True,
+        cmap="coolwarm",
+        center=0,
+        vmin=-1,
+        vmax=1,
+    )
+
+    plt.title("EFA Factor Loadings")
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     # compare glm
     """)
     return
@@ -2339,7 +2506,7 @@ def _(
 
         _save_dir = Path(r"E:\data\LeciLab\behavioral_data\tmp")
         if not _save_dir.is_absolute() and str(_save_dir).startswith("E:\\"):
-            _save_dir = Path("/mnt/e/data/LeciLab/b ehavioral_data/tmp")
+            _save_dir = Path("/home/nuo/文档/data/LeciLab/b ehavioral_data/tmp")
         _save_dir.mkdir(parents=True, exist_ok=True)
         _save_path = _save_dir / f"{_plot_title}.svg"
         fig__.savefig(_save_path, format="svg", bbox_inches="tight")
@@ -2416,7 +2583,7 @@ def _(
     hmm_model_dic_by_subjects = {}
     _hmm_model_rows = []
     _model_output_dir = Path(
-        f"/mnt/e/data/LeciLab/behavioral_data/tmp/processing/glmhmm_models_state{glmhmm_num_states.value}"
+        f"/home/nuo/文档/data/LeciLab/behavioral_data/tmp/processing/glmhmm_models_state{glmhmm_num_states.value}"
     )
 
     _subject_col = None
@@ -2655,7 +2822,7 @@ def _(
     hmm_model_dic_by_stages = {}
     _hmm_model_rows = []
     _model_output_dir = Path(
-        f"/mnt/e/data/LeciLab/behavioral_data/tmp/processing/glmhmm_models_state{glmhmm_num_states.value}"
+        f"/home/nuo/文档/data/LeciLab/behavioral_data/tmp/processing/glmhmm_models_state{glmhmm_num_states.value}"
     )
 
     _subject_col = None
@@ -3060,7 +3227,7 @@ def _(Path, hmm_model_dic, input_cols_noStim, pd, plt, stim_col, utils_test):
     stages = ["aud_easy", "aud_hard", "vis_easy", "vis_hard"]
 
     glmhmm_state_df_dir = Path(
-        "/mnt/e/data/LeciLab/behavioral_data/tmp/processing/glmhmm_state_df"
+        "/home/nuo/文档/data/LeciLab/behavioral_data/tmp/processing/glmhmm_state_df"
     )
     glmhmm_state_df_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3165,14 +3332,14 @@ def _(Path, hmm_model_dic, input_cols_noStim, pd, plt, stim_col, utils_test):
 
                 glmhmm_state_df_loaded[stage_name_][state].append(df_state)
 
-            _fig.savefig(
-                Path(
-                    f"/mnt/e/data/LeciLab/behavioral_data/tmp/glm_hmm_model_allData/"
-                    f"{hmm_model_dic[model_name_]['subject']}_{model_name_}.svg"
-                ),
-                format="svg",
-                bbox_inches="tight",
-            )
+            # _fig.savefig(
+            #     Path(
+            #         f"/home/nuo/文档/data/LeciLab/behavioral_data/tmp/glm_hmm_model_allData/"
+            #         f"{hmm_model_dic[model_name_]['subject']}_{model_name_}.svg"
+            #     ),
+            #     format="svg",
+            #     bbox_inches="tight",
+            # )
             plt.close(_fig)
 
         for stage in stages:
@@ -3460,7 +3627,7 @@ def _(hmm_model_dic, mo, np, pd, plt):
 
 @app.cell
 def _(df_selector, state_pca_fig):
-    state_pca_fig.savefig(f'/mnt/e/data/LeciLab/behavioral_data/tmp/for_fens_tmp/glmhmm_pca_{df_selector.value[0]}.svg')
+    state_pca_fig.savefig(f'/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/glmhmm_pca_{df_selector.value[0]}.svg')
     return
 
 
@@ -3480,7 +3647,7 @@ def _(plt, state_distribution_df):
     plt.tight_layout()
 
     plt.savefig(
-        "/mnt/e/data/LeciLab/behavioral_data/tmp/glm_hmm_state_distribution_by_stage.svg",
+        "/home/nuo/文档/data/LeciLab/behavioral_data/tmp/glm_hmm_state_distribution_by_stage.svg",
         format="svg",
         bbox_inches="tight",
     )
@@ -3633,14 +3800,14 @@ def _(
     print(_df_with_state["glmhmm_state"].value_counts().sort_index())
 
     _save_dir = Path(
-        "/mnt/e/data/LeciLab/behavioral_data/tmp/glm_hmm_model_sampleData"
+        "/home/nuo/文档/data/LeciLab/behavioral_data/tmp/glm_hmm_model_sampleData"
     )
     _save_dir.mkdir(parents=True, exist_ok=True)
-    _fig.savefig(
-        _save_dir / f"{_mouse_name}_{_model}.svg",
-        format="svg",
-        bbox_inches="tight",
-    )
+    # _fig.savefig(
+    #     _save_dir / f"{_mouse_name}_{_model}.svg",
+    #     format="svg",
+    #     bbox_inches="tight",
+    # )
     _fig.set_dpi(100)
     _fig
     return

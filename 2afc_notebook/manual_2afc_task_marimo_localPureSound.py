@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.24.0"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium", auto_download=["ipynb"])
 
 
@@ -433,7 +433,6 @@ def _(
             df_test_selected_raw["sound_db_spl"] * _side_sign
         )
         df_test_selected_raw = dft.add_day_column_to_df(df_test_selected_raw.copy())
-
     return (df_test_selected_raw,)
 
 
@@ -471,12 +470,6 @@ def _(mo):
     mo.md(r"""
     # Psychometric curve
     """)
-    return
-
-
-@app.cell
-def _(df_test_selected_raw):
-    df_test_selected_raw
     return
 
 

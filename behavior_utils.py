@@ -128,19 +128,16 @@ def get_paired_injection_dates(
     paired_dates = pd.DataFrame(paired_rows)
 
     if paired_dates.empty:
-        return pd.DataFrame(
-            columns=[
-                subject_col,
-                "saline_date",
-                f"{drug_name}_date",
-                "days_between",
-                "saline_observation",
-                f"{drug_name}_observation",
-                "saline_position",
-                "pair_index",
-                "pair_id",
-            ]
-        )
+        return pd.DataFrame(columns=[
+                            subject_col,
+                            "saline_date",
+                            f"{drug_name}_date",
+                            "days_between",
+                            "saline_observation",
+                            f"{drug_name}_observation",
+                            "saline_position",
+                            "pair_index",
+                            "pair_id",])
 
     paired_dates = paired_dates.sort_values([subject_col, f"{drug_name}_date"])
     paired_dates["pair_index"] = paired_dates.groupby(subject_col).cumcount() + 1

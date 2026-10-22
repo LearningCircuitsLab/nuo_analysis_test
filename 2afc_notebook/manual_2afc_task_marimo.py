@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.4"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium")
 
 
@@ -38,6 +38,7 @@ def _():
     import utils_test
 
     from lecilab_behavior_analysis import utils as utils
+    utils.IDIBAPS_TV_PROJECTS = "/archive/training_village/"
     from lecilab_behavior_analysis import df_transforms as dft
     from lecilab_behavior_analysis import plots
     from lecilab_behavior_analysis.figure_maker import (
@@ -132,6 +133,7 @@ def _(project_select, tv_projects):
 @app.cell
 def _(project, utils):
     animals = utils.get_animals_in_project(project)
+    animals = [_a for _a in animals if "test" not in _a]
     print(animals)
     return (animals,)
 
@@ -579,7 +581,8 @@ def _():
 
 @app.cell
 def _(pd):
-    injection_info_file_path = "/mnt/e/data/LeciLab/behavioral_data/data_test/manual_test_record_nuo.xlsx"
+    # injection_info_file_path = "/mnt/e/data/LeciLab/behavioral_data/data_test/manual_test_record_nuo.xlsx"
+    injection_info_file_path = "/home/nuo/Documents/data/LeciLab/behavioral_data/manual_record/manual_test_record_nuo.xlsx"
     injection_info_df = pd.read_excel(injection_info_file_path)
     injection_info_df
     return (injection_info_df,)
@@ -677,11 +680,9 @@ def _(
             )
         )
     )
-    df_test_selected_upd = utils_test.add_number_of_centralpokes_after_choice(
-        utils_test.add_fixation_break_columns(
-            df_test_selected_upd
-            )
-        )
+    df_test_selected_upd = dft.add_inter_trial_interval_column_to_df(utils_test.add_number_of_centralpokes_after_choice(
+        utils_test.add_fixation_break_columns(df_test_selected_upd)
+        ))
     metric_paired_dates = behavior_utils.get_paired_injection_dates(
         injection_info_df
     )
@@ -957,7 +958,7 @@ def _(mo):
             "ylabel": "Session mean reaction time",
         },
         "time interval": {
-            "metric_col": "time_between_trials",
+            "metric_col": "inter_trial_interval",
             "agg_func": "mean",
             "ylabel": "Session mean time interval",
         },
@@ -965,7 +966,12 @@ def _(mo):
             "metric_col": "trial",
             "agg_func": "len",
             "ylabel": "Session total number of trials",
-        }
+        },
+        "trial duration": {
+            "metric_col": "trial_duration",
+            "agg_func": "mean",
+            "ylabel": "Session mean trial duration",
+        },
     }
     compare_value_select = mo.ui.dropdown(
         options=list(compare_value_settings),
@@ -1467,7 +1473,7 @@ def _(plot_metric_by_date):
 @app.cell
 def _(mo):
     observation_select = mo.ui.dropdown(
-        options=["fixation_breaks", "eager_pokes", "port2_pokes_num", "reaction_time", "time_between_trials", "trial", "correct"],
+        options=["fixation_breaks", "eager_pokes", "port2_pokes_num", "reaction_time", "time_between_trials", "trial", "correct", "trial_duration"],
         value="fixation_breaks",
         label="observation",
     )
