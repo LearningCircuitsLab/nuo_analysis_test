@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.1"
+__generated_with = "0.25.2"
 app = marimo.App(width="medium")
 
 
@@ -109,7 +109,15 @@ def _(Path):
 
         return saved_paths
 
-    return (save_figures_to_folder,)
+    return figure_export_root, save_figures_to_folder
+
+
+@app.cell
+def _(Path):
+    tmp_data_save_path = Path('/home/nuo/Documents/data/LeciLab/behavioral_data/tmp/escape/processing_data')
+    tmp_data_save_path.mkdir(exist_ok=True)
+    sound_type = "pink_noise"
+    return sound_type, tmp_data_save_path
 
 
 @app.cell(hide_code=True)
@@ -174,6 +182,7 @@ def _(credential, download_button, pd, utils):
     deleted_sessions_list.append('NUO002_EscapeBehavior_20260625_141002')
     deleted_sessions_list.append('NUO002_EscapeBehavior_20260625_141244')
     deleted_sessions_list.append('NUO005_EscapeBehavior_20260625_141444')
+    deleted_sessions_list.append('NUO081_EscapeBehavior_20260924_120744')
     return (deleted_sessions_list,)
 
 
@@ -209,6 +218,7 @@ def _(
     parent_path = "/home/kudongdong/data/behavior_DLC/escape_auditory-LeciLab-2025-10-20/v2/"
     session_data_path = "/storage/training_village/auditory_escape_data/sessions"
     video_data_path = "/storage/training_village/auditory_escape_data/videos"
+    local_data_root = Path(utils.get_outpath()) / project
 
     if download_button.value:
         behavior_files = utils.get_folders_from_server(
@@ -217,30 +227,9 @@ def _(
         )
 
     for sub in mouse_select:
-        local_path = Path(utils.get_outpath()) / project / "sessions" / sub
-        local_path.mkdir(parents=True, exist_ok=True)
-
-        local_path_dlc_sub = Path(
-            local_path,
-            "behavioral_data",
-            project,
-            "DLC_output",
-            sub,
-        )
-        local_path_session_sub = Path(
-            local_path,
-            "behavioral_data",
-            project,
-            "sessions",
-            sub,
-        )
-        local_path_video_sub = Path(
-            local_path,
-            "behavioral_data",
-            project,
-            "videos",
-            sub,
-        )
+        local_path_dlc_sub = local_data_root / "DLC_output" / sub
+        local_path_session_sub = local_data_root / "sessions" / sub
+        local_path_video_sub = local_data_root / "videos" / sub
 
         local_path_dlc_sub.mkdir(parents=True, exist_ok=True)
         local_path_session_sub.mkdir(parents=True, exist_ok=True)
@@ -275,25 +264,15 @@ def _(
     video_df_dic = {}
 
     for name in analyzed_video_names:
-        subject = name[:6]
-        if "mouse_test" in name:
-            subject = "mouse_test"
+        subject = "mouse_test" if "mouse_test" in name else name[:6]
 
-        local_path = Path(utils.get_outpath()) / project / "sessions" / subject
+        local_data_root = Path(utils.get_outpath()) / project
 
-        local_path_session_sub = Path(
-            local_path,
-            "behavioral_data",
-            project,
-            "sessions",
-            subject,
+        local_path_session_sub = (
+            local_data_root / "sessions" / subject
         )
-        local_path_video_sub = Path(
-            local_path,
-            "behavioral_data",
-            project,
-            "videos",
-            subject,
+        local_path_video_sub = (
+            local_data_root / "videos" / subject
         )
 
         local_path_session_sub.mkdir(parents=True, exist_ok=True)
@@ -412,6 +391,9 @@ def _():
     x2 = [28, 588]
     y1 = [60, 434]
     y2 = [72, 451]
+    shelter_x = [0, 105]
+    shelter_y_up = [30, 150]
+    shelter_y_down = [360, 480]
     frame_xy = [640, 480]
     x_length_pixel = ((x1[1] - x1[0]) + (x2[1] - x2[0]))/2
     y_length_pixel = ((y1[1] - y1[0]) + (y2[1] - y2[0]))/2
@@ -424,6 +406,9 @@ def _():
     return (
         frame_xy,
         home_zone_x_threshold,
+        shelter_x,
+        shelter_y_down,
+        shelter_y_up,
         trigger_zone_x_threshold,
         x_len_tran,
         y_len_tran,
@@ -462,7 +447,7 @@ def _(
     for name1 in analyzed_video_names:
         df = behav_df_dic[name1]
         df['timestamp'] = video_df_dic[name1]['timestamp']
-        df = behavior_utils.preprocess_positions(df, likelihood_thr=0.6, distance_thr=200, speed_thr=480, max_iter=100)
+        df = behavior_utils.preprocess_positions(df, likelihood_thr=0.7, distance_thr=200, speed_thr=800, max_iter=100)
         behav_df_filtered_dic[name1] = df
 
     # interpolate the positions
@@ -524,7 +509,7 @@ def _(ast, pd):
 def _():
     plot_time_bin = 10
     sound_time_bin = 4
-    return (plot_time_bin,)
+    return plot_time_bin, sound_time_bin
 
 
 @app.cell
@@ -913,13 +898,16 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
                 real_stayhome,
             )
 
-            # real_leave 之后、delay 时间窗内计算 peak speed
-            after_leave_mask = delay_timestamp >= real_leave
-            after_leave_df = delay_df.loc[after_leave_mask]
-            after_leave_timestamp = delay_timestamp.loc[after_leave_mask]
+            # 只在逃跑过程（real_leave → real_stayhome）内计算 peak speed
+            movement_mask = (
+                (delay_timestamp >= real_leave)
+                & (delay_timestamp <= real_stayhome)
+            )
+            movement_df = delay_df.loc[movement_mask]
+            movement_timestamp = delay_timestamp.loc[movement_mask]
 
             speed = pd.to_numeric(
-                after_leave_df[("Center", "mean_speed")],
+                movement_df[("Center", "mean_speed")],
                 errors="coerce",
             )
 
@@ -928,11 +916,11 @@ def _(home_zone_x_threshold, np, pd, trigger_zone_x_threshold):
 
                 metrics["peak_speed"] = float(speed.loc[peak_index])
                 metrics["peak_speed_time"] = float(
-                    after_leave_timestamp.loc[peak_index]
+                    movement_timestamp.loc[peak_index]
                 )
 
                 peak_x = pd.to_numeric(
-                    after_leave_df.loc[peak_index, ("Center", "x")],
+                    movement_df.loc[peak_index, ("Center", "x")],
                     errors="coerce",
                 )
                 if pd.notna(peak_x):
@@ -1534,32 +1522,32 @@ def _(
         plot_escape_param_scatter(
             _scatter_axes[0],
             _s_escape_plot_df,
-            "Sound-play escape windows",
+            "Sound-play windows",
             "firebrick",
         )
         plot_escape_param_scatter(
-            _scatter_axes[1],
+            _scatter_axes[0],
             _s_noreaction_plot_df,
-            "Sound-play no-reaction windows",
+            "Sound-play windows",
             "steelblue",
         )
         plot_escape_frequency_histogram(
             _scatter_axes[2],
             _s_escape_plot_df,
             _s_noreaction_plot_df,
-            "Sound-play window frequency",
+            "escape trials frequency",
         )
         plot_escape_param_scatter(
-            _scatter_axes[0],
+            _scatter_axes[1],
             _ns_escape_plot_df,
-            "No-sound escape windows",
+            "No-sound windows",
             "firebrick",
             marker="x",
         )
         plot_escape_param_scatter(
             _scatter_axes[1],
             _ns_noreaction_plot_df,
-            "No-sound no-reaction windows",
+            "No-sound windows",
             "steelblue",
             marker="x",
         )
@@ -1567,7 +1555,7 @@ def _(
             _scatter_axes[3],
             _ns_escape_plot_df,
             _ns_noreaction_plot_df,
-            "No-sound window frequency",
+            "no-reaction trials frequency",
         )
 
         escape_classification_overview_fig.suptitle(
@@ -1579,82 +1567,6 @@ def _(
 
 
     return (plot_escape_classification_overview,)
-
-
-@app.cell
-def _(
-    build_escape_param_plot_dfs,
-    plot_escape_frequency_histogram,
-    plot_escape_param_scatter,
-    plt,
-):
-    # scatter and frequency plot
-    def plot_escape_classification_summary_plots(
-        s_session_df_dic_classified,
-        ns_session_df_dic_classified,
-    ):
-        escape_classification_summary_fig, _scatter_axes = plt.subplots(
-            1,
-            4,
-            figsize=(28, 4),
-            dpi=150,
-            constrained_layout=True,
-        )
-
-        _s_escape_plot_df, _s_noreaction_plot_df, _s_all_withoutescape_plot_df = (
-            build_escape_param_plot_dfs(s_session_df_dic_classified)
-        )
-        _ns_escape_plot_df, _ns_noreaction_plot_df, _ns_all_withoutescape_plot_df = (
-            build_escape_param_plot_dfs(ns_session_df_dic_classified)
-        )
-
-        plot_escape_param_scatter(
-            _scatter_axes[0],
-            _s_escape_plot_df,
-            "Sound-play escape windows",
-            "firebrick",
-        )
-        plot_escape_param_scatter(
-            _scatter_axes[1],
-            _s_all_withoutescape_plot_df,
-            "Sound-play no-reaction windows",
-            "steelblue",
-        )
-        plot_escape_frequency_histogram(
-            _scatter_axes[2],
-            _s_escape_plot_df,
-            _s_all_withoutescape_plot_df,
-            "Sound-play window frequency",
-        )
-        plot_escape_param_scatter(
-            _scatter_axes[0],
-            _ns_escape_plot_df,
-            "No-sound escape windows",
-            "firebrick",
-            marker="x",
-        )
-        plot_escape_param_scatter(
-            _scatter_axes[1],
-            _ns_all_withoutescape_plot_df,
-            "No-sound no-reaction windows",
-            "steelblue",
-            marker="x",
-        )
-        plot_escape_frequency_histogram(
-            _scatter_axes[3],
-            _ns_escape_plot_df,
-            _ns_all_withoutescape_plot_df,
-            "No-sound window frequency",
-        )
-
-        escape_classification_summary_fig.suptitle(
-            "Escape classification summary",
-            fontsize=16,
-        )
-
-        return escape_classification_summary_fig
-
-    return (plot_escape_classification_summary_plots,)
 
 
 @app.cell
@@ -1705,6 +1617,215 @@ def _(
         file_format="png",
         dpi=300,
     )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # correlation between escape and sound play
+    """)
+    return
+
+
+@app.cell
+def _(np, pd):
+    def build_trial_speed_array(
+        trial_df,
+        time_grid=np.arange(0, 10, 0.1),
+    ):
+        t = pd.to_numeric(
+            trial_df[("timestamp", "")], errors="coerce"
+        ).to_numpy()
+
+        v = pd.to_numeric(
+            trial_df[("Center", "mean_speed")], errors="coerce"
+        ).to_numpy()
+
+        valid = np.isfinite(t) & np.isfinite(v)
+        t, v = t[valid], v[valid]
+
+        if not len(t):
+            return np.full(len(time_grid), np.nan)
+
+        t, unique_idx = np.unique(t, return_index=True)
+
+        return np.interp(
+            time_grid,
+            t,
+            v[unique_idx],
+            left=np.nan,
+            right=np.nan,
+        )
+
+    return (build_trial_speed_array,)
+
+
+@app.cell
+def _(build_trial_speed_array, np, s_behav_df_dic_prebin_escape, select_day):
+    spd_mat_dic_s_escape_date = {}
+    time_grid = np.arange(0, 10, 0.1)
+
+    for _day in range(1, 5):
+        _speeds = [
+            build_trial_speed_array(_trial_df, time_grid)
+            for _trial_dic in select_day(s_behav_df_dic_prebin_escape, _day).values()
+            for _trial_df in _trial_dic.values()
+        ]
+
+        spd_mat_dic_s_escape_date[_day] = np.stack(_speeds)
+    return spd_mat_dic_s_escape_date, time_grid
+
+
+@app.cell
+def _(np, plt, sns, spd_mat_dic_s_escape_date, time_grid):
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+
+    _all_speed = np.concatenate([
+        spd_mat_dic_s_escape_date[_day].ravel()
+        for _day in range(1, 5)
+    ])
+    _all_speed = _all_speed[np.isfinite(_all_speed)]
+    _vmax = np.percentile(_all_speed, 95) if _all_speed.size else 1
+
+    _fig, _axes = plt.subplots(
+        1, 4, figsize=(20, 5), constrained_layout=True
+    )
+
+    for _day, _ax in enumerate(_axes, start=1):
+        _matrix = spd_mat_dic_s_escape_date[_day]
+        _ax.set_title(f"Day {_day}")
+
+        if not _matrix.size or not np.isfinite(_matrix).any():
+            _ax.text(
+                0.5, 0.5, "No data",
+                ha="center", va="center", transform=_ax.transAxes,
+            )
+            _ax.axis("off")
+            continue
+
+        _valid = np.isfinite(_matrix).any(axis=1)
+
+        _peak_index = np.full(len(_matrix), np.inf)
+        _peak_index[_valid] = np.nanargmax(_matrix[_valid], axis=1)
+
+        _matrix = _matrix[np.argsort(_peak_index, kind="stable")]
+
+        sns.heatmap(
+            _matrix,
+            cmap="magma",
+            vmin=0,
+            vmax=_vmax,
+            xticklabels=False,
+            yticklabels=False,
+            cbar=False,
+            ax=_ax,
+        )
+
+        _ax.set_xticks(np.arange(0, len(time_grid), 10) + 0.5)
+        _ax.set_xticklabels(np.arange(0, 10, 1))
+        _ax.set_xlabel("Time from sound onset (s)")
+        _ax.set_ylabel("Trials")
+
+    _fig.colorbar(
+        ScalarMappable(norm=Normalize(0, _vmax), cmap="magma"),
+        ax=_axes,
+        label="Speed",
+        shrink=0.8,
+    )
+
+    plt.show()
+    return
+
+
+@app.cell
+def _(pd, plt, s_session_df_dic_classified_prebin, select_day, sns):
+    _colors = sns.color_palette("YlOrBr", 6)[2:]
+
+    for _column in ["real_leave", "peak_speed_time"]:
+        _fig, _ax = plt.subplots(figsize=(10, 3))
+
+        for _day, _color in zip(range(1, 5), _colors):
+            _s_selected = select_day(
+                s_session_df_dic_classified_prebin, _day
+            )
+            if not _s_selected:
+                continue
+
+            _s_escape = pd.concat(
+                [_df.loc[_df["escape"] == True]
+                 for _df in _s_selected.values()],
+                ignore_index=True,
+            )
+
+            _values = pd.to_numeric(
+                _s_escape[_column], errors="coerce"
+            ).dropna()
+
+            if _values.nunique() < 2:
+                continue
+
+            sns.histplot(
+                x=_values,
+                stat="probability",
+                binwidth=0.1,   
+                binrange=(0, 10),   
+                color=_color,
+                alpha=0.2,         
+                edgecolor=None,
+                kde=True,
+                kde_kws={"bw_adjust": 0.1, "cut": 0},
+                line_kws={"linewidth": 1.5},
+                label=f"Day {_day}",
+                ax=_ax,
+            )
+
+        _ax.set(
+            xlabel="Time from sound onset (s)",
+            ylabel="Fraction",
+            title=_column,
+        )
+        _ax.plot([0, 4], [0.1, 0.1], c="k", lw=1.5, label='Sound envelope (scaled)')
+        _ax.set_xlim(0, 10)
+        _ax.legend(frameon=False)
+        _ax.spines[["top", "right"]].set_visible(False)
+        _fig.tight_layout()
+        plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## running efficiency
+    """)
+    return
+
+
+@app.cell
+def _(
+    Path,
+    ns_session_df_dic_classified_prebin,
+    pd,
+    s_session_df_dic_classified_prebin,
+    sound_type,
+    tmp_data_save_path,
+):
+    _df_s_metrics = pd.concat(s_session_df_dic_classified_prebin.values(), ignore_index=True)
+    _df_s_metrics['leave_duration'] = _df_s_metrics['real_stayhome']-_df_s_metrics['real_leave']
+    _df_s_metrics['leave_speed'] = _df_s_metrics['actual_path_distance'] / _df_s_metrics['leave_duration']
+    _df_ns_metrics = pd.concat(ns_session_df_dic_classified_prebin.values(), ignore_index=True)
+    _df_ns_metrics['leave_duration'] = _df_ns_metrics['real_stayhome']-_df_ns_metrics['real_leave']
+    _df_ns_metrics['leave_speed'] = _df_ns_metrics['actual_path_distance'] / _df_ns_metrics['leave_duration']
+    for _condition, _df in [("sound", _df_s_metrics), ("nosound", _df_ns_metrics)]:
+        for _escape, _group in _df.groupby("escape"):
+            _label = "escape" if _escape else "noreaction"
+
+            _group[["leave_speed"]].to_csv(
+                Path(tmp_data_save_path / f"{sound_type}_{_condition}_{_label}_leave_speed.csv"),
+                index=False,
+            )
     return
 
 
@@ -1785,6 +1906,582 @@ def _(
             file_format="png",
             dpi=300,
         )
+    return
+
+
+@app.cell
+def _(
+    ns_session_df_dic_classified_prebin,
+    pd,
+    s_session_df_dic_classified_prebin,
+    select_day,
+):
+    s_escape_freq_list = []
+    s_noreaction_freq_list = []
+    ns_escape_freq_list = []
+    ns_noreaction_freq_list = []
+
+    for _day in range(1, 5):
+        _s_selected = select_day(
+            s_session_df_dic_classified_prebin,
+            _day,
+        )
+        _ns_selected = select_day(
+            ns_session_df_dic_classified_prebin,
+            _day,
+        )
+
+        _s_escape = pd.concat(
+            [_df["escape"] for _df in _s_selected.values()],
+            ignore_index=True,
+        )
+        _ns_escape = pd.concat(
+            [_df["escape"] for _df in _ns_selected.values()],
+            ignore_index=True,
+        )
+
+        _s_freq = _s_escape.value_counts(normalize=True)
+        _ns_freq = _ns_escape.value_counts(normalize=True)
+
+        s_escape_freq_list.append(_s_freq.get(True, 0))
+        s_noreaction_freq_list.append(_s_freq.get(False, 0))
+        ns_escape_freq_list.append(_ns_freq.get(True, 0))
+        ns_noreaction_freq_list.append(_ns_freq.get(False, 0))
+    return (
+        ns_escape_freq_list,
+        ns_noreaction_freq_list,
+        s_escape_freq_list,
+        s_noreaction_freq_list,
+    )
+
+
+@app.cell
+def _(
+    ns_escape_freq_list,
+    ns_noreaction_freq_list,
+    plt,
+    s_escape_freq_list,
+    s_noreaction_freq_list,
+):
+    days = range(1, 5)
+
+    plt.figure(figsize=(7, 5))
+
+    plt.plot(
+        days,
+        s_escape_freq_list,
+        color="firebrick",
+        marker="o",
+        label="Sound - Escape",
+    )
+    plt.plot(
+        days,
+        s_noreaction_freq_list,
+        color="steelblue",
+        marker="o",
+        label="Sound - No reaction",
+    )
+    plt.plot(
+        days,
+        ns_escape_freq_list,
+        color="firebrick",
+        marker="x",
+        label="No sound - Escape",
+    )
+    plt.plot(
+        days,
+        ns_noreaction_freq_list,
+        color="steelblue",
+        marker="x",
+        label="No sound - No reaction",
+    )
+
+    plt.xticks(days)
+    plt.xlabel("Day")
+    plt.ylabel("Fraction")
+    plt.ylim(0, 1)
+    plt.legend(frameon=False)
+    plt.tight_layout()
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # shelter choice
+    """)
+    return
+
+
+@app.cell
+def _(
+    behav_df_filtered_dic,
+    np,
+    pd,
+    s_session_df_dic_classified_prebin,
+    shelter_x,
+    shelter_y_down,
+    shelter_y_up,
+    x_len_tran,
+    y_len_tran,
+):
+    _up, _down = np.asarray(
+        [shelter_y_up, shelter_y_down], dtype=float
+    ) / y_len_tran
+    _sx = np.asarray(shelter_x, dtype=float) / x_len_tran
+
+    _events = ["trigger_time", "real_leave", "real_stayhome"]
+    _prefs = ["shelter_preference", "shelter_preference_before_trigger"]
+    _xy_cols = [f"{e}_{c}" for e in _events for c in ["x", "y"]]
+
+    for _session, _df in s_session_df_dic_classified_prebin.items():
+        _track = behav_df_filtered_dic[_session][[
+            ("timestamp", ""), ("Center", "x"), ("Center", "y")
+        ]].apply(pd.to_numeric, errors="coerce")
+        _track.columns = ["t", "x", "y"]
+        _track = _track.dropna(subset=["t"]).sort_values("t").reset_index(drop=True)
+
+        _df[_xy_cols + _prefs + ["shelter_up_time", "shelter_down_time"]] = np.nan
+        _df["shelter_choice"] = pd.Series(pd.NA, index=_df.index, dtype="Int64")
+
+        if _track.empty:
+            continue
+
+        _t = _track["t"]
+        _dt = (_t.shift(-1) - _t).fillna(0)
+        _inside_x = _track["x"].between(*_sx)
+        _in_up = _inside_x & _track["y"].between(*_up)
+        _in_down = _inside_x & _track["y"].between(*_down)
+
+        _df["shelter_up_time"] = _dt[_in_up].sum()
+        _df["shelter_down_time"] = _dt[_in_down].sum()
+        _df["shelter_preference"] = (
+            _df["shelter_up_time"] - _df["shelter_down_time"]
+        )
+
+        _zone = _in_up.astype(int) - _in_down.astype(int)
+        _cum = np.r_[0.0, (_dt * _zone).iloc[:-1].cumsum().to_numpy()]
+
+        _df["shelter_preference_before_trigger"] = np.interp(
+            pd.to_numeric(_df["trigger_time"], errors="coerce").to_numpy(
+                dtype=float, na_value=np.nan
+            ),
+            _t.to_numpy(), _cum, left=np.nan, right=np.nan,
+        )
+
+        _df[[f"{c}_int" for c in _prefs]] = (
+            np.sign(_df[_prefs]).replace({-1: 2}).astype("Int64")
+        )
+
+        for _idx, _row in _df.loc[_df["escape"].eq(True)].iterrows():
+            for _event in _events:
+                _event_time = _row["trigger_time"] + (
+                    0 if _event == "trigger_time" else _row[_event]
+                )
+                if pd.isna(_event_time):
+                    continue
+
+                _pos = (_t - _event_time).abs().idxmin()
+                _df.loc[_idx, [f"{_event}_x", f"{_event}_y"]] = (
+                    _track.loc[_pos, ["x", "y"]].to_numpy()
+                )
+
+                if _event == "real_stayhome":
+                    _after = _track.iloc[_pos:]
+                    _y = _after.loc[_after["t"] <= _t.iloc[_pos] + 3, "y"]
+                    _hits = np.select(
+                        [_y.between(*_up), _y.between(*_down)],
+                        [1, 2],
+                        default=0,
+                    )
+                    _hits = _hits[_hits != 0]
+                    _df.at[_idx, "shelter_choice"] = (
+                        int(_hits[0]) if _hits.size else 0
+                    )
+    return
+
+
+@app.cell
+def _(mo, np, pd, s_session_df_dic_classified_prebin):
+    import statsmodels.api as _sm
+    from sklearn.preprocessing import StandardScaler as _StandardScaler
+
+    _x_cols = ["trigger_time_y", 
+    # "shelter_preference", 
+    # "shelter_preference_before_trigger",
+    "real_leave_y", 
+    "shelter_preference_int",
+    "shelter_preference_before_trigger_int",
+    ]
+    _numeric = ["shelter_choice"] + _x_cols
+
+    # Combine all sessions and retain only escape=True trials
+    shelter_glm_df = pd.concat([
+        _df.loc[_df["escape"].eq(True)].assign(
+            session=_session,
+            mouse=_session.split("_")[0],
+        )
+        for _session, _df in s_session_df_dic_classified_prebin.items()
+    ], ignore_index=True)
+
+    # Remove missing and infinite values
+    shelter_glm_df[_numeric] = shelter_glm_df[_numeric].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    shelter_glm_df = shelter_glm_df.replace(
+        [np.inf, -np.inf], np.nan
+    ).dropna(subset=_numeric).copy()
+
+    # trials of choice=0 is too less, which will make error
+    # Retain original choices 1 and 2
+    shelter_glm_df = shelter_glm_df.loc[
+        shelter_glm_df["shelter_choice"].isin([1, 2])
+    ].copy()
+
+    # Encode upper shelter as 0 and lower shelter as 1
+    _y = (
+        shelter_glm_df["shelter_choice"]
+        .map({1: 0, 2: 1})
+        .astype(int)
+        .rename("choose_lower")
+    )
+
+    if _y.nunique() < 2:
+        raise ValueError(
+            "The valid data must contain at least two shelter_choice categories."
+        )
+
+    # Standardize each predictor across all included trials
+    shelter_glm_scaler = _StandardScaler()
+
+    _X = pd.DataFrame(
+        shelter_glm_scaler.fit_transform(shelter_glm_df[_x_cols]),
+        columns=_x_cols,
+        index=shelter_glm_df.index,
+    )
+    _X = _sm.add_constant(_X, has_constant="add")
+
+    if np.linalg.matrix_rank(_X) < _X.shape[1]:
+        raise ValueError(
+            "The design matrix contains constant or perfectly collinear predictors."
+        )
+
+    # Fit multinomial logistic regression with mouse-clustered standard errors
+    shelter_glm_result = _sm.GLM(_y,_X,family=_sm.families.Binomial(),
+    ).fit(
+        maxiter=500,
+        cov_type="cluster",
+        cov_kwds={"groups": shelter_glm_df["mouse"]},
+    )
+
+    if (
+        not shelter_glm_result.converged
+        or not np.isfinite(shelter_glm_result.params.to_numpy()).all()
+        or not np.isfinite(shelter_glm_result.bse.to_numpy()).all()
+    ):
+        raise RuntimeError(
+            "Model fitting failed. Check separation and predictor variation."
+        )
+
+    print(
+        "Original choice counts:\n",
+        shelter_glm_df["shelter_choice"].value_counts().sort_index(),
+    )
+    print("Outcome: lower shelter; reference: upper shelter")
+
+    mo.Html(shelter_glm_result.summary().as_html())
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## trajectory about shelter
+    """)
+    return
+
+
+@app.cell
+def _():
+    from matplotlib.patches import Rectangle
+
+    return (Rectangle,)
+
+
+@app.cell
+def _(
+    Path,
+    Rectangle,
+    behav_df_filtered_dic,
+    behavior_utils,
+    figure_export_root,
+    frame_xy,
+    np,
+    plot_test,
+    plt,
+    shelter_x,
+    shelter_y_down,
+    shelter_y_up,
+    x_len_tran,
+    y_len_tran,
+):
+
+    _output_dir = Path(figure_export_root) / "occupancy" / "all_data"
+    _output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Shared spatial bins in converted coordinates
+    _extent = (0, frame_xy[0] / x_len_tran, 0, frame_xy[1] / y_len_tran)
+    _xedges = np.linspace(_extent[0], _extent[1], 17)
+    _yedges = np.linspace(_extent[2], _extent[3], 13)
+
+    for _mouse in sorted({name.split("_")[0] for name in behav_df_filtered_dic}):
+        _sessions = sorted(
+            name for name in behav_df_filtered_dic
+            if name.split("_")[0] == _mouse
+        )
+
+        if len(_sessions) > 4:
+            raise ValueError(f"{_mouse} has more than four sessions.")
+
+        # Compute occupancy maps for all sessions of this mouse
+        _maps = []
+        for _session in _sessions:
+            _df = behav_df_filtered_dic[_session]
+            _maps.append(behavior_utils.occupancy_map(
+                _df[("Center", "x")],
+                _df[("Center", "y")],
+                _df[("timestamp", "")],
+                xbins=_xedges,
+                ybins=_yedges,
+            ))
+
+        # One normalization shared by all four sessions
+        _occ_norm = plot_test._normalize_from_values(
+            np.concatenate([occ.ravel() for occ in _maps])
+        )
+
+        _fig, _axes = plt.subplots(
+            1, 4, figsize=(20, 5),
+            sharex=True, sharey=True,
+            constrained_layout=True,
+        )
+
+        for _i, (_session, _occ) in enumerate(zip(_sessions, _maps)):
+            _im = _axes[_i].imshow(
+                _occ.T,
+                origin="lower",
+                extent=_extent,
+                cmap="viridis",
+                norm=_occ_norm,
+                interpolation="gaussian",
+                aspect="equal",
+            )
+            _axes[_i].set(
+                title=f"Session {_i + 1}\n{_session.split('_')[-2]}",
+                xticks=[],
+                yticks=[],
+            )
+
+            for _sy in [shelter_y_up, shelter_y_down]:
+                _axes[_i].add_patch(Rectangle(
+                    (
+                        shelter_x[0] / x_len_tran,
+                        _sy[0] / y_len_tran,
+                    ),
+                    (shelter_x[1] - shelter_x[0]) / x_len_tran,
+                    (_sy[1] - _sy[0]) / y_len_tran,
+                    edgecolor="white",
+                    facecolor="none",
+                    linestyle="--",
+                    linewidth=1.5,
+                    zorder=3,
+                ))
+
+        for _ax in _axes[len(_sessions):]:
+            _ax.axis("off")
+
+        _axes[0].set_ylim(_extent[3], _extent[2])
+        _fig.suptitle(_mouse)
+
+        _fig.colorbar(
+            _im,
+            ax=_axes,
+            label="Occupancy (s/bin)",
+            shrink=0.7,
+            fraction=0.025,
+            pad=0.02,
+            extend="both",
+        )
+
+        _fig.savefig(
+            _output_dir / f"{_mouse}_occupancy_all_data.png",
+            dpi=300,
+            bbox_inches="tight",
+        )
+        plt.close(_fig)
+    return
+
+
+@app.cell
+def _(
+    Path,
+    Rectangle,
+    behav_df_filtered_dic,
+    figure_export_root,
+    frame_xy,
+    get_event_times,
+    np,
+    pd,
+    plot_test,
+    plt,
+    session_df_dic,
+    shelter_x,
+    shelter_y_down,
+    shelter_y_up,
+    sound_time_bin,
+    x_len_tran,
+    y_len_tran,
+):
+    _output_dir = Path(figure_export_root) / "occupancy" / "soundPlay_data"
+    _output_dir.mkdir(parents=True, exist_ok=True)
+
+    _sound_duration = sound_time_bin  # Actual playback duration in seconds
+    # Shared spatial bins in converted coordinates
+    _extent = (0, frame_xy[0] / x_len_tran, 0, frame_xy[1] / y_len_tran)
+    _xedges = np.linspace(_extent[0], _extent[1], 17)
+    _yedges = np.linspace(_extent[2], _extent[3], 13)
+
+    for _mouse in sorted({name.split("_")[0] for name in behav_df_filtered_dic}):
+        _sessions = sorted(
+            name for name in behav_df_filtered_dic
+            if name.split("_")[0] == _mouse
+        )
+
+        if len(_sessions) > 4:
+            raise ValueError(f"{_mouse} has more than four sessions.")
+
+        # Compute occupancy maps for all sessions of this mouse
+        _maps = []
+
+        for _session in _sessions:
+            _track = behav_df_filtered_dic[_session][[
+                ("timestamp", ""), ("Center", "x"), ("Center", "y")
+            ]].apply(pd.to_numeric, errors="coerce")
+
+            _track.columns = ["t", "x", "y"]
+            _track = (
+                _track.replace([np.inf, -np.inf], np.nan)
+                .dropna()
+                .sort_values("t")
+            )
+
+            if len(_track) < 2:
+                _maps.append(np.zeros((16, 12)))
+                continue
+
+            _t, _x, _y = _track.to_numpy(dtype=float).T
+            _t_next = np.r_[
+                _t[1:],
+                _t[-1] + np.median(np.diff(_t)),
+            ]
+
+            # Collect all sound onset times
+            _starts = sorted({
+                float(_start)
+                for _value in session_df_dic[_session].get("sound_played", [])
+                for _start in get_event_times(_value)
+                if pd.notna(_start) and np.isfinite(float(_start))
+            })
+
+            # Merge overlapping playback intervals
+            _windows = []
+            for _start in _starts:
+                _end = _start + _sound_duration
+                if _windows and _start <= _windows[-1][1]:
+                    _windows[-1][1] = max(_windows[-1][1], _end)
+                else:
+                    _windows.append([_start, _end])
+
+            # Count only the portion of each frame interval during playback
+            _weights = np.zeros(len(_t))
+            for _start, _end in _windows:
+                _weights += np.maximum(
+                    0,
+                    np.minimum(_t_next, _end) - np.maximum(_t, _start),
+                )
+
+            _maps.append(np.histogram2d(
+                _x,
+                _y,
+                bins=[_xedges, _yedges],
+                weights=_weights,
+            )[0])
+
+        # One normalization shared by all four sessions
+        _occ_norm = plot_test._normalize_from_values(
+            np.concatenate([occ.ravel() for occ in _maps])
+        )
+
+        _fig, _axes = plt.subplots(
+            1, 4, figsize=(20, 5),
+            sharex=True, sharey=True,
+            constrained_layout=True,
+        )
+
+        for _i, (_session, _occ) in enumerate(zip(_sessions, _maps)):
+            _im = _axes[_i].imshow(
+                _occ.T,
+                origin="lower",
+                extent=_extent,
+                cmap="viridis",
+                norm=_occ_norm,
+                interpolation="gaussian",
+                aspect="equal",
+            )
+            _axes[_i].set(
+                title=f"Session {_i + 1}\n{_session.split('_')[-2]}",
+                xticks=[],
+                yticks=[],
+            )
+
+            for _sy in [shelter_y_up, shelter_y_down]:
+                _axes[_i].add_patch(Rectangle(
+                    (
+                        shelter_x[0] / x_len_tran,
+                        _sy[0] / y_len_tran,
+                    ),
+                    (shelter_x[1] - shelter_x[0]) / x_len_tran,
+                    (_sy[1] - _sy[0]) / y_len_tran,
+                    edgecolor="white",
+                    facecolor="none",
+                    linestyle="--",
+                    linewidth=1.5,
+                    zorder=3,
+                ))
+
+        for _ax in _axes[len(_sessions):]:
+            _ax.axis("off")
+
+        _axes[0].set_ylim(_extent[3], _extent[2])
+        _fig.suptitle(_mouse)
+
+        _fig.colorbar(
+            _im,
+            ax=_axes,
+            label="Occupancy (s/bin)",
+            shrink=0.7,
+            fraction=0.025,
+            pad=0.02,
+            extend="both",
+        )
+
+        _fig.savefig(
+            _output_dir / f"{_mouse}_occupancy_sound.png",
+            dpi=300,
+            bbox_inches="tight",
+        )
+        plt.close(_fig)
     return
 
 

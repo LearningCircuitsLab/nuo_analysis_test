@@ -2776,6 +2776,77 @@ def _(mo):
 
 
 @app.cell
+def _(df_test_selected_upd, plt, work_bouts):
+    _colors = {
+        "saline": {True: "steelblue", False: "limegreen"},
+        "mk801": {True: "firebrick", False: "gold"},
+    }
+    _keys = ["subject", "year_month_day", "session", "observation_group"]
+    _fig, _axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    for _ax, (_condition, _palette) in zip(_axes, _colors.items()):
+        # 从 auditory 数据中随机选一个 session
+        _candidates = df_test_selected_upd.loc[
+            df_test_selected_upd["observation_group"].eq(_condition)
+            & df_test_selected_upd["stimulus_modality"].eq("auditory"),
+            _keys,
+        ].dropna().drop_duplicates()
+
+        if _candidates.empty:
+            _ax.set_title(f"No {_condition} auditory sessions")
+            _ax.set_axis_off()
+            continue
+
+        # _selected = _candidates.sample(n=1, random_state=42)
+        _selected = _candidates.sample(n=1)
+        _df = df_test_selected_upd.merge(_selected, on=_keys)
+        _start = _df["TRIAL_START"].min()
+        _df = _df[_df["stimulus_modality"].eq("auditory")]
+
+        # work bouts 的淡蓝色阴影
+        _bouts = work_bouts[
+            work_bouts["engaged"].eq(True)
+        ].merge(_selected, on=_keys)
+
+        for _i, _bout in enumerate(_bouts.itertuples(index=False)):
+            _ax.axvspan(
+                _bout.start_time - _start,
+                _bout.end_time - _start,
+                color="lightskyblue",
+                alpha=0.2,
+                linewidth=0,
+                label="Work bout" if _i == 0 else "_nolegend_",
+                zorder=0,
+            )
+
+        # 按 engaged 状态画点
+        for _engaged, _color in _palette.items():
+            _d = _df[_df["engaged"].eq(_engaged)]
+            _ax.scatter(
+                _d["TRIAL_START"] - _start,
+                _d["trial"],
+                color=_color,
+                s=4,
+                label=f"engaged={_engaged}",
+                zorder=2,
+            )
+
+        _info = _selected.iloc[0]
+        _ax.set(
+            title=f"{_condition.upper()} | {_info['subject']} | {_info['year_month_day']}",
+            xlabel="Trial start time (s)",
+            ylabel="Trial number",
+            xlim=(0, None),
+        )
+        _ax.spines[["top", "right"]].set_visible(False)
+        _ax.legend(frameon=False)
+
+    _fig.tight_layout()
+    _fig
+    return
+
+
+@app.cell
 def _(df_test_selected_upd, plt, sns):
     _fig, _ax = plt.subplots(figsize=(7, 5))
     _palette = {"saline": "blue", "mk801": "red"}

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.1"
+__generated_with = "0.25.2"
 app = marimo.App(width="medium")
 
 
@@ -70,6 +70,13 @@ def _(behavior_utils, plot_test, utils_test):
     return
 
 
+@app.cell
+def _(Path, utils):
+    plot_output_path = Path(utils.get_outpath(), 'tmp', '2AFC_muscimol_local_injection')
+    plot_output_path
+    return (plot_output_path,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md("""
@@ -132,7 +139,7 @@ def _(project, utils):
     animals = utils.get_animals_in_project(project)
     animals = [_a for _a in animals if "test" not in _a]
     print(animals)
-    return (animals,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -144,15 +151,10 @@ def _(mo):
 
 
 @app.cell
-def _(animals, mo):
-    mouse_select = mo.ui.dropdown(
-        options=animals,
-        value=animals[0],
-        label="Mouse",
-    )
-
-    mouse_select
-    return
+def _():
+    # 'ACV023' 'ACV029' 'ACV031' were injected muscimol locally
+    mouse_select = ['ACV023', 'ACV029', 'ACV031']
+    return (mouse_select,)
 
 
 @app.cell
@@ -165,8 +167,8 @@ def _(mo):
 @app.cell
 def _(
     Path,
-    animals,
     download_button,
+    mouse_select,
     pd,
     project,
     safe_rsync_cluster_data,
@@ -177,7 +179,7 @@ def _(
 
 
     df_all = pd.DataFrame()
-    for _mouse in animals:
+    for _mouse in mouse_select:
         _local_path = Path(utils.get_outpath()) / project / "sessions" / _mouse
         _local_path.mkdir(parents=True, exist_ok=True)
         if download_button.value:
@@ -207,20 +209,119 @@ def _(mo):
 def _(df_all, run_mode_select):
     run_mode = run_mode_select.value
     df = df_all[df_all["run_mode"] == run_mode]
-    df.iloc[-10:]
-    return (df,)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # manual mouse select
+    """)
+    return
 
 
 @app.cell
-def _(df, dft, np):
-    df_day = dft.add_day_column_to_df(df.copy())
-    df_day = dft.add_trial_of_day_column_to_df(df_day)
-    df_day["total_trial"] = np.arange(1, df_day.shape[0] + 1)
+def _(mo):
+    update_processData_button = mo.ui.run_button(label="update selected mice processed data")
+    update_processData_button
+    return (update_processData_button,)
 
-    available_dates = sorted(
-        df_day["year_month_day"].dropna().astype(str).unique().tolist()
+
+@app.cell
+def _(
+    Path,
+    dft,
+    mouse_select,
+    pd,
+    project,
+    run_mode_select,
+    safe_rsync_cluster_data,
+    update_processData_button,
+    utils,
+):
+    _run_mode = run_mode_select.value
+    parameters_output_dir = (
+        Path(utils.get_outpath()) / project / "processed" / "parameters_for_fit" / _run_mode.lower()
     )
-    return (df_day,)
+    stim_columns = {
+        "df_test_vis": "visual",
+        "df_test_aud": "auditory",
+    }
+
+    selected_mice = mouse_select
+
+    def load_or_compute_mouse_parameters(_mouse):
+        parameters_output_path = parameters_output_dir / f"{_mouse}_parameters_for_fit.pkl"
+        if parameters_output_path.exists() and not update_processData_button.value:
+            print(f"Loaded saved parameters_for_fit data: {parameters_output_path}")
+            return pd.read_pickle(parameters_output_path)
+
+        _local_path = Path(utils.get_outpath()) / project / "sessions" / _mouse
+        _local_path.mkdir(parents=True, exist_ok=True)
+        _csv_path = _local_path / f"{_mouse}.csv"
+        if not _csv_path.exists():
+            safe_rsync_cluster_data(
+                project_name=project,
+                file_path="sessions/{}/{}.csv".format(_mouse, _mouse),
+                local_path=str(_local_path),
+                credentials=utils.get_idibaps_cluster_credentials(),
+            )
+
+        if not _csv_path.exists():
+            print(f"No CSV found for {_mouse}; skipped parameters_for_fit.")
+            return {output_name: pd.DataFrame() for output_name in stim_columns}
+
+        df_all_mouse = pd.read_csv(_csv_path, sep=";")
+        df_manual = df_all_mouse[df_all_mouse["run_mode"] == _run_mode]
+        computed_results = {}
+        for output_name, stim_name in stim_columns.items():
+            df_stim = df_manual[df_manual["stimulus_modality"] == stim_name]
+            if df_stim.empty:
+                computed_results[output_name] = df_stim.copy()
+                print(f"No {stim_name} trials found for {_mouse}; skipped parameters_for_fit.")
+            else:
+                computed_results[output_name] = dft.parameters_for_fit(df_stim)
+
+        parameters_output_dir.mkdir(parents=True, exist_ok=True)
+        pd.to_pickle(computed_results, parameters_output_path)
+        print(f"Saved parameters_for_fit data: {parameters_output_path}")
+        return computed_results
+
+    combined_results = {output_name: [] for output_name in stim_columns}
+    for _mouse in mouse_select:
+        mouse_results = load_or_compute_mouse_parameters(_mouse)
+        for output_name in stim_columns:
+            df_mouse_result = mouse_results.get(output_name, pd.DataFrame())
+            if not df_mouse_result.empty:
+                if "subject" not in df_mouse_result.columns:
+                    df_mouse_result = df_mouse_result.copy()
+                    df_mouse_result["subject"] = _mouse
+                combined_results[output_name].append(df_mouse_result)
+
+    _df_test_vis_raw = (
+        pd.concat(combined_results["df_test_vis"], ignore_index=True)
+        if combined_results["df_test_vis"]
+        else pd.DataFrame()
+    )
+
+    _df_test_aud_raw = (
+        pd.concat(combined_results["df_test_aud"], ignore_index=True)
+        if combined_results["df_test_aud"]
+        else pd.DataFrame()
+    )
+
+    df_test_selected_raw = pd.concat(
+        [_df_test_vis_raw, _df_test_aud_raw],
+        ignore_index=True,
+    )
+
+    # _dates = pd.to_datetime(df_test_selected_raw["year_month_day"], errors="coerce").dt.normalize()
+
+    # _start_date = pd.to_datetime(date_select_start.value).normalize()
+    # _end_date = pd.to_datetime(date_select_end.value).normalize()
+
+    # df_test_selected_raw = df_test_selected_raw[_dates.between(_start_date, _end_date, inclusive="both")].copy()
+    return (df_test_selected_raw,)
 
 
 @app.cell
@@ -283,6 +384,28 @@ def _(injection_long, injection_select):
 
 
 @app.cell
+def _(df_test_selected_raw, injection_long, np):
+    df_day = df_test_selected_raw.copy()
+    df_day["total_trial"] = np.arange(1, df_day.shape[0] + 1)
+    df_day['injection'] = df_day.apply(
+        lambda row: injection_long.loc[
+            (injection_long["subject"] == row["subject"])
+            & (injection_long["injection_date"] == row["year_month_day"]),
+            "injection",
+        ].values[0]
+        if not injection_long.loc[
+            (injection_long["subject"] == row["subject"])
+            & (injection_long["injection_date"] == row["year_month_day"]),
+            "injection",
+        ].empty
+        else None,
+        axis=1,
+    )
+    df_day.dropna(subset=["injection"], inplace=True)
+    return (df_day,)
+
+
+@app.cell
 def _(df_day, pd, selected_mouse_dates):
     _day_keys = pd.MultiIndex.from_arrays([
         df_day["subject"].astype("string").str.strip(),
@@ -294,7 +417,6 @@ def _(df_day, pd, selected_mouse_dates):
     df_day_injection = df_day.loc[
         _day_keys.isin(_selected_keys)
     ].copy()
-
     return (df_day_injection,)
 
 
@@ -401,30 +523,192 @@ def _(df_day_injection, dft, injection_select, plots, plt):
     return
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # manual mouse select
-    """)
-    return
-
-
 @app.cell
-def _(animals, mo):
-    fit_mouse_select = mo.ui.multiselect(
-        options=animals,
-        value=animals[:-1],
-        label="Mice for fit",
+def _(mo):
+    injection_pair = {"TS bilateral": ["muscimol, 0.2mg/ml, 50nL, TS bilateral", "saline, 0.9%, 50nL, TS bilateral"],
+    "SC bilateral": ["muscimol, 0.2mg/ml, 50nL, SC bilateral", "saline, 0.9%, 50nL, SC bilateral"],
+    "left TS right SC": ["muscimol, 0.2mg/ml, 300nL, left TS, right SC", "muscimol, 0.2mg/ml, 50nL, left TS, 100nl, right SC", "muscimol, 0.2mg/ml, 50nL, left TS, right SC", "saline, 0.9%, 50nL, left TS, 100nl, right SC", "saline, 0.9%, 50nL, left TS, right SC"],
+    "right TS left SC": ["muscimol, 0.2mg/ml, 100nL, right TS, 150nl, left SC", "muscimol, 0.2mg/ml, 50nL, right TS, 100nl, left SC", "muscimol, 0.2mg/ml, 50nL, right TS, left SC", "saline, 0.9%, 50nL, right TS, 100nl, left SC", "saline, 0.9%, 50nL, right TS, left SC"],
+    "left SC": ["muscimol, 0.2mg/ml, 50nL, left SC", "saline, 0.9%, 50nL, left SC"],
+    "right SC": ["muscimol, 0.2mg/ml, 50nL, right SC", "saline, 0.9%, 50nL, right SC"],
+    }
+
+    injection_pair_select = mo.ui.dropdown(
+        options=injection_pair,
+        value="TS bilateral",
+        label="Injection pair",
+        full_width=True,
     )
 
-    fit_mouse_select
+    injection_pair_select
+    return injection_pair, injection_pair_select
+
+
+@app.cell
+def _(df_day, dft, injection_pair_select, mo, np, plots, plt):
+    _df_plot = df_day[
+        df_day["injection"].isin(injection_pair_select.value)
+        & df_day["stimulus_modality"].eq("auditory")
+    ].copy()
+
+    _figures = []
+
+    for _mouse, _df_mouse in _df_plot.groupby("subject", observed=True):
+        _fig, _ax = plt.subplots(figsize=(6, 5))
+
+        # 每种处理分别生成颜色深浅
+        for _condition, _cmap_name in {
+            "muscimol": "Reds",
+            "saline": "Blues",
+        }.items():
+            _df_condition = _df_mouse[
+                _df_mouse["injection"].str.contains(
+                    _condition,
+                    case=False,
+                    na=False,
+                )
+            ]
+
+            _sessions = list(
+                _df_condition.groupby(
+                    ["year_month_day", "session"],
+                    sort=True,
+                    observed=True,
+                )
+            )
+
+            _colors = plt.get_cmap(_cmap_name)(
+                np.linspace(0.4, 0.9, len(_sessions))
+            )
+
+            for ((_date, _session), _df_session), _color in zip(
+                _sessions, _colors
+            ):
+                _psych_df = dft.get_performance_by_difficulty_ratio(
+                    _df_session.copy()
+                ).dropna(
+                    subset=[
+                        "total_evidence_strength",
+                        "first_choice_numeric",
+                    ]
+                )
+
+                if _psych_df["total_evidence_strength"].nunique() < 2:
+                    continue
+
+                plots.psychometric_plot(
+                    _psych_df,
+                    x="total_evidence_strength",
+                    y="first_choice_numeric",
+                    valueType="continue",
+                    bins=6,
+                    log=False,
+                    ax=_ax,
+                    point_kwargs={
+                        "color": _color,
+                        "alpha": 0.5,
+                        "label": "_nolegend_",
+                    },
+                    line_kwargs={
+                        "color": _color,
+                        "linewidth": 2,
+                        "label": f"{_psych_df['injection'].unique()}",
+                    },
+                )
+
+        _ax.set_title(
+            f"{_mouse} | {injection_pair_select.selected_key}"
+        )
+        _ax.legend(frameon=False, fontsize=8)
+        _fig.tight_layout()
+        _figures.append(_fig)
+        plt.close(_fig)
+
+    mo.hstack(_figures) if _figures else mo.md(
+        "no data"
+    )
     return
 
 
 @app.cell
-def _(mo):
-    update_processData_button = mo.ui.run_button(label="update selected mice processed data")
-    update_processData_button
+def _(Path, df_day, dft, injection_pair, np, plot_output_path, plots, plt):
+    # _conditions = ["SC bilateral", "left SC", "right SC"]
+    _conditions = ["SC bilateral", "left TS right SC", "right TS left SC", "left SC", "right SC"]
+
+    _injection_groups = {
+        _condition: [
+            _injection
+            for _injection in injection_pair[_condition]
+            if "saline" not in _injection.lower()
+        ]
+        for _condition in _conditions
+    }
+
+    _injection_groups["saline"] = list({
+        _injection
+        for _condition in _conditions
+        for _injection in injection_pair[_condition]
+        if "saline" in _injection.lower()
+    })
+
+
+    _red_colors = plt.get_cmap("Reds")(np.linspace(0.4, 0.9, len(_conditions)))
+    _colors = dict(zip(_conditions, _red_colors))
+    _colors["saline"] = "steelblue"
+
+    _fig, _ax = plt.subplots(figsize=(7, 5))
+
+    for _condition, _injections in _injection_groups.items():
+        _df_condition = df_day[
+            df_day["injection"].isin(_injections)
+            & df_day["stimulus_modality"].eq("auditory")
+        ].copy()
+
+        if _df_condition.empty:
+            continue
+
+        _psych_df = dft.get_performance_by_difficulty_ratio(
+            _df_condition
+        ).dropna(
+            subset=["total_evidence_strength", "first_choice_numeric"]
+        )
+
+        if _psych_df["total_evidence_strength"].nunique() < 2:
+            continue
+
+        plots.psychometric_plot(
+            _psych_df,
+            x="total_evidence_strength",
+            y="first_choice_numeric",
+            valueType="continue",
+            bins=6,
+            log=False,
+            ax=_ax,
+            point_kwargs={
+                "color": _colors[_condition],
+                "alpha": 0.4,
+                "label": "_nolegend_",
+            },
+            line_kwargs={
+                "color": _colors[_condition],
+                "linewidth": 2,
+                "label": _condition,
+            },
+        )
+
+    _ax.set_title("Psychometric curves by injection condition")
+    _ax.legend(frameon=False)
+    _fig.tight_layout()
+    _fig.savefig(
+        Path(plot_output_path, "psychometric_curves_by_injection_condition.svg"),
+        dpi=300,
+    )
+    plt.show()
+    return
+
+
+@app.cell
+def _():
     return
 
 
