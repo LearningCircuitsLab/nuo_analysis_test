@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.1"
+__generated_with = "0.25.2"
 app = marimo.App(width="medium")
 
 
@@ -2137,7 +2137,7 @@ def _(df_test_upd, latentcor, np, pd, plt, sns):
         'reaction_time', ]
 
     binary_cols = [
-        'correct_numeric',
+        # 'correct_numeric',
         'previous_correct_numeric',
         'previous_same_choice_numeric',
         'roa_choice_numeric',

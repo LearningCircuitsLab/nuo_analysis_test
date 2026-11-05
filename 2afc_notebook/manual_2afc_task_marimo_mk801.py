@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.1"
+__generated_with = "0.25.2"
 app = marimo.App(width="medium")
 
 
@@ -40,6 +40,7 @@ def _():
     import scipy.stats as stats
 
     from lecilab_behavior_analysis import utils as utils
+    utils.IDIBAPS_TV_PROJECTS = "/storage/training_village/"
     from lecilab_behavior_analysis import df_transforms as dft
     from lecilab_behavior_analysis import plots
     from lecilab_behavior_analysis.figure_maker import (
@@ -183,6 +184,12 @@ def _(
 
 
 @app.cell
+def _(df_all):
+    df_all[(df_all['run_mode']=='Manual') & (df_all['subject']=="NUO058")].iloc[-10:]
+    return
+
+
+@app.cell
 def _(mo):
     run_mode_select = mo.ui.dropdown(
         options=["Auto", "Manual"],
@@ -282,11 +289,48 @@ def _(mo):
 
 
 @app.cell
+def _():
+    basic_cols = [
+        "subject",
+        "year_month_day",
+        "session",
+        "trial",
+        "stimulus_modality",
+        "TRIAL_START",
+        "TRIAL_END",
+        "first_choice_numeric",
+    ]
+
+    continuous_cols = [
+        "reaction_time",
+        "trial_duration",
+        "inter_trial_interval",
+    ]
+
+    binary_cols = [
+        "correct_numeric",
+        "previous_same_choice_numeric",
+        "previous_correct_numeric",
+        "roa_choice_numeric",
+    ]
+
+    count_cols = [
+        "fixation_breaks",
+        "eager_pokes",
+    ]
+
+    features = continuous_cols + binary_cols + count_cols
+    return basic_cols, features
+
+
+@app.cell
 def _(
     Path,
+    basic_cols,
     date_select_end,
     date_select_start,
     dft,
+    features,
     fit_mouse_select,
     pd,
     project,
@@ -302,6 +346,10 @@ def _(
     stim_columns = {
         "df_test_vis": "visual",
         "df_test_aud": "auditory",
+    }
+    _stim_feature_columns = {
+        "visual": "visual_stimulus_ratio",
+        "auditory": "total_evidence_strength",
     }
 
     selected_mice = list(fit_mouse_select.value)
@@ -328,7 +376,8 @@ def _(
             return {output_name: pd.DataFrame() for output_name in stim_columns}
 
         df_all_mouse = pd.read_csv(_csv_path, sep=";")
-        df_manual = df_all_mouse[df_all_mouse["run_mode"] == _run_mode]
+        df_manual = df_all_mouse.loc[df_all_mouse["run_mode"] == _run_mode]
+        del df_all_mouse
         computed_results = {}
         for output_name, stim_name in stim_columns.items():
             df_stim = df_manual[df_manual["stimulus_modality"] == stim_name]
@@ -337,6 +386,11 @@ def _(
                 print(f"No {stim_name} trials found for {_mouse}; skipped parameters_for_fit.")
             else:
                 computed_results[output_name] = dft.parameters_for_fit(df_stim)
+            columns_to_save = basic_cols + features + [_stim_feature_columns[stim_name]]
+            if computed_results[output_name].empty:
+                computed_results[output_name] = computed_results[output_name].reindex(columns=columns_to_save)
+            else:
+                computed_results[output_name] = computed_results[output_name].loc[:, columns_to_save].copy()
 
         parameters_output_dir.mkdir(parents=True, exist_ok=True)
         pd.to_pickle(computed_results, parameters_output_path)
@@ -354,21 +408,11 @@ def _(
                     df_mouse_result["subject"] = _mouse
                 combined_results[output_name].append(df_mouse_result)
 
-    _df_test_vis_raw = (
-        pd.concat(combined_results["df_test_vis"], ignore_index=True)
-        if combined_results["df_test_vis"]
-        else pd.DataFrame()
-    )
-
-    _df_test_aud_raw = (
-        pd.concat(combined_results["df_test_aud"], ignore_index=True)
-        if combined_results["df_test_aud"]
-        else pd.DataFrame()
-    )
-
-    df_test_selected_raw = pd.concat(
-        [_df_test_vis_raw, _df_test_aud_raw],
-        ignore_index=True,
+    _all_results = [df for frames in combined_results.values() for df in frames]
+    df_test_selected_raw = (
+        pd.concat(_all_results, ignore_index=True)
+        if _all_results
+        else pd.DataFrame(columns=basic_cols + features + list(_stim_feature_columns.values()))
     )
 
     _dates = pd.to_datetime(df_test_selected_raw["year_month_day"], errors="coerce").dt.normalize()
@@ -418,8 +462,11 @@ def _():
 
 
 @app.cell
-def _(pd):
-    injection_info_file_path = "/home/nuo/Documents/data/LeciLab/behavioral_data/manual_record/manual_test_record_nuo_mk801.xlsx"
+def _(pd, utils):
+    if utils.get_outpath() == '/mnt/e/data/LeciLab/behavioral_data':
+        injection_info_file_path = "/mnt/e/data/LeciLab/behavioral_data/data_test/manual_test_record_nuo_mk801.xlsx"
+    else:
+        injection_info_file_path = "/home/nuo/Documents/data/LeciLab/behavioral_data/manual_record/manual_test_record_nuo_mk801.xlsx"
     injection_info_df = pd.read_excel(injection_info_file_path)
     injection_info_df
     return (injection_info_df,)
@@ -614,26 +661,23 @@ def _(mo):
     return
 
 
+app._unparsable_cell(
+    r"""
+    if run
+        df_feature_norm_data_mean = (
+            df_test_selected_upd.groupby(["subject", "session", "observation_group"], observed=True)
+            [features]
+            .mean()
+            .reset_index()
+        )
+        pd.save_pickle(df_feature_norm_data_mean, Path(utils.get_outpath()) / project / "processed" / "df_feature_norm_data_mean.pkl")
+    """,
+    name="_"
+)
+
+
 @app.cell
 def _():
-    continuous_cols = [
-        "reaction_time",
-        "trial_duration",
-        "inter_trial_interval",
-    ]
-
-    binary_cols = [
-        "correct_numeric",
-        "previous_same_choice_numeric",
-        "roa_choice_numeric",
-    ]
-
-    count_cols = [
-        "fixation_breaks",
-        "eager_pokes",
-    ]
-
-    features = continuous_cols + binary_cols + count_cols
     return
 
 
@@ -2813,7 +2857,7 @@ def _(df_test_selected_upd, np, pd):
         complete_working = working[working["complete"]]
         complete_breaks = _bout[_bout["engaged"].eq(False) & _bout["complete"]]
 
-        # 观测窗口：第一个 trial 开始至最后一个 trial 结束
+        # Observation window: from the first trial start to the last trial end
         session_s = _bout["end_time"].max() - _bout["start_time"].min()
         session_s = session_s if session_s > 0 else np.nan
         session_h = session_s / 3600
@@ -2822,20 +2866,20 @@ def _(df_test_selected_upd, np, pd):
             **dict(zip(_keys, _key)),
             "session_duration_s": session_s,
 
-            # 观察到的 True → False 次数 / 小时
+            # Observed True-to-False transitions per hour
             "break_frequency": _bout["break_onset"].sum() / session_h,
 
-            # 每个 session 内完整 break 的平均时长
+            # Mean duration of complete breaks within the session
             "break_duration": complete_breaks["duration_s"].mean(),
 
-            # 每个 session 内完整工作段的平均 trial 数和时长
+            # Mean trial count and duration of complete working bouts within the session
             "trials_per_bout": complete_working["n_trials"].mean(),
             "bout_duration": complete_working["duration_s"].mean(),
 
-            # 包含首尾不完整工作段的已观测时间
+            # Observed working time, including incomplete bouts at the session boundaries
             "working_time_fraction": working["duration_s"].sum() / session_s,
 
-            # 有中央 poke 的 trial 数 / 小时
+            # Trials with a center-port poke per hour
             "trial_initiation_rate": initiated_counts.loc[_key] / session_h,
 
             "n_break_onsets": int(_bout["break_onset"].sum()),

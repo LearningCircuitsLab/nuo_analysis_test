@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.25.1"
+__generated_with = "0.25.2"
 app = marimo.App(width="medium")
 
 
@@ -36,6 +36,8 @@ def _():
     import behavior_utils
     import plot_test
     import utils_test
+    import seaborn as sns
+    import scipy.stats as stats
 
     from lecilab_behavior_analysis import utils as utils
     utils.IDIBAPS_TV_PROJECTS = "/archive/training_village/"
@@ -59,6 +61,7 @@ def _():
         plots,
         plt,
         session_summary_figure,
+        sns,
         utils,
         utils_test,
     )
@@ -243,15 +246,19 @@ def _(df, dft, np):
 
 @app.cell
 def _(available_dates, mo):
-    _default_date = available_dates[-1]
-    date_select = mo.ui.dropdown(
-        options=available_dates,
-        value=_default_date,
-        label="Date",
+    date_select_start, date_select_end = (
+        mo.ui.dropdown(
+            options=available_dates,
+            value=default,
+            label=f"Date_{label}",
+        )
+        for label, default in [
+            ("start", available_dates[0]),
+            ("end", available_dates[-1]),
+        ]
     )
-
-    date_select
-    return (date_select,)
+    mo.vstack([date_select_start, date_select_end])
+    return date_select_end, date_select_start
 
 
 @app.cell
@@ -435,29 +442,70 @@ def _(mo):
 
 
 @app.cell
+def _():
+    basic_cols = [
+        "subject",
+        "year_month_day",
+        "session",
+        "trial",
+        "stimulus_modality",
+        "TRIAL_START",
+        "TRIAL_END",
+        "first_choice_numeric"
+    ]
+
+    continuous_cols = [
+        "reaction_time",
+        "trial_duration",
+        "inter_trial_interval",
+    ]
+
+    binary_cols = [
+        "correct_numeric",
+        "previous_same_choice_numeric",
+        "previous_correct_numeric",
+        "roa_choice_numeric",
+    ]
+
+    count_cols = [
+        "fixation_breaks",
+        "eager_pokes",
+    ]
+
+    features = continuous_cols + binary_cols + count_cols
+    return basic_cols, binary_cols, continuous_cols, count_cols, features
+
+
+@app.cell
 def _(
     Path,
+    basic_cols,
+    date_select_end,
+    date_select_start,
     dft,
+    features,
     fit_mouse_select,
-    mouse,
     pd,
     project,
+    run_mode_select,
     safe_rsync_cluster_data,
-    stimulus_modality_select,
     update_processData_button,
     utils,
 ):
+    _run_mode = run_mode_select.value
     parameters_output_dir = (
-        Path(utils.get_outpath()) / project / "processed" / "parameters_for_fit" / "manual"
+        Path(utils.get_outpath()) / project / "processed" / "parameters_for_fit" / _run_mode.lower()
     )
     stim_columns = {
         "df_test_vis": "visual",
         "df_test_aud": "auditory",
     }
+    _stim_feature_columns = {
+        "visual": "visual_stimulus_ratio",
+        "auditory": "total_evidence_strength",
+    }
 
     selected_mice = list(fit_mouse_select.value)
-    if not selected_mice:
-        selected_mice = [mouse]
 
     def load_or_compute_mouse_parameters(_mouse):
         parameters_output_path = parameters_output_dir / f"{_mouse}_parameters_for_fit.pkl"
@@ -481,7 +529,8 @@ def _(
             return {output_name: pd.DataFrame() for output_name in stim_columns}
 
         df_all_mouse = pd.read_csv(_csv_path, sep=";")
-        df_manual = df_all_mouse[df_all_mouse["run_mode"] == "Manual"]
+        df_manual = df_all_mouse.loc[df_all_mouse["run_mode"] == _run_mode]
+        del df_all_mouse
         computed_results = {}
         for output_name, stim_name in stim_columns.items():
             df_stim = df_manual[df_manual["stimulus_modality"] == stim_name]
@@ -490,6 +539,11 @@ def _(
                 print(f"No {stim_name} trials found for {_mouse}; skipped parameters_for_fit.")
             else:
                 computed_results[output_name] = dft.parameters_for_fit(df_stim)
+            columns_to_save = basic_cols + features + [_stim_feature_columns[stim_name]]
+            if computed_results[output_name].empty:
+                computed_results[output_name] = computed_results[output_name].reindex(columns=columns_to_save)
+            else:
+                computed_results[output_name] = computed_results[output_name].loc[:, columns_to_save].copy()
 
         parameters_output_dir.mkdir(parents=True, exist_ok=True)
         pd.to_pickle(computed_results, parameters_output_path)
@@ -507,38 +561,19 @@ def _(
                     df_mouse_result["subject"] = _mouse
                 combined_results[output_name].append(df_mouse_result)
 
-    df_test_vis_raw = (
-        pd.concat(combined_results["df_test_vis"], ignore_index=True)
-        if combined_results["df_test_vis"]
-        else pd.DataFrame()
+    _all_results = [df for frames in combined_results.values() for df in frames]
+    df_test_selected_raw = (
+        pd.concat(_all_results, ignore_index=True)
+        if _all_results
+        else pd.DataFrame(columns=basic_cols + features + list(_stim_feature_columns.values()))
     )
-    df_test_aud_raw = (
-        pd.concat(combined_results["df_test_aud"], ignore_index=True)
-        if combined_results["df_test_aud"]
-        else pd.DataFrame()
-    )
-    if not df_test_vis_raw.empty:
-        df_test_vis_raw = df_test_vis_raw.copy()
-        df_test_vis_raw["stimulus_modality"] = "visual"
-    if not df_test_aud_raw.empty:
-        df_test_aud_raw = df_test_aud_raw.copy()
-        df_test_aud_raw["stimulus_modality"] = "auditory"
 
-    if stimulus_modality_select.value == "visual":
-        df_test_selected_raw = df_test_vis_raw
-    elif stimulus_modality_select.value == "auditory":
-        df_test_selected_raw = df_test_aud_raw
-    else:
-        selected_raw_dfs = [
-            df_raw
-            for df_raw in [df_test_vis_raw, df_test_aud_raw]
-            if not df_raw.empty
-        ]
-        df_test_selected_raw = (
-            pd.concat(selected_raw_dfs, ignore_index=True)
-            if selected_raw_dfs
-            else pd.DataFrame()
-        )
+    _dates = pd.to_datetime(df_test_selected_raw["year_month_day"], errors="coerce").dt.normalize()
+
+    _start_date = pd.to_datetime(date_select_start.value).normalize()
+    _end_date = pd.to_datetime(date_select_end.value).normalize()
+
+    df_test_selected_raw = df_test_selected_raw[_dates.between(_start_date, _end_date, inclusive="both")].copy()
     return (df_test_selected_raw,)
 
 
@@ -581,8 +616,8 @@ def _():
 
 @app.cell
 def _(pd):
-    # injection_info_file_path = "/mnt/e/data/LeciLab/behavioral_data/data_test/manual_test_record_nuo.xlsx"
-    injection_info_file_path = "/home/nuo/Documents/data/LeciLab/behavioral_data/manual_record/manual_test_record_nuo.xlsx"
+    injection_info_file_path = "/mnt/e/data/LeciLab/behavioral_data/data_test/manual_test_record_nuo.xlsx"
+    # injection_info_file_path = "/home/nuo/Documents/data/LeciLab/behavioral_data/manual_record/manual_test_record_nuo.xlsx"
     injection_info_df = pd.read_excel(injection_info_file_path)
     injection_info_df
     return (injection_info_df,)
@@ -616,7 +651,7 @@ def _(df_test_selected_raw, injection_info_df, mouse, pd):
     )
 
     trial_dates = pd.to_datetime(
-        df_test_selected["date"],
+        df_test_selected["year_month_day"],
         errors="coerce",
     ).dt.strftime("%Y-%m-%d")
     trial_mice = (
@@ -634,20 +669,7 @@ def _(df_test_selected_raw, injection_info_df, mouse, pd):
 
 
 @app.cell
-def _(pd, utils):
-    def add_number_of_pokes(df_raw: pd.DataFrame, port_number: int):
-        df = df_raw.copy()
-        port_hold_column = f"port{port_number}_holds"
-        df[port_hold_column] = df.apply(lambda row: utils.get_trial_port_hold(row, port_number), axis=1)
-        df[f"port{port_number}_pokes_num"] = df[port_hold_column].apply(lambda x: len(x))
-        return df
-
-    return (add_number_of_pokes,)
-
-
-@app.cell
 def _(
-    add_number_of_pokes,
     behavior_utils,
     df_test_selected,
     dft,
@@ -655,11 +677,10 @@ def _(
     hM4Di_mice,
     injection_info_df,
     pd,
-    utils_test,
 ):
     session_performance = df_test_selected.groupby(
         ["subject", "session"]
-    )["correct"].transform("mean")
+    )["correct_numeric"].transform("mean")
 
     is_saline = df_test_selected["observations"].str.contains(
         "saline",
@@ -673,29 +694,24 @@ def _(
         ~drop_mask
     ].copy()
 
-    df_test_selected_upd = dft.add_trial_duration_column_to_df(
-        dft.calculate_time_between_trials_and_reaction_time(
-            dft.add_day_column_to_df(
-                add_number_of_pokes(df_test_selected_upd, port_number=2)
-            )
-        )
-    )
-    df_test_selected_upd = dft.add_inter_trial_interval_column_to_df(utils_test.add_number_of_centralpokes_after_choice(
-        utils_test.add_fixation_break_columns(df_test_selected_upd)
-        ))
     metric_paired_dates = behavior_utils.get_paired_injection_dates(
         injection_info_df
     )
-    df_test_selected_upd["_observation_group"] = df_test_selected_upd[
+    df_test_selected_upd["observation_group"] = df_test_selected_upd[
         "observations"
-    ].apply(observation_group)
+    ].apply(behavior_utils.observation_group)
     df_test_selected_upd["_pair_date"] = pd.to_datetime(
         df_test_selected_upd["year_month_day"],
         errors="coerce",
     ).dt.strftime("%Y-%m-%d")
 
+    for _subject in df_test_selected_upd['subject'].unique():
+        _df_sub = df_test_selected_upd.loc[df_test_selected_upd['subject'] == _subject]
+        _df_sub = dft.add_engagement_column(_df_sub, engagement_sd_criteria=2)
+        df_test_selected_upd.loc[df_test_selected_upd['subject'] == _subject, 'engaged'] = _df_sub['engaged']
+
     available_dates_ = df_test_selected_upd[
-        ["subject", "_pair_date", "_observation_group"]
+        ["subject", "_pair_date", "observation_group"]
     ].dropna().drop_duplicates()
 
     paired_dates_for_filter = metric_paired_dates.copy()
@@ -712,13 +728,13 @@ def _(
     saline_available = available_dates_.rename(
         columns={
             "_pair_date": "_saline_date",
-            "_observation_group": "_saline_observation_group",
+            "observation_group": "_saline_observation_group",
         }
     )
     dcz_available = available_dates_.rename(
         columns={
             "_pair_date": "_DCZ_date",
-            "_observation_group": "_DCZ_observation_group",
+            "observation_group": "_DCZ_observation_group",
         }
     )
 
@@ -747,10 +763,10 @@ def _(
         [
             metric_paired_dates[["subject", "saline_date"]]
             .rename(columns={"saline_date": "_pair_date"})
-            .assign(_observation_group="saline"),
+            .assign(observation_group="saline"),
             metric_paired_dates[["subject", "DCZ_date"]]
             .rename(columns={"DCZ_date": "_pair_date"})
-            .assign(_observation_group="DCZ"),
+            .assign(observation_group="DCZ"),
         ],
         ignore_index=True,
     )
@@ -764,9 +780,9 @@ def _(
     df_test_selected_upd["subject"] = df_test_selected_upd["subject"].astype(str)
     df_test_selected_upd = df_test_selected_upd.merge(
         paired_date_rows,
-        on=["subject", "_pair_date", "_observation_group"],
+        on=["subject", "_pair_date", "observation_group"],
         how="inner",
-    ).drop(columns=["_pair_date", "_observation_group"])
+    )
 
     # df_test_selected_upd = df_test_selected_upd[
     #     df_test_selected_upd['year_month_day'].isin(
@@ -1596,6 +1612,132 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    # work bout
+    """)
+    return
+
+
+@app.cell
+def _(df_test_selected_upd, plt, sns):
+
+    _fig, _ax = plt.subplots(figsize=(7, 5))
+    _palette = {"saline": "blue", "DCZ": "red"}
+    sns.ecdfplot(
+        data=df_test_selected_upd,
+        x="inter_trial_interval",
+        hue="observation_group",
+        stat="proportion",
+        ax=_ax,
+        palette=_palette
+    )
+
+    _ax.set_xscale("log")
+    _ax.set_xlabel("Inter-trial interval (s)")
+    _ax.set_ylabel("Cumulative probability")
+    _ax.set_ylim(0, 1)
+    _ax.grid(alpha=0.2)
+
+    plt.tight_layout()
+    plt.show()
+    return
+
+
+@app.cell
+def _(df_test_selected_upd, np, pd):
+    import ast
+
+    _keys = ["subject", "year_month_day", "session", "observation_group"]
+    _df = df_test_selected_upd.sort_values(_keys + ["trial"]).copy()
+    _g = _df.groupby(_keys)
+
+    _df["bout_id"] = (
+        _g.cumcount().eq(0)
+        | _g["engaged"].shift().ne(_df["engaged"])
+    ).cumsum()
+
+    work_bouts = (
+        _df.groupby(_keys + ["bout_id"], observed=True)
+        .agg(
+            engaged=("engaged", "first"),
+            n_trials=("trial", "size"),
+            start_time=("TRIAL_START", "first"),
+            end_time=("TRIAL_END", "last"),
+        )
+        .reset_index()
+    )
+
+    work_bouts["duration_s"] = (
+        work_bouts["end_time"] - work_bouts["start_time"]
+    )
+
+    _bg = work_bouts.groupby(_keys, observed=True)
+
+    work_bouts["break_onset"] = (
+        ~work_bouts["engaged"]
+        & _bg["engaged"].shift().eq(True)
+    )
+
+    work_bouts["complete"] = (
+        _bg.cumcount().gt(0)
+        & _bg.cumcount(ascending=False).gt(0)
+    )
+
+    def has_poke(value):
+        if isinstance(value, str):
+            value = ast.literal_eval(value)
+        return np.isfinite(np.asarray(value, dtype=float)).any()
+
+    initiated_counts = (
+        _df.assign(initiated=_df["Port2In"].apply(has_poke))
+        .groupby(_keys, observed=True)["initiated"]
+        .sum()
+    )
+
+    _rows = []
+
+    for _key, _bout in work_bouts.groupby(_keys, observed=True):
+        working = _bout[_bout["engaged"].eq(True)]
+        complete_working = working[working["complete"]]
+        complete_breaks = _bout[_bout["engaged"].eq(False) & _bout["complete"]]
+
+        # Observation window: from the first trial start to the last trial end
+        session_s = _bout["end_time"].max() - _bout["start_time"].min()
+        session_s = session_s if session_s > 0 else np.nan
+        session_h = session_s / 3600
+
+        _rows.append({
+            **dict(zip(_keys, _key)),
+            "session_duration_s": session_s,
+
+            # Observed True-to-False transitions per hour
+            "break_frequency": _bout["break_onset"].sum() / session_h,
+
+            # Mean duration of complete breaks within the session
+            "break_duration": complete_breaks["duration_s"].mean(),
+
+            # Mean trial count and duration of complete working bouts within the session
+            "trials_per_bout": complete_working["n_trials"].mean(),
+            "bout_duration": complete_working["duration_s"].mean(),
+
+            # Observed working time, including incomplete bouts at the session boundaries
+            "working_time_fraction": working["duration_s"].sum() / session_s,
+
+            # Trials with a center-port poke per hour
+            "trial_initiation_rate": initiated_counts.loc[_key] / session_h,
+
+            "n_break_onsets": int(_bout["break_onset"].sum()),
+            "n_initiated_trials": int(initiated_counts.loc[_key]),
+            "working_time_s": working["duration_s"].sum(),
+        })
+
+    session_metrics = pd.DataFrame(_rows)
+    session_metrics
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     # Psychometric curve
     """)
     return
@@ -1770,6 +1912,132 @@ def _():
     noeffec_group = ['NUO005', 'NUO008']
     effec_group = ['NUO010', 'NUO012']
     return effec_group, noeffec_group
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## plot the psychometric curve for auto data with different variables
+    """)
+    return
+
+
+@app.cell
+def _(binary_cols, continuous_cols, count_cols, mo):
+    psyc_x_select = mo.ui.dropdown(
+        options=continuous_cols + binary_cols + count_cols,
+        value="reaction_time",
+        label="psychometric x-axis",
+    )
+    psyc_y_select = mo.ui.dropdown(
+        options=["first_choice_numeric", "correct_numeric", "previous_correct_numeric"] + binary_cols,
+        value="first_choice_numeric",
+        label="psychometric y-axis",
+    )
+    mo.hstack([psyc_x_select, psyc_y_select])
+    return psyc_x_select, psyc_y_select
+
+
+@app.cell
+def _(df_test_selected):
+    df_test_selected['eager_pokes'].max()
+    return
+
+
+@app.cell
+def _(
+    continuous_cols,
+    df_test_selected,
+    np,
+    pd,
+    plt,
+    psyc_x_select,
+    psyc_y_select,
+    utils_test,
+):
+    _x = psyc_x_select.value
+    _y = psyc_y_select.value
+    _value_type = "continue" if _x in continuous_cols else "discrete"
+    psychometric_xy_fig, _axes = plt.subplots(
+        1, 2, figsize=(12, 4.5), sharey=True, constrained_layout=True
+    )
+
+    for _ax, _modality in zip(_axes, ["visual", "auditory"]):
+        _ax.set_title(_modality.capitalize())
+        _ax.set_xlabel(_x)
+        _ax.set_ylabel(f"P({_y} = 1)")
+        _ax.set_ylim(0, 1)
+        _missing = [
+            _col for _col in [_x, _y, "stimulus_modality"]
+            if _col not in df_test_selected.columns
+        ]
+        if _missing:
+            _ax.text(
+                0.5, 0.5, "Missing columns:\n" + ", ".join(_missing),
+                ha="center", va="center", transform=_ax.transAxes,
+            )
+            continue
+
+        _df_plot = (
+            df_test_selected.loc[
+                df_test_selected["stimulus_modality"].eq(_modality),
+                list(dict.fromkeys([_x, _y])),
+            ]
+            .apply(pd.to_numeric, errors="coerce")
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna()
+            .astype(float)
+        )
+        _df_plot = _df_plot.loc[_df_plot[_y].isin([0, 1])]
+        if _df_plot.empty:
+            _ax.text(
+                0.5, 0.5, "No valid trials", ha="center", va="center",
+                transform=_ax.transAxes,
+            )
+            continue
+
+        utils_test.psychometric_plot_easy_logistic(
+            _df_plot,
+            x=_x,
+            y=_y,
+            ax=_ax,
+            valueType=_value_type,
+            bins=6,
+            log=False,
+            easy=True,
+        )
+        _ax.set_ylabel(f"P({_y} = 1)")
+
+    psychometric_xy_fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # auto data roa choice
+    """)
+    return
+
+
+@app.cell
+def _(df_test_selected):
+    df_test_selected["choice_match"] = (
+        df_test_selected["previous_same_choice_numeric"]
+        .eq(df_test_selected["roa_choice_numeric"])
+        .fillna(False)
+        .astype(int)
+    )
+    return
+
+
+@app.cell
+def _(df_test_selected, np):
+    np.corrcoef(
+        df_test_selected["choice_match"].fillna(0),
+        df_test_selected["previous_correct_numeric"].fillna(0),
+    )
+    return
 
 
 @app.cell(hide_code=True)
