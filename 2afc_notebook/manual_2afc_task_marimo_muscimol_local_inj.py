@@ -630,10 +630,11 @@ def _(df_day, dft, injection_pair_select, mo, np, plots, plt):
     return
 
 
-@app.cell
-def _(Path, df_day, dft, injection_pair, np, plot_output_path, plots, plt):
-    # _conditions = ["SC bilateral", "left SC", "right SC"]
-    _conditions = ["SC bilateral", "left TS right SC", "right TS left SC", "left SC", "right SC"]
+app._unparsable_cell(
+    r"""
+    _conditions_SC = ["SC bilateral", "left SC", "right SC"]
+    _conditions_SC_TS = ["left TS right SC", "right TS left SC"]
+    _conditions_both = _conditions_SC + _conditions_SC_TS
 
     _injection_groups = {
         _condition: [
@@ -641,20 +642,27 @@ def _(Path, df_day, dft, injection_pair, np, plot_output_path, plots, plt):
             for _injection in injection_pair[_condition]
             if "saline" not in _injection.lower()
         ]
-        for _condition in _conditions
+        for _condition in _conditions_both
     }
 
-    _injection_groups["saline"] = list({
+    _injection_groups["saline_SC"] = list({
         _injection
-        for _condition in _conditions
+        for _condition in _conditions_SC
         for _injection in injection_pair[_condition]
         if "saline" in _injection.lower()
     })
+    _injection_groups["saline_SC_TS"] = list({
+        _injection
+        for _condition in _conditions_SC_TS
+        for _injection in injection_pair[_condition]
+        if "saline" in _injection.lower()
+    })
+    -
 
-
-    _red_colors = plt.get_cmap("Reds")(np.linspace(0.4, 0.9, len(_conditions)))
-    _colors = dict(zip(_conditions, _red_colors))
-    _colors["saline"] = "steelblue"
+    _red_colors = plt.get_cmap("Reds")(np.linspace(0.4, 0.9, len(_conditions_both)))
+    _colors = dict(zip(_conditions_both, _red_colors))
+    _colors["saline_SC_TS"] = "steelblue"
+    _colors["saline_SC"] = "cornflowerblue"
 
     _fig, _ax = plt.subplots(figsize=(7, 5))
 
@@ -704,11 +712,102 @@ def _(Path, df_day, dft, injection_pair, np, plot_output_path, plots, plt):
         dpi=300,
     )
     plt.show()
-    return
+    """,
+    name="_"
+)
 
 
 @app.cell
-def _():
+def _(Path, df_day, dft, injection_pair, np, plot_output_path, plots, plt):
+    _conditions_SC = ["SC bilateral", "left SC", "right SC"]
+    _conditions_SC_TS = ["left TS right SC", "right TS left SC"]
+    _conditions_both = _conditions_SC + _conditions_SC_TS
+
+    _injection_groups = {
+        _condition: [
+            _injection
+            for _injection in injection_pair[_condition]
+            if "saline" not in _injection.lower()
+        ]
+        for _condition in _conditions_both
+    }
+
+    _injection_groups["saline_SC"] = list({
+        _injection
+        for _condition in _conditions_SC
+        for _injection in injection_pair[_condition]
+        if "saline" in _injection.lower()
+    })
+    _injection_groups["saline_SC_TS"] = list({
+        _injection
+        for _condition in _conditions_SC_TS
+        for _injection in injection_pair[_condition]
+        if "saline" in _injection.lower()
+    })
+
+
+    _red_colors = plt.get_cmap("Reds")(np.linspace(0.4, 0.9, len(_conditions_both)))
+    _colors = dict(zip(_conditions_both, _red_colors))
+    _colors["saline_SC_TS"] = "steelblue"
+    _colors["saline_SC"] = "cornflowerblue"
+
+    _fig, _axes = plt.subplots(1, 2, figsize=(14, 5), sharex=True, sharey=True)
+
+    for _ax, (_title, _conditions, _saline_key) in zip(
+        _axes,
+        [
+            ("SC", _conditions_SC, "saline_SC"),
+            ("SC + TS", _conditions_SC_TS, "saline_SC_TS"),
+        ],
+    ):
+        # 每张图只画本组的 muscimol 条件及对应 saline
+        for _condition in _conditions + [_saline_key]:
+            _df_condition = df_day[
+                df_day["injection"].isin(_injection_groups[_condition])
+                & df_day["stimulus_modality"].eq("auditory")
+            ].copy()
+
+            if _df_condition.empty:
+                continue
+
+            _psych_df = dft.get_performance_by_difficulty_ratio(
+                _df_condition
+            ).dropna(
+                subset=["total_evidence_strength", "first_choice_numeric"]
+            )
+
+            if _psych_df["total_evidence_strength"].nunique() < 2:
+                continue
+
+            plots.psychometric_plot(
+                _psych_df,
+                x="total_evidence_strength",
+                y="first_choice_numeric",
+                valueType="continue",
+                bins=6,
+                log=False,
+                ax=_ax,
+                point_kwargs={
+                    "color": _colors[_condition],
+                    "alpha": 0.4,
+                    "label": "_nolegend_",
+                },
+                line_kwargs={
+                    "color": _colors[_condition],
+                    "linewidth": 2,
+                    "label": _condition,
+                },
+            )
+
+        _ax.set_title(_title)
+        _ax.legend(frameon=False)
+
+    _fig.tight_layout()
+    _fig.savefig(
+        Path(plot_output_path, "psychometric_curves_by_injection_condition_individual.svg"),
+        dpi=300,
+    )
+    plt.show()
     return
 
 
