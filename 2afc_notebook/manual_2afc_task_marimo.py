@@ -398,7 +398,7 @@ def _(mo):
 def _(animals, mo):
     fit_mouse_select = mo.ui.multiselect(
         options=animals,
-        value=animals[:-1],
+        value=animals,
         label="Mice for fit",
     )
 
