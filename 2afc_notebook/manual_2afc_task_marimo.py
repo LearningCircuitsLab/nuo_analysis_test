@@ -1939,51 +1939,15 @@ def _(binary_cols, continuous_cols, count_cols, mo):
 
 
 @app.cell
-def _(df_test_selected, pd):
-    _df = df_test_selected.copy()
-
-    cols = ["fixation_breaks", "eager_pokes"]
-
-    thresholds = {}
-
-    for col in cols:
-        q1 = _df[col].quantile(0.01)
-        q3 = _df[col].quantile(0.99)
-        iqr = q3 - q1
-
-        upper = q3 + 3 * iqr
-        thresholds[col] = upper
-
-        print(f"{col}: upper threshold = {upper:.2f}")
-
-    outlier_mask = pd.Series(False, index=_df.index)
-
-    for col in cols:
-        outlier_mask |= _df[col] > thresholds[col]
-
-    df_clean = _df.loc[~outlier_mask].copy()
-    df_outliers = _df.loc[outlier_mask].copy()
-
-    return (df_clean,)
-
-
-@app.cell
-def _(mo):
-    df_subselect = mo.ui.dropdown(
-        options=[True, False, "all"],
-        value="all",
-        label="df_previous_correct_choice",
-    )
-    df_subselect 
-    return (df_subselect,)
+def _(df_test_selected):
+    df_test_selected['eager_pokes'].max()
+    return
 
 
 @app.cell
 def _(
     continuous_cols,
-    count_cols,
-    df_clean,
-    df_subselect,
+    df_test_selected,
     np,
     pd,
     plt,
@@ -1993,11 +1957,10 @@ def _(
 ):
     _x = psyc_x_select.value
     _y = psyc_y_select.value
-    _value_type = "continue" if ((_x in continuous_cols) or ((_x in count_cols))) else "discrete"
+    _value_type = "continue" if _x in continuous_cols else "discrete"
     psychometric_xy_fig, _axes = plt.subplots(
         1, 2, figsize=(12, 4.5), sharey=True, constrained_layout=True
     )
-    psychometric_xy_fig.suptitle(f"Previous trial correct: {df_subselect.value}")
 
     for _ax, _modality in zip(_axes, ["visual", "auditory"]):
         _ax.set_title(_modality.capitalize())
@@ -2006,7 +1969,7 @@ def _(
         _ax.set_ylim(0, 1)
         _missing = [
             _col for _col in [_x, _y, "stimulus_modality"]
-            if _col not in df_clean.columns
+            if _col not in df_test_selected.columns
         ]
         if _missing:
             _ax.text(
@@ -2016,12 +1979,8 @@ def _(
             continue
 
         _df_plot = (
-            df_clean.loc[
-                df_clean["stimulus_modality"].eq(_modality)
-                & (
-                    (df_subselect.value == "all")
-                    | df_clean["previous_correct_numeric"].eq(df_subselect.value)
-                ),
+            df_test_selected.loc[
+                df_test_selected["stimulus_modality"].eq(_modality),
                 list(dict.fromkeys([_x, _y])),
             ]
             .apply(pd.to_numeric, errors="coerce")
@@ -2063,7 +2022,7 @@ def _(mo):
 
 @app.cell
 def _(df_test_selected):
-    df_test_selected["previous_choice_match"] = (
+    df_test_selected["choice_match"] = (
         df_test_selected["previous_same_choice_numeric"]
         .eq(df_test_selected["roa_choice_numeric"])
         .fillna(False)
@@ -2075,7 +2034,7 @@ def _(df_test_selected):
 @app.cell
 def _(df_test_selected, np):
     np.corrcoef(
-        df_test_selected["previous_choice_match"].fillna(0),
+        df_test_selected["choice_match"].fillna(0),
         df_test_selected["previous_correct_numeric"].fillna(0),
     )
     return

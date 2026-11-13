@@ -93,6 +93,13 @@ def _(Path):
         saved_paths = []
         file_stem_counts = {}
         for title, fig in figure_items:
+            bbox_inches = "tight"
+            if not hasattr(fig, "savefig"):
+                ax = fig
+                fig = ax.figure
+                fig.canvas.draw()
+                bbox_inches = ax.get_tightbbox(fig.canvas.get_renderer()).transformed(fig.dpi_scale_trans.inverted())
+
             file_stem = _safe_figure_file_stem(title)
             file_stem_counts[file_stem] = file_stem_counts.get(file_stem, 0) + 1
             if file_stem_counts[file_stem] > 1:
@@ -103,7 +110,7 @@ def _(Path):
                 figure_path,
                 format=file_format,
                 dpi=dpi,
-                bbox_inches="tight",
+                bbox_inches=bbox_inches,
             )
             saved_paths.append(figure_path)
 
@@ -431,8 +438,15 @@ def _():
         shelter_y_up,
         trigger_zone_x_threshold,
         x_len_tran,
+        x_length_pixel,
         y_len_tran,
     )
+
+
+@app.cell
+def _(x_length_pixel):
+    x_length_pixel
+    return
 
 
 @app.cell
@@ -670,6 +684,7 @@ def _(
         squeeze=False,
     )
 
+    _single_figures = {}
     for _i, _mouse in enumerate(mouse_select):
         sessions = [
             _name for _name in s_behav_df_dic
@@ -694,6 +709,8 @@ def _(
             _ax_1.axvline(trigger_zone_x_threshold,color="magenta",linestyle="--",linewidth=2,)
             _ax_1.axvline(home_zone_x_threshold,color="green",linestyle="--",linewidth=2,)
 
+            _single_figures[f"single_trajectory_looming_{_name}"] = _ax_1
+
 
     _fig.colorbar(
         mpl.cm.ScalarMappable(norm=norm, cmap="inferno"),
@@ -712,7 +729,14 @@ def _(
     )
 
     save_figures_to_folder(
-        figure_items = [("all_trajectory", _fig)],
+        figure_items=_single_figures.items(),
+        folder_name="trajectories_overview/single_trajectory_looming",
+        file_format="svg",
+        dpi=300,
+    )
+
+    save_figures_to_folder(
+        figure_items = [("all_trajectory_looming", _fig)],
         folder_name = "trajectories_overview",
         file_format="png",
         dpi=300,
@@ -1813,8 +1837,85 @@ def _(
 
 
 @app.cell
-def _(behavior_utils):
-    behavior_utils.crescendo_looming_sound()
+def _(
+    behavior_utils,
+    mpl,
+    np,
+    pd,
+    plt,
+    s_session_df_dic_classified_prebin,
+    save_figures_to_folder,
+    select_day,
+    sns,
+):
+    _sound_y, _sound_t = behavior_utils.compute_stimulus_envelope()
+    _sound_y = (
+        0.01* (_sound_y - _sound_y.min()) / np.ptp(_sound_y)
+    )
+
+    _s_escape = pd.concat(
+        [
+            _df.loc[_df["escape"] == True]
+            for _day in range(1, 5)
+            for _df in select_day(
+                s_session_df_dic_classified_prebin, _day
+            ).values()
+        ],
+        ignore_index=True,
+    )
+
+    for _column in ["real_leave", "peak_speed_time"]:
+        _values = pd.to_numeric(
+            _s_escape[_column], errors="coerce"
+        ).dropna()
+
+        if _values.nunique() < 2:
+            continue
+
+        _fig, _ax = plt.subplots(figsize=(10, 3))
+
+        sns.histplot(
+            x=_values,
+            stat="probability",
+            binwidth=0.1,
+            binrange=(0, 10),
+            color="teal",
+            alpha=0.2,
+            edgecolor=None,
+            kde=True,
+            kde_kws={"bw_adjust": 0.1, "cut": 0},
+            line_kws={"linewidth": 1.5},
+            label="",
+            ax=_ax,
+        )
+
+        _ax.set(
+            xlabel="Time from sound onset (s)",
+            ylabel="Fraction",
+            title=_column,
+        )
+        # 适当减少绘图点数
+        _step = max(1, len(_sound_t) // 5000)
+        _ax.plot(
+            _sound_t[::_step],
+            _sound_y[::_step],
+            color="k",
+            linewidth=1.5,
+            label="Sound envelope (scaled)",
+            zorder=5,
+        )
+        _ax.set_xlim(0, 10)
+        _ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.3f"))
+        _ax.legend(frameon=False)
+        _ax.spines[["top", "right"]].set_visible(False)
+        _fig.tight_layout()
+        save_figures_to_folder(
+            figure_items = [(f"looming_distribution_all_days_{_column}", _fig)],
+            folder_name = "distribution",
+            file_format="svg",
+            dpi=300,
+        )
+        plt.show()
     return
 
 
@@ -2016,7 +2117,49 @@ def _(
             file_format="png",
             dpi=300,
         )
+    return
 
+
+@app.cell
+def _(
+    Path,
+    np,
+    ns_behav_df_dic_prebin_escape,
+    ns_behav_df_dic_prebin_noreaction,
+    pd,
+    s_behav_df_dic_prebin_escape,
+    s_behav_df_dic_prebin_noreaction,
+    select_day,
+    tmp_data_save_path,
+):
+    _s_escape_fraction_df = pd.DataFrame(columns=range(1, 5), dtype=float)
+    _ns_escape_fraction_df = pd.DataFrame(columns=range(1, 5), dtype=float)
+
+    for _day in range(1, 5):
+        for _out, _escape, _noreaction in [
+            (_s_escape_fraction_df,
+             s_behav_df_dic_prebin_escape,
+             s_behav_df_dic_prebin_noreaction),
+            (_ns_escape_fraction_df,
+             ns_behav_df_dic_prebin_escape,
+             ns_behav_df_dic_prebin_noreaction),
+        ]:
+            for _session, _trials in select_day(_escape, _day).items():
+                _n_escape = len(_trials)
+                _total = _n_escape + len(_noreaction[_session])
+                _out.loc[_session.split("_")[0], _day] = (
+                    _n_escape / _total if _total else np.nan
+                )
+
+    _save_dir = Path(tmp_data_save_path)
+    _save_dir.mkdir(parents=True, exist_ok=True)
+
+    _s_escape_fraction_df.to_csv(
+        _save_dir / "looming_sound_escape_fraction.csv", index_label="mouse"
+    )
+    _ns_escape_fraction_df.to_csv(
+        _save_dir / "looming_nosound_escape_fraction.csv", index_label="mouse"
+    )
     return
 
 
