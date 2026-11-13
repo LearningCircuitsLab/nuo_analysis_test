@@ -55,9 +55,10 @@ def _():
 
 
 @app.cell
-def _(utils_test):
+def _(dft, utils_test):
     import importlib
     importlib.reload(utils_test)
+    importlib.reload(dft)
     return
 
 
@@ -78,18 +79,59 @@ def _(mo):
 
 @app.cell
 def _(utils):
-    # load data from cluster
-    tv_projects = utils.get_server_projects()
-    print(tv_projects)
-    return
+    def safe_rsync_cluster_data(project_name, file_path, credentials, local_path):
+        try:
+            return utils.rsync_cluster_data(
+                project_name=project_name,
+                file_path=file_path,
+                credentials=credentials,
+                local_path=local_path,
+            )
+        except AttributeError as exc:
+            if "NoneType" not in str(exc) or "decode" not in str(exc):
+                raise
+            print(
+                f"Could not sync {file_path}; rsync failed. "
+                "See the console output above for details."
+            )
+            return False
+
+    return (safe_rsync_cluster_data,)
 
 
 @app.cell
-def _():
-    # project = "visual_and_COT_data"
-    project = "COT_cannula_data"
-    # project = "COT_cannula_GAD2_data"
+def _(utils):
+    # load data from cluster
+    tv_projects = utils.get_server_projects()
+    print(tv_projects)
+    return (tv_projects,)
+
+
+@app.cell
+def _(mo, tv_projects):
+    _default_project = 'COT_cannula_data'
+    project_select = mo.ui.dropdown(
+        options=tv_projects,
+        value=_default_project,
+        label="Project",
+    )
+
+    project_select
+    return (project_select,)
+
+
+@app.cell
+def _(project_select, tv_projects):
+    project = project_select.value
+    project_idx = tv_projects.index(project)
     return (project,)
+
+
+@app.cell
+def _(Path, project, utils):
+    save_folder_path = Path(utils.get_outpath(), "tmp", project)
+    save_folder_path.mkdir(parents=True, exist_ok=True)
+    return (save_folder_path,)
 
 
 @app.cell(hide_code=True)
@@ -103,8 +145,8 @@ def _(mo):
 @app.cell
 def _(mo, project, utils):
     animals = utils.get_animals_in_project(project)
-
-    default_mice = animals[:-1]
+    animals = [_a for _a in animals if "test" not in _a]
+    default_mice = animals
 
     mouse_select = mo.ui.multiselect(
         options=animals,
@@ -113,7 +155,7 @@ def _(mo, project, utils):
     )
 
     mouse_select
-    return (mouse_select,)
+    return animals, mouse_select
 
 
 @app.cell
@@ -126,276 +168,239 @@ def _(mo):
 @app.cell
 def _(
     Path,
-    dft,
+    animals,
     download_button,
-    mouse_select,
-    np,
     pd,
     project,
+    safe_rsync_cluster_data,
     utils,
-    utils_test,
 ):
-    def parameters_for_fit_if_nonempty(df_stage):
-        if df_stage.empty:
-            return pd.DataFrame()
-        return dft.parameters_for_fit(df_stage)
+    local_path = Path(utils.get_outpath()) / project / "sessions" 
+    local_path.mkdir(parents=True, exist_ok=True)
 
-    selected_mice = list(mouse_select.value)
-    parameters_output_dir = (
-        Path(utils.get_outpath())
-        / project
-        / "processed"
-        / "parameters_for_fit"
-        / "auto"
+
+    df_all = pd.DataFrame()
+    for _mouse in animals:
+        _local_path = Path(utils.get_outpath()) / project / "sessions" / _mouse
+        _local_path.mkdir(parents=True, exist_ok=True)
+        if download_button.value:
+            safe_rsync_cluster_data(
+                project_name=project,
+                file_path="sessions/{}/{}.csv".format(_mouse, _mouse),
+                local_path=str(_local_path),
+                credentials=utils.get_idibaps_cluster_credentials(),
+            )
+        df_all = pd.concat([df_all, pd.read_csv(_local_path / Path(f"{_mouse}.csv"), sep=";")], ignore_index=True)
+    return (df_all,)
+
+
+@app.cell
+def _(mo):
+    run_mode_select = mo.ui.dropdown(
+        options=["Auto", "Manual"],
+        value="Auto",
+        label="Run mode",
     )
 
-    stage_columns = {
-        "df_test_vis_easy": "TwoAFC_visual_easy",
-        "df_test_aud_easy": "TwoAFC_auditory_easy",
-        "df_test_vis_hard": "TwoAFC_visual_hard",
-        "df_test_aud_hard": "TwoAFC_auditory_hard",
+    run_mode_select
+    return (run_mode_select,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # date select
+    """)
+    return
+
+
+@app.cell
+def _(df_all, dft, np):
+    df_day = dft.add_day_column_to_df(df_all.copy())
+    df_day = dft.add_trial_of_day_column_to_df(df_day)
+    df_day["total_trial"] = np.arange(1, df_day.shape[0] + 1)
+
+    available_dates = sorted(
+        df_day["year_month_day"].dropna().astype(str).unique().tolist()
+    )
+    return (available_dates,)
+
+
+@app.cell
+def _(available_dates, mo):
+    date_select_start, date_select_end = (
+        mo.ui.dropdown(
+            options=available_dates,
+            value=default,
+            label=f"Date_{label}",
+        )
+        for label, default in [
+            ("start", available_dates[0]),
+            ("end", available_dates[-1]),
+        ]
+    )
+    mo.vstack([date_select_start, date_select_end])
+    return
+
+
+@app.cell
+def _(mo):
+    update_processData_button = mo.ui.run_button(label="update selected mice processed data")
+    update_processData_button
+    return (update_processData_button,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # stimulus modality select
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    stimulus_modality_select = mo.ui.dropdown(
+        options=["visual", "auditory", "all"],
+        value="all",
+        label="Stimulus modality",
+    )
+    stimulus_modality_select
+    return
+
+
+@app.cell
+def _():
+    basic_cols = [
+        "subject",
+        "year_month_day",
+        "session",
+        "trial",
+        "stimulus_modality",
+        "TRIAL_START",
+        "TRIAL_END",
+        "first_choice_numeric",
+    ]
+
+    continuous_cols = [
+        "reaction_time",
+        "trial_duration",
+        "inter_trial_interval",
+    ]
+
+    binary_cols = [
+        "correct_numeric",
+        "previous_same_choice_numeric",
+        "previous_correct_numeric",
+        "roa_choice_numeric",
+    ]
+
+    count_cols = [
+        "fixation_breaks",
+        "eager_pokes",
+    ]
+
+    features = continuous_cols + binary_cols + count_cols
+    return basic_cols, binary_cols, continuous_cols, count_cols, features
+
+
+@app.cell
+def _(
+    Path,
+    basic_cols,
+    dft,
+    features,
+    mouse_select,
+    pd,
+    project,
+    run_mode_select,
+    safe_rsync_cluster_data,
+    update_processData_button,
+    utils,
+):
+    _run_mode = run_mode_select.value
+    parameters_output_dir = (
+        Path(utils.get_outpath()) / project / "processed" / "parameters_for_fit" / _run_mode.lower()
+    )
+    stim_columns = {
+        "df_test_vis": "visual",
+        "df_test_aud": "auditory",
     }
-    empty_results = {
-        output_name: pd.DataFrame() for output_name in stage_columns
+    _stim_feature_columns = {
+        "visual": "visual_stimulus_ratio",
+        "auditory": "total_evidence_strength",
     }
 
+    selected_mice = list(mouse_select.value)
+
     def load_or_compute_mouse_parameters(_mouse):
-        parameters_output_path = (
-            parameters_output_dir / f"{_mouse}_parameters_for_fit.pkl"
-        )
-        if parameters_output_path.exists() and not download_button.value:
+        parameters_output_path = parameters_output_dir / f"{_mouse}_parameters_for_fit.pkl"
+        if parameters_output_path.exists() and not update_processData_button.value:
             print(f"Loaded saved parameters_for_fit data: {parameters_output_path}")
             return pd.read_pickle(parameters_output_path)
 
         _local_path = Path(utils.get_outpath()) / project / "sessions" / _mouse
         _local_path.mkdir(parents=True, exist_ok=True)
-
         _csv_path = _local_path / f"{_mouse}.csv"
-
-        if download_button.value or not _csv_path.exists():
-            utils.rsync_cluster_data(
+        if not _csv_path.exists():
+            safe_rsync_cluster_data(
                 project_name=project,
-                file_path=f"sessions/{_mouse}/{_mouse}.csv",
+                file_path="sessions/{}/{}.csv".format(_mouse, _mouse),
                 local_path=str(_local_path),
                 credentials=utils.get_idibaps_cluster_credentials(),
             )
 
         if not _csv_path.exists():
             print(f"No CSV found for {_mouse}; skipped parameters_for_fit.")
-            return empty_results.copy()
+            return {output_name: pd.DataFrame() for output_name in stim_columns}
 
-        _df_mouse = pd.read_csv(_csv_path, sep=";")
-        if "run_mode" not in _df_mouse.columns:
-            print(f"No run_mode column for {_mouse}; skipped Auto parameters_for_fit.")
-            computed_results = empty_results.copy()
-        else:
-            _df_auto = _df_mouse[_df_mouse["run_mode"] == "Auto"]
-            if _df_auto.empty or "current_training_stage" not in _df_auto.columns:
-                computed_results = empty_results.copy()
-                print(f"No Auto stage data found for {_mouse}; skipped parameters_for_fit.")
+        df_all_mouse = pd.read_csv(_csv_path, sep=";")
+        df_manual = df_all_mouse.loc[df_all_mouse["run_mode"] == _run_mode]
+        del df_all_mouse
+        computed_results = {}
+        for output_name, stim_name in stim_columns.items():
+            df_stim = df_manual[df_manual["stimulus_modality"] == stim_name]
+            if df_stim.empty:
+                computed_results[output_name] = df_stim.copy()
+                print(f"No {stim_name} trials found for {_mouse}; skipped parameters_for_fit.")
             else:
-                computed_results = {}
-                for output_name, stage_name in stage_columns.items():
-                    df_stage = _df_auto[
-                        _df_auto["current_training_stage"] == stage_name
-                    ]
-                    computed_results[output_name] = (
-                        parameters_for_fit_if_nonempty(df_stage)
-                    )
+                computed_results[output_name] = dft.parameters_for_fit(df_stim)
+            columns_to_save = basic_cols + features + [_stim_feature_columns[stim_name]]
+            if computed_results[output_name].empty:
+                computed_results[output_name] = computed_results[output_name].reindex(columns=columns_to_save)
+            else:
+                computed_results[output_name] = computed_results[output_name].loc[:, columns_to_save].copy()
 
         parameters_output_dir.mkdir(parents=True, exist_ok=True)
         pd.to_pickle(computed_results, parameters_output_path)
-        print(f"Saved Auto parameters_for_fit data: {parameters_output_path}")
+        print(f"Saved parameters_for_fit data: {parameters_output_path}")
         return computed_results
 
-    combined_results = {output_name: [] for output_name in stage_columns}
+    combined_results = {output_name: [] for output_name in stim_columns}
     for _mouse in selected_mice:
         mouse_results = load_or_compute_mouse_parameters(_mouse)
-        for output_name in stage_columns:
+        for output_name in stim_columns:
             df_mouse_result = mouse_results.get(output_name, pd.DataFrame())
-            if df_mouse_result.empty:
-                continue
-            df_mouse_result = df_mouse_result.copy()
-            if "subject" not in df_mouse_result.columns:
-                df_mouse_result["subject"] = _mouse
-            combined_results[output_name].append(df_mouse_result)
+            if not df_mouse_result.empty:
+                if "subject" not in df_mouse_result.columns:
+                    df_mouse_result = df_mouse_result.copy()
+                    df_mouse_result["subject"] = _mouse
+                combined_results[output_name].append(df_mouse_result)
 
-    df_test_vis_easy = (
-        pd.concat(combined_results["df_test_vis_easy"], ignore_index=True)
-        if combined_results["df_test_vis_easy"]
-        else pd.DataFrame()
-    )
-    df_test_aud_easy = (
-        pd.concat(combined_results["df_test_aud_easy"], ignore_index=True)
-        if combined_results["df_test_aud_easy"]
-        else pd.DataFrame()
-    )
-    df_test_vis_hard = (
-        pd.concat(combined_results["df_test_vis_hard"], ignore_index=True)
-        if combined_results["df_test_vis_hard"]
-        else pd.DataFrame()
-    )
-    df_test_aud_hard = (
-        pd.concat(combined_results["df_test_aud_hard"], ignore_index=True)
-        if combined_results["df_test_aud_hard"]
-        else pd.DataFrame()
+    _all_results = [df for frames in combined_results.values() for df in frames]
+    df_test_selected_raw = (
+        pd.concat(_all_results, ignore_index=True)
+        if _all_results
+        else pd.DataFrame(columns=basic_cols + features + list(_stim_feature_columns.values()))
     )
 
+    # _dates = pd.to_datetime(df_test_selected_raw["year_month_day"], errors="coerce").dt.normalize()
 
-    # Data clean, hard stimulus in some easy sessions
-    col = "visual_stimulus_ratio"
+    # _start_date = pd.to_datetime(date_select_start.value).normalize()
+    # _end_date = pd.to_datetime(date_select_end.value).normalize()
 
-    valid_mask = (
-        df_test_vis_easy[col].isna()
-        | np.isclose(df_test_vis_easy[col], 6)
-        | np.isclose(df_test_vis_easy[col], -6)
-    )
-
-    bad_mouse_sessions = df_test_vis_easy.loc[
-        ~valid_mask,
-        ["subject", "session"],
-    ].drop_duplicates()
-
-    df_test_vis_easy = df_test_vis_easy.merge(
-        bad_mouse_sessions.assign(_bad_session=True),
-        on=["subject", "session"],
-        how="left",
-    )
-
-    df_test_vis_easy = df_test_vis_easy[
-        df_test_vis_easy["_bad_session"].isna()
-    ].drop(columns="_bad_session").copy()
-
-
-    # add fixation breaks 
-    df_test_vis_easy = utils_test.add_number_of_centralpokes_after_choice(utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_vis_easy),port_number=2,))
-    df_test_aud_easy = utils_test.add_number_of_centralpokes_after_choice(utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_aud_easy),port_number=2,))
-    df_test_vis_hard = utils_test.add_number_of_centralpokes_after_choice(utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_vis_hard),port_number=2,))
-    df_test_aud_hard = utils_test.add_number_of_centralpokes_after_choice(utils_test.add_number_of_pokes(utils_test.add_fixation_break_columns(df_test_aud_hard),port_number=2,))
-    return (
-        df_test_aud_easy,
-        df_test_aud_hard,
-        df_test_vis_easy,
-        df_test_vis_hard,
-    )
-
-
-@app.cell
-def _(df_test_vis_hard):
-    df_test_vis_hard[
-        (
-            (df_test_vis_hard["previous_same_choice_numeric"] == 1)
-            & (df_test_vis_hard["roa_choice_numeric"] == 0)
-            & (df_test_vis_hard["previous_correct_numeric"] == 1)
-            & (df_test_vis_hard["fixation_breaks"] == 0)
-        )
-        |
-        (
-            (df_test_vis_hard["previous_same_choice_numeric"] == 0)
-            & (df_test_vis_hard["roa_choice_numeric"] == 1)
-            & (df_test_vis_hard["previous_correct_numeric"] == 1)
-            & (df_test_vis_hard["fixation_breaks"] == 0)
-        )
-    ][
-        ["subject", "correct", "first_choice", "visual_stimulus_ratio", "roa_choice", "previous_same_choice_numeric", "previous_correct", "fixation_breaks"]
-    ]
-    return
-
-
-@app.cell
-def _(df_test_aud_hard):
-    df_test_aud_hard[
-        (
-            (df_test_aud_hard["previous_same_choice_numeric"] == 1)
-            & (df_test_aud_hard["roa_choice_numeric"] == 0)
-            & (df_test_aud_hard["previous_correct_numeric"] == 1)
-            & (df_test_aud_hard["fixation_breaks"] == 0)
-        )
-        |
-        (
-            (df_test_aud_hard["previous_same_choice_numeric"] == 0)
-            & (df_test_aud_hard["roa_choice_numeric"] == 1)
-            & (df_test_aud_hard["previous_correct_numeric"] == 1)
-            & (df_test_aud_hard["fixation_breaks"] == 0)
-        )
-    ][[
-        "subject", "correct", "first_choice", "total_evidence_strength", "roa_choice", "previous_same_choice_numeric", "previous_correct", "fixation_breaks"
-    ]].sample(10)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## stage select
-    """)
-    return
-
-
-@app.cell
-def _(
-    df_test_aud_easy,
-    df_test_aud_hard,
-    df_test_vis_easy,
-    df_test_vis_hard,
-    mo,
-):
-    df_options = {
-        "aud_easy": {
-            "df": df_test_aud_easy,
-            "stim_col": "total_evidence_strength",
-            "modality": "auditory"
-        },
-        "aud_hard": {
-            "df": df_test_aud_hard,
-            "stim_col": "total_evidence_strength",
-            "modality": "auditory"
-        },
-        "vis_easy": {
-            "df": df_test_vis_easy,
-            "stim_col": "visual_stimulus_ratio",
-            "modality": "visual"
-        },
-        "vis_hard": {
-            "df": df_test_vis_hard,
-            "stim_col": "visual_stimulus_ratio",
-            "modality": "visual"
-        },
-    }
-
-    df_selector = mo.ui.multiselect(
-        options=list(df_options.keys()),
-        value=["aud_easy", "aud_hard", "vis_easy", "vis_hard"]
-    )
-    df_selector
-    return df_options, df_selector
-
-
-@app.cell
-def _(df_options, df_selector, pd):
-    selected_options = list(df_selector.value)
-    selected_dfs = []
-
-    for option_name in selected_options:
-        selected = df_options[option_name]
-        selected_df = selected["df"].copy()
-        if selected_df.empty:
-            continue
-        selected_df["selected_df_option"] = option_name
-        # selected_df["session"] = selected_df["session"].astype(str) + "__" + option_name
-        selected_df["model_stimulus"] = selected_df[selected["stim_col"]]
-        selected_dfs.append(selected_df)
-
-    if selected_dfs:
-        df_test = pd.concat(selected_dfs, ignore_index=True)
-    else:
-        df_test = pd.DataFrame()
-
-    stim_col = "model_stimulus"
-
-    df_test_vis = df_test[df_test['stimulus_modality'] == 'visual']
-    df_test_aud = df_test[df_test['stimulus_modality'] == 'auditory']
-    return df_test, stim_col
+    # df_test_selected_raw = df_test_selected_raw[_dates.between(_start_date, _end_date, inclusive="both")].copy()
+    return (df_test_selected_raw,)
 
 
 @app.cell(hide_code=True)
@@ -407,14 +412,10 @@ def _(mo):
 
 
 @app.cell
-def _(df_test, dft, pd, plt, sns):
-    mouse_col = "analysis_mouse" if "analysis_mouse" in df_test.columns else "subject"
-
-    df_test_date = dft.add_day_column_to_df(df_test)
-
+def _(df_test_selected_raw, pd, plt, sns):
     daily_performance_df = (
-        df_test_date.groupby(
-            [mouse_col, "year_month_day", "current_training_stage"],
+        df_test_selected_raw.groupby(
+            ["subject", "year_month_day", "current_training_stage"],
             as_index=False,
         )["correct"]
         .mean()
@@ -427,7 +428,7 @@ def _(df_test, dft, pd, plt, sns):
 
     daily_performance_df = daily_performance_df.dropna(
         subset=["year_month_day"]
-    ).sort_values([mouse_col, "year_month_day"])
+    ).sort_values(["subject", "year_month_day"])
 
     first_day = daily_performance_df["year_month_day"].min()
     end_day = first_day + pd.DateOffset(days=75)
@@ -444,7 +445,7 @@ def _(df_test, dft, pd, plt, sns):
         x="year_month_day",
         y="correct",
         hue="current_training_stage",
-        units=mouse_col,
+        units="subject",
         estimator=None,
         marker="o",
         alpha=0.6,
@@ -466,10 +467,16 @@ def _(df_test, dft, pd, plt, sns):
 
 
 @app.cell
-def _(df_test, dft, np, plots, plt):
+def _(df_test_selected_raw):
+    df_test_selected_raw
+    return
+
+
+@app.cell
+def _(df_test_selected_raw, dft, np, plots, plt):
     # random session performance plot
-    _random_mouse = df_test["subject"].dropna().sample(n=1).iloc[0]
-    _df_random_mouse = df_test[df_test["subject"] == _random_mouse]
+    _random_mouse = df_test_selected_raw["subject"].dropna().sample(n=1).iloc[0]
+    _df_random_mouse = df_test_selected_raw[df_test_selected_raw["subject"] == _random_mouse]
     n_sessions = 5
     sessions = (
         _df_random_mouse["session"]
@@ -484,6 +491,9 @@ def _(df_test, dft, np, plots, plt):
     ]
 
     _window = 50
+
+
+    _df_random_session["correct"] = _df_random_session["correct_numeric"]
     _df_random_session = dft.get_performance_through_trials(
         _df_random_session,
         window=_window,
@@ -505,9 +515,7 @@ def _(df_test, dft, np, plots, plt):
         palette=["black"],
     )
     _df_random_roap = _df_random_session.copy()
-    _df_random_roap["repeat_or_alternate"] = dft.get_repeat_or_alternate_series(
-        _df_random_roap.correct_side
-    )
+    _df_random_roap["repeat_or_alternate"] = _df_random_roap["previous_same_choice_numeric"].map({1: "repeat", 0: "alternate"})
     _df_random_roap = dft.get_repeat_or_alternate_performance(
         _df_random_roap,
         window=_window,
@@ -540,267 +548,92 @@ def _(mo):
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
-    mo.md(r"""
-    ## number of central pokes
-    """)
-    return
+    distribution_metric_select = mo.ui.dropdown(
+        options=["fixation_breaks", "eager_pokes", "reaction_time", "central_pokes", "trial_duration"],
+        value="fixation_breaks",
+        label="Distribution metric",
+    )
+    distribution_metric_select
+    return (distribution_metric_select,)
 
 
 @app.cell
-def _(df_test, np, plt):
-    # port 2 pokes histogram, split by correct
-    _df_p2h = df_test.copy()
-
-    _npokes_correct = _df_p2h.loc[_df_p2h["correct"] == True, "port2_pokes_num"]
-    _npokes_wrong = _df_p2h.loc[_df_p2h["correct"] == False, "port2_pokes_num"]
-
-    _bins = np.arange(
-        _df_p2h["port2_pokes_num"].min() - 0.5,
-        # _df_p2h["port2_pokes_num"].max() + 1.5,
-        12,
-        1,
-    )
-
-    _fig, _ax = plt.subplots(figsize=(5, 4))
-
-    _ax.hist(
-        _npokes_correct,
-        bins=_bins,
-        color="green",
-        alpha=0.45,
-        label="correct",
-        density=True
-    )
-
-    _ax.hist(
-        _npokes_wrong,
-        bins=_bins,
-        color="red",
-        alpha=0.45,
-        label="wrong",
-        density=True
-    )
-
-    _ax.set_xlabel("Number of pokes in Port2")
-    _ax.set_ylabel("Frequency")
-    _ax.spines[["top", "right"]].set_visible(False)
-    _ax.legend(frameon=False)
-
-    _fig.tight_layout()
-    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_port2_pokes_hist.svg")
-    plt.show()
-    return
-
-
-@app.cell
-def _(df_test, np, plt):
-    # port 2 pokes histogram, split by correct
-    _df_break = df_test.copy()
-    _nbreaks_correct = _df_break.loc[_df_break["correct"] == True]
-    _nbreaks_wrong = _df_break.loc[_df_break["correct"] == False]
-
-    _bins = np.arange(
-        _df_break["fixation_breaks"].min() - 0.5,
-        # _df_break["fixation_breaks"].max() + 1.5,
-        12,
-        1,
-    )
-
-    _fig, _ax = plt.subplots(figsize=(5, 4))
-
-    _ax.hist(
-        _nbreaks_correct["fixation_breaks"],
-        bins=_bins,
-        color="green",
-        alpha=0.45,
-        label="correct",
-        density=True
-    )
-
-    _ax.hist(
-        _nbreaks_wrong["fixation_breaks"],
-        bins=_bins,
-        color="red",
-        alpha=0.45,
-
-        label="wrong",
-        density=True
-    )
-
-    _ax.set_xlabel("Number of breaks in fixation")
-    _ax.set_ylabel("Frequency")
-    _ax.spines[["top", "right"]].set_visible(False)
-    _ax.legend(frameon=False)
-
-    _fig.tight_layout()
-    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_fixation_breaks_hist.svg")
-    plt.show()
-    return
-
-
-@app.cell
-def _(df_test, np, plt):
-    # pokes after choice histogram, split by correct
-    _df_break = df_test.copy()
-    _nbreaks_correct = _df_break.loc[_df_break["correct"] == True]
-    _nbreaks_wrong = _df_break.loc[_df_break["correct"] == False]
-
-    _bins = np.arange(
-        _df_break["eager_pokes"].min() - 0.5,
-        # _df_break["eager_pokes"].max() + 1.5,
-        12,
-        1,
-    )
-
-    _fig, _ax = plt.subplots(figsize=(5, 4))
-
-    _ax.hist(
-        _nbreaks_correct["eager_pokes"],
-        bins=_bins,
-        color="green",
-        alpha=0.45,
-        label="correct",
-        density=True
-    )
-
-    _ax.hist(
-        _nbreaks_wrong["eager_pokes"],
-        bins=_bins,
-        color="red",
-        alpha=0.45,
-
-        label="wrong",
-        density=True
-    )
-
-    _ax.set_xlabel("Number of pokes after choice")
-    _ax.set_ylabel("Frequency")
-    _ax.spines[["top", "right"]].set_visible(False)
-    _ax.legend(frameon=False)
-
-    _fig.tight_layout()
-    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_eager_pokes_hist.svg")
-    plt.show()
-    return
-
-
-@app.cell
-def _(df_options, df_selector, np, plt, utils):
-    # port 2 pokes histogram, split by correct, using df_selector / df_options
-    _selected_df_names = df_selector.value
-
-    _bins = np.arange(-0.5, 15, 1)
-
-    _fig, _axes = plt.subplots(
-        1,
-        len(_selected_df_names),
-        figsize=(5 * len(_selected_df_names), 4),
-        sharey=True,
-    )
-
-    for _ax, _df_name in zip(_axes, _selected_df_names):
-        _df_p2h = df_options[_df_name]["df"].copy()
-
-        _df_p2h["port2_holds"] = _df_p2h.apply(
-            lambda row: utils.get_trial_port_hold(row, 2),
-            axis=1,
-        )
-        _df_p2h["port2_npokes"] = _df_p2h["port2_holds"].apply(len)
-
-        _npokes_correct = _df_p2h.loc[_df_p2h["correct"] == True, "port2_npokes"]
-        _npokes_wrong = _df_p2h.loc[_df_p2h["correct"] == False, "port2_npokes"]
-
-        _ax.hist(
-            _npokes_correct,
-            bins=_bins,
-            color="green",
-            alpha=0.45,
-            label="correct",
-            density=True,
+def _(
+    Path,
+    df_test_selected_raw,
+    distribution_metric_select,
+    mo,
+    np,
+    plt,
+    save_folder_path,
+):
+    # selected metric histogram, split by correct
+    _metric = distribution_metric_select.value
+    _df_break = df_test_selected_raw.copy()
+    if _metric == "central_pokes":
+        _df_break["central_pokes"] = (
+            _df_break["fixation_breaks"] + _df_break["eager_pokes"]
         )
 
-        _ax.hist(
-            _npokes_wrong,
-            bins=_bins,
-            color="red",
-            alpha=0.45,
-            label="wrong",
-            density=True,
+    _df_break = _df_break.dropna(subset=[_metric])
+    mo.stop(_df_break.empty, mo.md("No data available for this distribution."))
+
+    _correct_col = "correct" if "correct" in _df_break.columns else "correct_numeric"
+    _nbreaks_correct = _df_break.loc[_df_break[_correct_col] == True]
+    _nbreaks_wrong = _df_break.loc[_df_break[_correct_col] == False]
+
+    if _metric == "reaction_time":
+        _bins = np.arange(
+            _df_break[_metric].min() - 0.1,
+            1.5,
+            0.1,
+        )
+    else:
+        _bins = np.arange(
+            _df_break[_metric].min() - 0.5,
+            15 if _metric == "central_pokes" else 12,
+            1,
         )
 
-        _ax.set_title(_df_name)
-        _ax.set_xlabel("Number of central pokes during trial")
-        _ax.spines[["top", "right"]].set_visible(False)
-        _ax.legend(frameon=False)
-
-    _axes[0].set_ylabel("Density")
-
-    _fig.tight_layout()
-    # _fig.savefig(
-    #     "/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_port2_pokes_hist.svg"
-    # )
-    plt.show()
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## reaction time
-    """)
-    return
-
-
-@app.cell
-def _(df_test, dft, np, pd, plt):
-    # pokes after choice histogram, split by correct
-    _df_tmp = df_test.copy()
-    _df_tmp["session_original"] = _df_tmp["session"]
-    _df_tmp["session"] = pd.factorize(_df_tmp["session"])[0]
-
-    _df_break = dft.calculate_time_between_trials_and_reaction_time(_df_tmp)
-
-    _df_break["session"] = _df_break["session_original"]
-
-    _nbreaks_correct = _df_break.loc[_df_break["correct"] == True]
-    _nbreaks_wrong = _df_break.loc[_df_break["correct"] == False]
-
-    _bins = np.arange(
-        _df_break["reaction_time"].min() - 0.1,
-        1.5,
-        0.1,
-    )
+    _xlabel = {
+        "fixation_breaks": "Number of breaks in fixation",
+        "eager_pokes": "Number of pokes after choice",
+        "reaction_time": "Reaction time",
+        "central_pokes": "Number of central pokes during trial",
+        "trial_duration": "Trial duration"
+    }[_metric]
 
     _fig, _ax = plt.subplots(figsize=(5, 4))
 
     _ax.hist(
-        _nbreaks_correct["reaction_time"],
+        _nbreaks_correct[_metric],
         bins=_bins,
         color="green",
         alpha=0.45,
         label="correct",
-        density=True
+        density=True,
+        edgecolor='Black'
     )
 
     _ax.hist(
-        _nbreaks_wrong["reaction_time"],
+        _nbreaks_wrong[_metric],
         bins=_bins,
         color="red",
         alpha=0.45,
-
         label="wrong",
-        density=True
+        density=True,
+        edgecolor='Black'
     )
 
-    _ax.set_xlabel("Reaction time")
+    _ax.set_xlabel(_xlabel)
     _ax.set_ylabel("Frequency")
     _ax.spines[["top", "right"]].set_visible(False)
     _ax.legend(frameon=False)
 
     _fig.tight_layout()
-    #_fig.savefig("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/all_normal_data_reaction_time_hist.svg")
+    _fig.savefig(Path(save_folder_path, f"autodata_frequency_{_metric}_byCorrect.svg"))
     plt.show()
     return
 
@@ -814,19 +647,19 @@ def _(mo):
 
 
 @app.cell
-def _(df_test, plt, utils):
-    # random 5 sessions trial start time plot, colored by previous_correct
+def _(df_test_selected_raw, plt, utils):
+    # random 5 sessions trial start time plot, colored by previous_correct_numeric
     # each session starts from 0
     _n_sessions = 5
 
     _session_keys = (
-        df_test[["subject", "session"]]
+        df_test_selected_raw[["subject", "session"]]
         .dropna()
         .drop_duplicates()
         .sample(n=_n_sessions)
     )
 
-    _df_tst = df_test.merge(
+    _df_tst = df_test_selected_raw.merge(
         _session_keys,
         on=["subject", "session"],
         how="inner",
@@ -842,17 +675,17 @@ def _(df_test, plt, utils):
     _fig, _ax = plt.subplots(figsize=(6, 4))
 
     _ax.scatter(
-        _sdf.loc[_sdf["previous_correct"] == True, "time_from_start"],
-        _sdf.loc[_sdf["previous_correct"] == True, "trial_from_start"],
+        _sdf.loc[_sdf["previous_correct_numeric"] == 1, "time_from_start"],
+        _sdf.loc[_sdf["previous_correct_numeric"] == 1, "trial_from_start"],
         s=8,
         color="green",
         alpha=0.6,
-        label="previous_correct",
+        label="previous_correct_numeric",
     )
 
     _ax.scatter(
-        _sdf.loc[_sdf["previous_correct"] == False, "time_from_start"],
-        _sdf.loc[_sdf["previous_correct"] == False, "trial_from_start"],
+        _sdf.loc[_sdf["previous_correct_numeric"] == 0, "time_from_start"],
+        _sdf.loc[_sdf["previous_correct_numeric"] == 0, "trial_from_start"],
         s=8,
         color="red",
         alpha=0.6,
@@ -880,30 +713,29 @@ def _(mo):
 
 
 @app.cell
-def _(Path, df_test, plt, sns, stim_col, utils_test):
-    _save_dir = Path("/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/psychometric_curves")
-    _save_dir.mkdir(parents=True, exist_ok=True)
-
-    for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
+def _(df_test_selected_raw, plt, sns, utils_test):
+    for _stage_name, _df_stage in df_test_selected_raw.groupby("stimulus_modality"):
         _fig = plt.figure(figsize=(5, 5), dpi=150)
 
-        if "vis" in stage_name__:
+        if "vis" in _stage_name:
             valueType = "discrete"
+            _stim_col = "visual_stimulus_ratio"
         else:
             valueType = "continue"
+            _stim_col = "total_evidence_strength"
 
-        if "easy" in stage_name__:
+        if "easy" in _stage_name:
             bins = 2
         else:
             bins = 6
 
-        for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
-            df_stage__.groupby("subject"),
-            sns.color_palette("colorblind", df_stage__["subject"].nunique()),
+        for (_mouse_name_psycurve, _df_mouse_psycurve), color in zip(
+            _df_stage.groupby("subject"),
+            sns.color_palette("colorblind", _df_stage["subject"].nunique()),
         ):
             utils_test.psychometric_plot_easy_logistic(
-                df_mouse_psycurve,
-                x=stim_col,
+                _df_mouse_psycurve,
+                x=_stim_col,
                 y="first_choice_numeric",
                 valueType=valueType,
                 bins=bins,
@@ -914,14 +746,14 @@ def _(Path, df_test, plt, sns, stim_col, utils_test):
                 },
                 line_kwargs={
                     "color": color,
-                    "label": mouse_name_psycurve,
+                    "label": _mouse_name_psycurve,
                     "alpha": 0.3,
                 },
             )
 
         utils_test.psychometric_plot_easy_logistic(
-            df_stage__,
-            x=stim_col,
+            _df_stage,
+            x=_stim_col,
             y="first_choice_numeric",
             valueType=valueType,
             bins=bins,
@@ -935,227 +767,16 @@ def _(Path, df_test, plt, sns, stim_col, utils_test):
             },
         )
 
-        plt.title(stage_name__)
+        plt.title(_stage_name)
         plt.legend(frameon=False)
         plt.tight_layout()
 
-        _safe_stage_name = str(stage_name__).replace("/", "_").replace(" ", "_")
         # _fig.savefig(
         #     _save_dir / f"/home/nuo/文档/data/LeciLab/behavioral_data/tmp/for_fens_tmp/{_safe_stage_name}_psychometric_curve.svg",
         #     bbox_inches="tight",
         # )
 
         plt.show()
-    return
-
-
-@app.cell
-def _():
-    # # no curve
-
-    # for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
-    #     plt.figure(figsize=(5, 5), dpi=150)
-
-    #     if "vis" in stage_name__:
-    #         # x_col = "visual_stimulus_ratio"
-    #         valueType = "discrete"
-    #     else:
-    #         # x_col = "total_evidence_strength"
-    #         valueType = "continue"
-
-    #     if "easy" in stage_name__:
-    #         bins = 2
-    #     else:
-    #         bins = 6
-
-
-    #     for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
-    #         color_palette = sns.color_palette(
-    #             "colorblind",
-    #             df_stage__['subject'].nunique()
-    #         )
-
-    #     for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
-    #         df_stage__.groupby('subject'),
-    #         sns.color_palette("colorblind", df_stage__['subject'].nunique())
-    #     ):
-    #         utils_test.psychometric_plot_easy_logistic(
-    #             df_mouse_psycurve,
-    #             x=stim_col,
-    #             y="first_choice_numeric",
-    #             valueType = valueType,
-    #             bins = bins,
-    #             point_kwargs={
-    #                 "color": color,
-    #                 "label": "",
-    #                 "alpha": 0.3,
-    #             },
-    #             line_kwargs={
-    #                 "color": color,
-    #                 "label": "",
-    #                 "alpha": 0,
-    #             },
-    #         )
-
-    #     utils_test.psychometric_plot_easy_logistic(
-    #         df_stage__,
-    #         x=stim_col,
-    #         valueType = valueType,
-    #         bins = bins,
-    #         y="first_choice_numeric",
-    #         point_kwargs={
-    #             "color": "black",
-    #             "label": "All mice",
-    #         },
-    #         line_kwargs={
-    #             "color": "black",
-    #             "label": "",
-    #             "alpha": 0,
-    #         },
-    #     )
-
-    #     plt.title(stage_name__)
-    #     plt.legend(frameon=False)
-    #     plt.tight_layout()
-    #     plt.show()
-    return
-
-
-@app.cell
-def _():
-    # for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
-    #     plt.figure(figsize=(5, 5), dpi=150)
-
-    #     if "vis" in stage_name__:
-    #         valueType = "discrete"
-    #     else:
-    #         valueType = "continue"
-
-    #     if "easy" in stage_name__:
-    #         bins = 2
-    #     else:
-    #         bins = 6
-
-
-    #     for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
-    #         color_palette = sns.color_palette(
-    #             "colorblind",
-    #             df_stage__['subject'].nunique()
-    #         )
-
-    #     for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
-    #         df_stage__.groupby('subject'),
-    #         sns.color_palette("colorblind", df_stage__['subject'].nunique())
-    #     ):
-    #         utils_test.psychometric_plot_easy_logistic(
-    #             df_mouse_psycurve,
-    #             x=stim_col,
-    #             y="repeat_choice_numeric",
-    #             valueType = valueType,
-    #             bins = bins,
-    #             point_kwargs={
-    #                 "color": color,
-    #                 "label": "",
-    #                 "alpha": 0.6,
-    #             },
-    #             line_kwargs={
-    #                 "color": color,
-    #                 "label": "",
-    #                 "alpha": 0,
-    #             },
-    #         )
-
-    #     utils_test.psychometric_plot_easy_logistic(
-    #         df_stage__,
-    #         x=stim_col,
-    #         valueType = valueType,
-    #         bins = bins,
-    #         y="repeat_choice_numeric",
-    #         point_kwargs={
-    #             "color": "black",
-    #             "label": "",
-    #         },
-    #         line_kwargs={
-    #             "color": color,
-    #             "label": "",
-    #             "alpha": 0,
-    #         },
-    #     )
-
-    #     plt.title(stage_name__)
-    #     plt.legend(frameon=False)
-    #     plt.tight_layout()
-    #     plt.show()
-    return
-
-
-@app.cell
-def _():
-    # for stage_name__, df_stage__ in df_test.groupby("selected_df_option"):
-    #     plt.figure(figsize=(5, 5), dpi=150)
-
-    #     if "vis" in stage_name__:
-    #         x_col = "visual_stimulus_diff"
-    #         valueType = "continue"
-    #     else:
-    #         x_col = "total_evidence_strength"
-    #         valueType = "continue"
-
-    #     if "easy" in stage_name__:
-    #         bins = 2
-    #     else:
-    #         bins = 6
-
-
-    #     for mouse_name_psycurve, df_mouse_psycurve in df_stage__.groupby('subject'):
-    #         color_palette = sns.color_palette(
-    #             "colorblind",
-    #             df_stage__['subject'].nunique()
-    #         )
-
-    #     for (mouse_name_psycurve, df_mouse_psycurve), color in zip(
-    #         df_stage__.groupby('subject'),
-    #         sns.color_palette("colorblind", df_stage__['subject'].nunique())
-    #     ):
-    #         utils_test.psychometric_plot_easy_logistic(
-    #             df_mouse_psycurve,
-    #             x=x_col,
-    #             y="first_choice_numeric",
-    #             valueType = valueType,
-    #             bins = bins,
-    #             point_kwargs={
-    #                 "color": color,
-    #                 "label": "",
-    #                 "alpha": 0.6,
-    #             },
-    #             line_kwargs={
-    #                 "color": color,
-    #                 "label": "",
-    #                 "alpha": 1,
-    #             },
-    #         )
-
-    #     utils_test.psychometric_plot_easy_logistic(
-    #         df_stage__,
-    #         x=x_col,
-    #         valueType = valueType,
-    #         bins = bins,
-    #         y="first_choice_numeric",
-    #         point_kwargs={
-    #             "color": "black",
-    #             "label": "",
-    #         },
-    #         line_kwargs={
-    #             "color": color,
-    #             "label": "",
-    #             "alpha": 1,
-    #         },
-    #     )
-
-    #     plt.title(stage_name__)
-    #     plt.legend(frameon=False)
-    #     plt.tight_layout()
-    #     plt.show()
     return
 
 
@@ -1287,24 +908,367 @@ def _(df_test_aud_hard, df_test_vis_hard, np, plots, plt):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # matrix with previous choices
+    # GLM
+
+    Binomial GLM with a logit link:
+    $\operatorname{logit}P(\mathrm{correct}=1)=\beta_0+\sum_j\beta_j z(X_j)$.
+
+    Continuous, binary and count predictors are all z-score standardized.
+    `correct_numeric` is the outcome and is excluded from the predictors.
+    Visual and auditory models include their respective stimulus predictors,
+    with standardization performed separately within each modality.
     """)
     return
 
 
 @app.cell
-def _(df_test_vis_hard, np, pd, plt, sns):
-    _df_copy = df_test_vis_hard.copy()
+def _(
+    binary_cols,
+    continuous_cols,
+    count_cols,
+    df_test_selected_raw,
+    mo,
+    np,
+    pd,
+):
+    import statsmodels.api as _sm
+    from sklearn.preprocessing import StandardScaler as _StandardScaler
+
+    _df_copy = df_test_selected_raw.copy()
+    _df_copy['visual_stimulus_ratio_abs'] = _df_copy['visual_stimulus_ratio'].abs()
+    _df_copy['total_evidence_strength_abs'] = _df_copy['total_evidence_strength'].abs()
+    _base_x_cols = [
+        _col for _col in continuous_cols + binary_cols + count_cols
+        if _col != "correct_numeric"
+    ]
+    correct_glm_results = {}
+    _outputs = []
+
+    for _modality, _stimulus_col in [
+        ("visual", "visual_stimulus_ratio_abs"),
+        ("auditory", "total_evidence_strength_abs"),
+    ]:
+        _outputs.append(mo.md(f"### {_modality.capitalize()}"))
+        _df_glm = _df_copy.loc[
+            _df_copy["stimulus_modality"].eq(_modality)
+        ]
+        if _df_glm.empty:
+            _outputs.append(mo.md("No trials available."))
+            continue
+
+        _x_cols = list(dict.fromkeys(_base_x_cols + [_stimulus_col]))
+        _numeric = ["correct_numeric"] + _x_cols
+        _df_glm = _df_glm[["subject"] + _numeric].copy()
+        _df_glm[_numeric] = _df_glm[_numeric].apply(pd.to_numeric, errors="coerce")
+        _df_glm = _df_glm.replace([np.inf, -np.inf], np.nan).dropna(
+            subset=_numeric + ["subject"]
+        )
+        _y = _df_glm["correct_numeric"].astype(float)
+        if not _y.isin([0, 1]).all() or _y.nunique() < 2:
+            raise ValueError(
+                f"{_modality}: the valid data must contain both correct=1 and wrong=0 trials."
+            )
+
+        _scaler = _StandardScaler()
+        _X = pd.DataFrame(
+            _scaler.fit_transform(_df_glm[_x_cols]),
+            columns=_x_cols,
+            index=_df_glm.index,
+        )
+        _X = _sm.add_constant(_X, has_constant="add")
+
+        _model = _sm.GLM(_y, _X, family=_sm.families.Binomial())
+        _result = _model.fit(maxiter=500)
+
+        correct_glm_results[_modality] = _result
+        _outputs.append(mo.Html(_result.summary().as_html()))
+
+    mo.vstack(_outputs)
+    return (correct_glm_results,)
+
+
+@app.cell
+def _(correct_glm_results, np, plt):
+    _fig, _axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    for _ax, _modality in zip(_axes, ["visual", "auditory"]):
+        _result = correct_glm_results.get(_modality)
+        if _result is None:
+            _ax.set_title(f"{_modality}: not fitted")
+            continue
+
+        # no constant
+        _coef = _result.params.drop("const", errors="ignore")
+        _ci = _result.conf_int().loc[_coef.index]
+        _positions = np.arange(len(_coef))
+
+        _ax.errorbar(
+            _coef,
+            _positions,
+            xerr=[
+                _coef - _ci.iloc[:, 0],
+                _ci.iloc[:, 1] - _coef,
+            ],
+            fmt="o",
+            color="black",
+            capsize=3,
+        )
+
+        _ax.set_yticks(_positions, labels=_coef.index)
+        _ax.invert_yaxis()
+        _ax.axvline(0, color="gray", linestyle="--")
+        _ax.set_xlabel("Coefficient β (log-odds), 95% CI")
+        _ax.set_title(_modality.capitalize())
+        _ax.spines[["top", "right"]].set_visible(False)
+
+    _fig.tight_layout()
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # correlation among variables
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## matrix with correct or incorrect choice
+    """)
+    return
+
+
+@app.cell
+def _(continuous_cols, df_test_selected_raw, features, pd, plt):
+    df = df_test_selected_raw.copy()
+    _plot_features = [_col for _col in features if _col != "correct_numeric"]
+
+    _fig, _axes = plt.subplots(2, 3, figsize=(15, 8))
+
+    for _ax, col in zip(_axes.flat, _plot_features):
+
+        data = df[[col, "correct_numeric"]].dropna().copy()
+
+        if col in continuous_cols:
+            data["bin"] = pd.qcut(
+                data[col],
+                q=5,
+                duplicates="drop",
+            )
+            data["x"] = data.groupby(
+                "bin", observed=True
+            )[col].transform("mean")
+
+        else:
+            data["x"] = data[col]
+
+        summary = (
+            data.groupby("x", observed=True)
+            .agg(
+                accuracy=("correct_numeric", "mean"),
+                sem=("correct_numeric", "sem"),
+                n=("correct_numeric", "size"),
+            )
+            .reset_index()
+        )
+
+        _ax.errorbar(
+            summary["x"],
+            summary["accuracy"],
+            yerr=summary["sem"],
+            fmt="o-",
+            color="green",
+            capsize=3,
+        )
+
+        _ax.set(
+            xlabel=col,
+            ylabel="P(correct)",
+            ylim=(0, 1),
+            title=col,
+        )
+
+    plt.tight_layout()
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Behavior-conditioned psychometric curves
+
+    $P(\mathrm{ChooseRight}\mid\mathrm{StimulusEvidence},\mathrm{BehaviorGroup})$
+
+    Continuous variables use quantile bins within each modality.
+    Binary and count variables are grouped by value.
+    """)
+    return
+
+
+@app.cell
+def _(df_test_selected_raw, features, mo):
+    _options = [
+        _col for _col in features
+        if _col != "correct_numeric" and _col in df_test_selected_raw.columns
+    ]
+    if {"fixation_breaks", "eager_pokes"}.issubset(df_test_selected_raw.columns):
+        if "central_pokes" not in _options:
+            _options.append("central_pokes")
+    mo.stop(not _options, mo.md("No behavior columns available."))
+
+    behavior_psychometric_col_select = mo.ui.dropdown(
+        options=_options,
+        value="reaction_time" if "reaction_time" in _options else _options[0],
+        label="Condition on",
+    )
+    behavior_psychometric_bins_select = mo.ui.slider(
+        start=2,
+        stop=6,
+        step=1,
+        value=5,
+        show_value=True,
+        label="Behavior bins (continuous columns)",
+    )
+    mo.hstack([behavior_psychometric_col_select, behavior_psychometric_bins_select])
+    return behavior_psychometric_bins_select, behavior_psychometric_col_select
+
+
+@app.cell
+def _(
+    Path,
+    behavior_psychometric_bins_select,
+    behavior_psychometric_col_select,
+    continuous_cols,
+    count_cols,
+    df_test_selected_raw,
+    np,
+    pd,
+    plt,
+    save_folder_path,
+    sns,
+    utils_test,
+):
+    _col = behavior_psychometric_col_select.value
+    _n_bins = behavior_psychometric_bins_select.value
+    _df_behavior = df_test_selected_raw.copy()
+    if _col == "central_pokes":
+        _df_behavior[_col] = (
+            pd.to_numeric(_df_behavior["fixation_breaks"], errors="coerce")
+            + pd.to_numeric(_df_behavior["eager_pokes"], errors="coerce")
+        )
+    _df_behavior[_col] = pd.to_numeric(
+        _df_behavior[_col], errors="coerce"
+    ).replace([np.inf, -np.inf], np.nan)
+
+    # The existing choice encoding is left=1, right=0.
+
+    _fig, _axes = plt.subplots(1, 2, figsize=(13, 5), sharey=True)
+    for _ax, (_modality, _stimulus_col, _value_type) in zip(
+        _axes,
+        [
+            ("visual", "visual_stimulus_ratio", "discrete"),
+            ("auditory", "total_evidence_strength", "continue"),
+        ],
+    ):
+        _ax.set_title(_modality.capitalize())
+        _ax.set_xlabel(_stimulus_col)
+        _ax.set_ylabel("P(ChooseLeft)")
+        _ax.set_ylim(0, 1)
+        _ax.axhline(0.5, linestyle="--", color="gray", linewidth=1, alpha=0.5)
+        _ax.spines[["top", "right"]].set_visible(False)
+
+        _df_modality = _df_behavior.loc[
+            _df_behavior["stimulus_modality"].eq(_modality),
+            [_col, _stimulus_col, "first_choice_numeric"],
+        ].copy()
+        _df_modality = _df_modality.dropna()
+        if _df_modality.empty:
+            _ax.text(0.5, 0.5, "No valid trials", ha="center", transform=_ax.transAxes)
+            continue
+
+        if _col in continuous_cols or _col in count_cols:
+            _df_modality["_behavior_bin"] = pd.qcut(
+                _df_modality[_col], q=_n_bins, labels=False, duplicates="drop"
+            )
+        else:
+            _df_modality["_behavior_bin"] = _df_modality[_col]
+
+        _groups = list(_df_modality.groupby("_behavior_bin", observed=True, sort=True))
+        _colors = sns.color_palette("viridis", len(_groups))
+        for _index, ((_bin, _df_group), _color) in enumerate(zip(_groups, _colors)):
+            if _col in continuous_cols or _col in count_cols:
+                _group_name = f"Bin {_index + 1}"
+                _label = (
+                    f"{_group_name}: {_df_group[_col].min():.3g}"
+                    f"–{_df_group[_col].max():.3g} (n={len(_df_group)})"
+                )
+            else:
+                _label = f"{_col}={_bin:g} (n={len(_df_group)})"
+
+            _can_fit = (
+                _df_group[_stimulus_col].nunique() > 1
+                and _df_group["first_choice_numeric"].nunique() > 1
+            )
+            if not _can_fit:
+                _label += " (points only)"
+
+            utils_test.psychometric_plot_easy_logistic(
+                _df_group,
+                x=_stimulus_col,
+                y="first_choice_numeric",
+                ax=_ax,
+                valueType=_value_type,
+                bins=6,
+                easy=True,
+                point_kwargs={
+                    "color": _color,
+                    "label": None if _can_fit else _label,
+                },
+                line_kwargs={
+                    "color": _color,
+                    "label": _label if _can_fit else None,
+                    "linestyle": "-" if _can_fit else "None",
+                },
+            )
+
+        if _groups:
+            _ax.legend(title=_col, frameon=False, fontsize=8)
+
+    _fig.suptitle(f"Behavior-conditioned psychometric curves | {_col}")
+    _fig.tight_layout()
+    _fig.savefig(Path(save_folder_path, f"autoData_conditioned_psychometric_curves_{_col}.svg"))
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## matrix with previous choices
+    """)
+    return
+
+
+@app.cell
+def _(df_test_selected_raw, np, pd, plt, sns):
+    _df_copy = df_test_selected_raw.copy()
     _fig, _axes = plt.subplots(1, 2, figsize=(12, 5))
     for _mouse in _df_copy['subject'].unique():
         for _session in _df_copy[_df_copy.subject == _mouse]['session'].unique():
-            _df_mouse_session = _df_copy[np.logical_and(_df_copy['subject'] == _mouse, _df_copy['session'] == _session)]
-            if _df_mouse_session['stimulus_modality'].unique() == 'visual':
+            _df_mouse_session = _df_copy[np.logical_and(_df_copy['subject'] == _mouse, _df_copy['session'] == _session)].copy()
+            if _df_mouse_session['stimulus_modality'].eq('visual').all():
                 _stimulus_col = 'visual_stimulus_ratio'
                 _previous_stimulus_col = 'previous_visual_stimulus_ratio'
-            elif _df_mouse_session['stimulus_modality'].unique() == 'auditory':
+            elif _df_mouse_session['stimulus_modality'].eq('auditory').all():
                 _stimulus_col = 'total_evidence_strength'
                 _previous_stimulus_col = 'previous_total_evidence_strength'
+            else:
+                continue
             _df_mouse_session[_previous_stimulus_col] = _df_mouse_session[_stimulus_col].shift(1, fill_value=np.nan)
             _df_copy.loc[_df_mouse_session.index, _previous_stimulus_col] = _df_mouse_session[_previous_stimulus_col]
     _df_copy["visual_stimulus_ratio"] = (_df_copy["visual_stimulus_ratio"].round(2))
@@ -1321,9 +1285,9 @@ def _(df_test_vis_hard, np, pd, plt, sns):
         )
         _pivot_table = _pivot_table.apply(pd.to_numeric, errors="coerce")
         sns.heatmap(_pivot_table, cmap='coolwarm', annot=True, fmt='.2f', cbar_kws={'label': 'Probability of same Choice'}, vmin=0, vmax=1, annot_kws={'color': 'black'}, ax=_axes[int(_i[0])])
-        _axes[_i[0]].set_xlabel('Visual Stimulus Ratio')
-        _axes[_i[0]].set_ylabel('Previous Visual Stimulus Ratio')
-        _axes[_i[0]].set_title("Heatmap of Probability of same Choice (Previous {})".format('True' if _i[0] == 1 else 'False'))
+        _axes[int(_i[0])].set_xlabel('Visual Stimulus Ratio')
+        _axes[int(_i[0])].set_ylabel('Previous Visual Stimulus Ratio')
+        _axes[int(_i[0])].set_title("Heatmap of Probability of same Choice (Previous {})".format('True' if _i[0] == 1 else 'False'))
 
     _fig.tight_layout()
     plt.show()
@@ -1417,7 +1381,7 @@ def _(df_test_aud_hard, np, pd, plt, sns):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # stimulus correlation to see antibias
+    ## stimulus correlation to see antibias
     """)
     return
 
@@ -2128,23 +2092,17 @@ def _(add_number_of_pokes, df_test, dft, utils_test):
 
 
 @app.cell
-def _(df_test_upd, latentcor, np, pd, plt, sns):
-    continuous_cols = [
-        'fixation_breaks',
-        'eager_pokes',
-        'trial_duration', 
-        'inter_trial_interval',
-        'reaction_time', ]
-
-    binary_cols = [
-        # 'correct_numeric',
-        'previous_correct_numeric',
-        'previous_same_choice_numeric',
-        'roa_choice_numeric',
-    ]
-
-    features = continuous_cols + binary_cols
-
+def _(
+    binary_cols,
+    continuous_cols,
+    df_test_upd,
+    features,
+    latentcor,
+    np,
+    pd,
+    plt,
+    sns,
+):
     X = df_test_upd[features].dropna().copy()
 
     # 与 DataFrame 列顺序一一对应
@@ -2181,7 +2139,7 @@ def _(df_test_upd, latentcor, np, pd, plt, sns):
 
     plt.title("Latent Correlation Matrix of Features")
     plt.show()
-    return corr, features
+    return (corr,)
 
 
 @app.cell

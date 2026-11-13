@@ -983,3 +983,18 @@ def add_number_of_centralpokes_after_choice(df_raw: pd.DataFrame):
         - pd.to_numeric(df["fixation_breaks"], errors="coerce")
     )
     return df
+
+
+def get_performance_through_trials(df: pd.DataFrame, window: int = 25) -> pd.DataFrame:
+    utils.column_checker(df, required_columns={"session", "trial", "correct_numeric"})
+    # make sure only one subject is present
+    if df["subject"].nunique() > 1:
+        raise ValueError("The dataframe should contain only one subject.")
+    # sort the df by "session" and "trial"
+    df = df.sort_values(["session", "trial"])
+    # add a column with the total number of trials if it doesn't exist
+    if "total_trial" not in df.columns:
+        df["total_trial"] = np.arange(1, df.shape[0] + 1)
+    # calculate the performance as a mean of the last X trials
+    df["performance_w"] = df.correct_numeric.rolling(window=window, min_periods=1).mean() * 100
+    return df
