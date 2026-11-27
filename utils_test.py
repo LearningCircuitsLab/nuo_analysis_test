@@ -38,6 +38,39 @@ def rsync_specific_file(file_path: str, credentials: dict, local_path: str) -> b
     return True
 
 
+def remove_high_outliers(df: pd.DataFrame, columns, iqr_multiplier=3.0):
+    """Return a copy with upper outliers in selected columns replaced by NaN.
+
+    Each column uses its finite values to calculate Q3 + iqr_multiplier * IQR.
+    The default 3.0 targets extreme upper outliers; 1.5 is more aggressive.
+    A string or an iterable of column names is accepted. Selected columns are
+    converted to float; nonnumeric values raise an error. Rows, the index, and
+    other columns are preserved. Positive infinity is also replaced by NaN.
+    For zero-IQR columns, recalculate quartiles using values above the original
+    Q3. Finite values are left unchanged if that tail is empty or still has a
+    zero IQR.
+    """
+    if not np.isfinite(iqr_multiplier) or iqr_multiplier < 0:
+        raise ValueError("iqr_multiplier must be finite and nonnegative.")
+    columns = [columns] if isinstance(columns, str) else list(columns)
+    utils.column_checker(df, required_columns=set(columns))
+
+    df_copy = df.copy()
+    for column in dict.fromkeys(columns):
+        values = pd.to_numeric(df[column], errors="raise").astype(float)
+        finite_values = values[np.isfinite(values)]
+        q1, q3 = finite_values.quantile([0.25, 0.75])
+        iqr = q3 - q1
+        if iqr == 0:
+            # A dominant count can hide the spread of the non-baseline values.
+            upper_values = finite_values[finite_values > q3]
+            q1, q3 = upper_values.quantile([0.25, 0.75])
+            iqr = q3 - q1
+        upper = q3 + iqr_multiplier * iqr if iqr > 0 else np.inf
+        df_copy[column] = values.mask(values.gt(upper) | np.isposinf(values))
+    return df_copy
+
+
 def add_lag_features(df, source_col, n_lags=10, group_col="session"):
     df = df.copy()
     for lag in range(1, n_lags + 1):
@@ -139,6 +172,29 @@ def _fit_ordinary_logistic_curve(x, y, xs):
     return sigmoid(params[0] + params[1] * xs_z)
 
 
+def _fit_binomial_glm_curve(x, y, xs):
+    import statsmodels.api as sm
+
+    x = np.asarray(x, dtype=float).reshape(-1)
+    y = np.asarray(y, dtype=float).reshape(-1)
+    xs = np.asarray(xs, dtype=float).reshape(-1)
+    valid = np.isfinite(x) & np.isfinite(y)
+    x = x[valid]
+    y = y[valid]
+
+    if len(x) == 0:
+        return np.full_like(xs, np.nan, dtype=float)
+    if np.unique(x).size < 2 or np.unique(y).size < 2:
+        return np.full_like(xs, np.mean(y), dtype=float)
+
+    result = sm.GLM(
+        y,
+        sm.add_constant(x, has_constant="add"),
+        family=sm.families.Binomial(),
+    ).fit()
+    return result.predict(sm.add_constant(xs, has_constant="add"))
+
+
 def psychometric_plot_easy_logistic(
     df: pd.DataFrame,
     x,
@@ -151,6 +207,70 @@ def psychometric_plot_easy_logistic(
     log=True,
     easy=None,
     stage=None,
+):
+    return _psychometric_plot(
+        df,
+        x,
+        y,
+        ax=ax,
+        point_kwargs=point_kwargs,
+        line_kwargs=line_kwargs,
+        valueType=valueType,
+        bins=bins,
+        log=log,
+        easy=easy,
+        stage=stage,
+    )
+
+
+def psychometric_plot_glm(
+    df: pd.DataFrame,
+    x,
+    y,
+    ax=None,
+    point_kwargs=None,
+    line_kwargs=None,
+    valueType="discrete",
+    bins=6,
+    log=True,
+    easy=None,
+    stage=None,
+):
+    """Plot a binomial GLM curve with the easy-logistic plotting interface.
+
+    Binning and log transforms match psychometric_plot_easy_logistic.
+    Both easy and hard stages use an intercept and slope without lapse terms.
+    Returns the matplotlib Axes, just like the original function.
+    """
+    return _psychometric_plot(
+        df,
+        x,
+        y,
+        ax=ax,
+        point_kwargs=point_kwargs,
+        line_kwargs=line_kwargs,
+        valueType=valueType,
+        bins=bins,
+        log=log,
+        easy=easy,
+        stage=stage,
+        fit_curve=_fit_binomial_glm_curve,
+    )
+
+
+def _psychometric_plot(
+    df: pd.DataFrame,
+    x,
+    y,
+    ax=None,
+    point_kwargs=None,
+    line_kwargs=None,
+    valueType="discrete",
+    bins=6,
+    log=True,
+    easy=None,
+    stage=None,
+    fit_curve=None,
 ):
     import matplotlib.pyplot as plt
     import seaborn as sns
@@ -178,9 +298,13 @@ def psychometric_plot_easy_logistic(
     default_line_kwargs = {
         "color": "lightcoral",
         "label": (
-            "Logistic Fit"
-            if use_easy_logistic
-            else "Lapse Logistic Fit (Independent)"
+            "Binomial GLM Fit"
+            if fit_curve is not None
+            else (
+                "Logistic Fit"
+                if use_easy_logistic
+                else "Lapse Logistic Fit (Independent)"
+            )
         ),
         "linestyle": "-",
         "alpha": 1.0,
@@ -233,7 +357,13 @@ def psychometric_plot_easy_logistic(
         df_copy[x + "_fit"].max(),
         100,
     ).reshape(-1, 1)
-    if use_easy_logistic:
+    if fit_curve is not None:
+        p_left = fit_curve(
+            df_copy[x + "_fit"],
+            df_copy[y],
+            xs,
+        )
+    elif use_easy_logistic:
         p_left = _fit_ordinary_logistic_curve(
             df_copy[x + "_fit"],
             df_copy[y],

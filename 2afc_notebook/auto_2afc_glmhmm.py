@@ -300,7 +300,7 @@ def _():
         "eager_pokes",
     ]
 
-    features = continuous_cols + binary_cols + count_cols
+    features = continuous_cols + count_cols + binary_cols
     return basic_cols, binary_cols, continuous_cols, count_cols, features
 
 
@@ -467,12 +467,6 @@ def _(df_test_selected_raw, pd, plt, sns):
 
 
 @app.cell
-def _(df_test_selected_raw):
-    df_test_selected_raw
-    return
-
-
-@app.cell
 def _(df_test_selected_raw, dft, np, plots, plt):
     # random session performance plot
     _random_mouse = df_test_selected_raw["subject"].dropna().sample(n=1).iloc[0]
@@ -634,6 +628,95 @@ def _(
 
     _fig.tight_layout()
     _fig.savefig(Path(save_folder_path, f"autodata_frequency_{_metric}_byCorrect.svg"))
+    plt.show()
+    return
+
+
+@app.cell
+def _(
+    Path,
+    df_clean,
+    distribution_metric_select,
+    mo,
+    np,
+    pd,
+    plt,
+    save_folder_path,
+):
+    # Mouse-level metric means by previous-to-current outcome and choice agreement.
+    _metric = distribution_metric_select.value
+    _df_clean = df_clean.copy()
+    if _metric == "central_pokes":
+        _df_clean["central_pokes"] = (
+            pd.to_numeric(_df_clean["fixation_breaks"], errors="coerce")
+            + pd.to_numeric(_df_clean["eager_pokes"], errors="coerce")
+        )
+
+    _condition_cols = [
+        "correct_numeric", "previous_correct_numeric",
+        "roa_choice_numeric", "previous_same_choice_numeric"
+    ]
+    _numeric = [_metric] + _condition_cols
+    _df_clean[_numeric] = _df_clean[_numeric].apply(
+        pd.to_numeric, errors="coerce"
+    ).astype(float).replace([np.inf, -np.inf], np.nan)
+    _df_clean = _df_clean.dropna(subset=["subject"] + _numeric)
+    _df_clean = _df_clean.loc[
+        _df_clean[_condition_cols].isin([0, 1]).all(axis=1)
+    ].copy()
+    mo.stop(_df_clean.empty, mo.md("No data available for this metric."))
+    _df_clean["_choice_match"] = _df_clean["roa_choice_numeric"].eq(
+        _df_clean["previous_same_choice_numeric"]
+    )
+
+    _outcome_cols = ["previous_correct_numeric", "correct_numeric"]
+    _mouse_means = (
+        _df_clean.groupby(
+            ["subject"] + _outcome_cols + ["_choice_match"], observed=True
+        )[_metric].mean().reset_index()
+    )
+    _outcome_index = pd.MultiIndex.from_tuples(
+        [(1, 1), (1, 0), (0, 1), (0, 0)], names=_outcome_cols
+    )
+    _positions = np.arange(4)
+
+    _fig, _ax = plt.subplots(figsize=(7, 5))
+    for _match, _name, _color, _offset in [
+        (True, "Same", "grey", -0.06),
+        (False, "Different", "palevioletred", 0.06),
+    ]:
+        _summary = (
+            _mouse_means.loc[_mouse_means["_choice_match"].eq(_match)]
+            .groupby(_outcome_cols, observed=True)[_metric]
+            .agg(["mean", "sem"])
+            .reindex(_outcome_index)
+        )
+        if _summary["mean"].isna().all():
+            continue
+        _ax.plot(
+            _positions + _offset, _summary["mean"], "o-",
+            color=_color, label=_name,
+        )
+        _has_sem = _summary["sem"].notna()
+        if _has_sem.any():
+            _ax.errorbar(
+                (_positions + _offset)[_has_sem.to_numpy()],
+                _summary.loc[_has_sem, "mean"],
+                yerr=_summary.loc[_has_sem, "sem"],
+                fmt="none", color=_color, capsize=4,
+            )
+
+    _ax.set_xticks(_positions, labels=[
+        "Correct\u2192Correct", "Correct\u2192Incorrect",
+        "Incorrect\u2192Correct", "Incorrect\u2192Incorrect",
+    ])
+    _ax.set_xlabel("Previous outcome \u2192 current outcome")
+    _ax.set_ylabel(f"{_metric} (mean +/- SEM across mice)")
+    _ax.set_title(_metric)
+    _ax.spines[["top", "right"]].set_visible(False)
+    _ax.legend(title="ROA vs previous same choice", frameon=False)
+    _fig.tight_layout()
+    _fig.savefig(Path(save_folder_path, f"autodata_mean_sem_{_metric}_byOutcomeTransition_sameDifferent.svg"))
     plt.show()
     return
 
@@ -909,32 +992,23 @@ def _(df_test_aud_hard, df_test_vis_hard, np, plots, plt):
 def _(mo):
     mo.md(r"""
     # GLM
-
-    Binomial GLM with a logit link:
-    $\operatorname{logit}P(\mathrm{correct}=1)=\beta_0+\sum_j\beta_j z(X_j)$.
-
-    Continuous, binary and count predictors are all z-score standardized.
-    `correct_numeric` is the outcome and is excluded from the predictors.
-    Visual and auditory models include their respective stimulus predictors,
-    with standardization performed separately within each modality.
     """)
     return
 
 
 @app.cell
-def _(
-    binary_cols,
-    continuous_cols,
-    count_cols,
-    df_test_selected_raw,
-    mo,
-    np,
-    pd,
-):
+def _(df_test_selected_raw, utils_test):
+    df_clean = utils_test.remove_high_outliers(df_test_selected_raw, ["fixation_breaks", "eager_pokes"]).dropna(subset=["fixation_breaks", "eager_pokes"])
+    df_clean = df_clean[df_clean['eager_pokes']>=0]
+    return (df_clean,)
+
+
+@app.cell
+def _(binary_cols, continuous_cols, count_cols, df_clean, mo, np, pd):
     import statsmodels.api as _sm
     from sklearn.preprocessing import StandardScaler as _StandardScaler
 
-    _df_copy = df_test_selected_raw.copy()
+    _df_copy = df_clean.copy()
     _df_copy['visual_stimulus_ratio_abs'] = _df_copy['visual_stimulus_ratio'].abs()
     _df_copy['total_evidence_strength_abs'] = _df_copy['total_evidence_strength'].abs()
     _base_x_cols = [
@@ -984,44 +1058,128 @@ def _(
         _outputs.append(mo.Html(_result.summary().as_html()))
 
     mo.vstack(_outputs)
-    return (correct_glm_results,)
+    return
 
 
 @app.cell
-def _(correct_glm_results, np, plt):
+def _(binary_cols, continuous_cols, count_cols, df_clean, mo, np, pd):
+    import warnings as _warnings
+    import statsmodels.api as _sm
+    from sklearn.preprocessing import StandardScaler as _StandardScaler
+    from statsmodels.tools.sm_exceptions import (
+        PerfectSeparationError as _PerfectSeparationError,
+        PerfectSeparationWarning as _PerfectSeparationWarning,
+    )
+
+    _df_copy = df_clean.copy()
+    _df_copy["visual_stimulus_ratio_abs"] = _df_copy["visual_stimulus_ratio"].abs()
+    _df_copy["total_evidence_strength_abs"] = _df_copy["total_evidence_strength"].abs()
+    _base_x_cols = [
+        _col for _col in continuous_cols + binary_cols + count_cols
+        if _col != "correct_numeric"
+    ]
+    correct_glm_results_by_mouse = {}
+    _fit_rows = []
+
+    for _mouse, _df_mouse in _df_copy.groupby("subject", observed=True):
+        correct_glm_results_by_mouse[_mouse] = {}
+        for _modality, _stimulus_col in [
+            ("visual", "visual_stimulus_ratio_abs"),
+            ("auditory", "total_evidence_strength_abs"),
+        ]:
+            _x_cols = list(dict.fromkeys(_base_x_cols + [_stimulus_col]))
+            _numeric = ["correct_numeric"] + _x_cols
+            _df_glm = _df_mouse.loc[
+                _df_mouse["stimulus_modality"].eq(_modality), _numeric
+            ].copy()
+            if _df_glm.empty:
+                continue
+
+            _df_glm[_numeric] = _df_glm[_numeric].apply(pd.to_numeric, errors="coerce")
+            _df_glm = _df_glm.replace([np.inf, -np.inf], np.nan).dropna()
+            _y = _df_glm["correct_numeric"].astype(float)
+            _fit_row = {"subject": _mouse, "modality": _modality, "n_trials": len(_y)}
+            if not _y.isin([0, 1]).all() or _y.nunique() < 2:
+                _fit_rows.append({**_fit_row, "status": "skipped: requires both 0 and 1"})
+                continue
+
+            # Constant predictors have no identifiable within-mouse effect.
+            _x_cols = [_col for _col in _x_cols if _df_glm[_col].nunique() > 1]
+            _fit_row["n_predictors"] = len(_x_cols)
+            if not _x_cols:
+                _fit_rows.append({**_fit_row, "status": "skipped: no varying predictors"})
+                continue
+            _X = pd.DataFrame(
+                _StandardScaler().fit_transform(_df_glm[_x_cols]),
+                columns=_x_cols,
+                index=_df_glm.index,
+            )
+            _X = _sm.add_constant(_X, has_constant="add")
+            try:
+                with _warnings.catch_warnings():
+                    _warnings.simplefilter("error", _PerfectSeparationWarning)
+                    _result = _sm.GLM(_y, _X, family=_sm.families.Binomial()).fit(maxiter=500)
+            except (
+                ValueError,
+                np.linalg.LinAlgError,
+                _PerfectSeparationError,
+                _PerfectSeparationWarning,
+            ) as _exc:
+                _fit_rows.append({**_fit_row, "status": f"skipped: {_exc}"})
+                continue
+            if not _result.converged or not np.isfinite(_result.params).all():
+                _fit_rows.append({**_fit_row, "status": "skipped: fit did not converge"})
+                continue
+
+            correct_glm_results_by_mouse[_mouse][_modality] = _result
+            _fit_rows.append({**_fit_row, "status": "fitted"})
+
+    mo.vstack([
+        mo.md("### Per-mouse correct-choice GLMs"),
+        pd.DataFrame(_fit_rows),
+    ])
+    return (correct_glm_results_by_mouse,)
+
+
+@app.cell
+def _(Path, correct_glm_results_by_mouse, np, pd, plt, save_folder_path):
     _fig, _axes = plt.subplots(1, 2, figsize=(14, 6))
 
     for _ax, _modality in zip(_axes, ["visual", "auditory"]):
-        _result = correct_glm_results.get(_modality)
-        if _result is None:
+        _mouse_coefs = pd.DataFrame({
+            _mouse: _results[_modality].params.drop("const", errors="ignore")
+            for _mouse, _results in correct_glm_results_by_mouse.items()
+            if _modality in _results
+        }).T.astype(float)
+        if _mouse_coefs.empty:
             _ax.set_title(f"{_modality}: not fitted")
             continue
 
-        # no constant
-        _coef = _result.params.drop("const", errors="ignore")
-        _ci = _result.conf_int().loc[_coef.index]
+        _coef = _mouse_coefs.mean(axis=0)
+        _sem = _mouse_coefs.sem(axis=0)
         _positions = np.arange(len(_coef))
 
-        _ax.errorbar(
-            _coef,
-            _positions,
-            xerr=[
-                _coef - _ci.iloc[:, 0],
-                _ci.iloc[:, 1] - _coef,
-            ],
-            fmt="o",
-            color="black",
-            capsize=3,
-        )
+        _ax.plot(_coef, _positions, "o", color="black")
+        _has_sem = _sem.notna()
+        if _has_sem.any():
+            _ax.errorbar(
+                _coef[_has_sem],
+                _positions[_has_sem.to_numpy()],
+                xerr=_sem[_has_sem],
+                fmt="none",
+                color="black",
+                capsize=3,
+            )
 
         _ax.set_yticks(_positions, labels=_coef.index)
         _ax.invert_yaxis()
         _ax.axvline(0, color="gray", linestyle="--")
-        _ax.set_xlabel("Coefficient β (log-odds), 95% CI")
-        _ax.set_title(_modality.capitalize())
+        _ax.set_xlabel("Mean coefficient β (log-odds) ± SEM across mice")
+        _ax.set_title(f"{_modality.capitalize()} (n={len(_mouse_coefs)} mice)")
         _ax.spines[["top", "right"]].set_visible(False)
 
     _fig.tight_layout()
+    _fig.savefig(Path(save_folder_path, f"autodata_1mouse_correct_choice_GLM.svg"))
     plt.show()
     return
 
@@ -1037,21 +1195,324 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## matrix with correct or incorrect choice
+    ## GLM predictor correlation
     """)
     return
 
 
 @app.cell
-def _(continuous_cols, df_test_selected_raw, features, pd, plt):
-    df = df_test_selected_raw.copy()
+def _(
+    Path,
+    binary_cols,
+    continuous_cols,
+    count_cols,
+    df_clean,
+    np,
+    pd,
+    plt,
+    save_folder_path,
+    sns,
+):
+    from latentcor import latentcor as _latentcor
+
+    _df_copy = df_clean.copy()
+    _base_x_cols = [_col for _col in continuous_cols + binary_cols + count_cols]
+    glm_predictor_corr = {}
+    _fig, _axes = plt.subplots(1, 2, figsize=(20, 8))
+
+    for _ax, _modality in zip(_axes, ["visual", "auditory"]):
+        _x_cols = list(dict.fromkeys(_base_x_cols))
+        _df_glm = _df_copy.loc[
+            _df_copy["stimulus_modality"].eq(_modality),
+            ["subject"] + _x_cols,
+        ].copy()
+        _df_glm[_x_cols] = _df_glm[_x_cols].apply(pd.to_numeric, errors="coerce")
+        _df_glm = _df_glm.replace([np.inf, -np.inf], np.nan).dropna(
+            subset=["subject"] + _x_cols
+        )
+        _X = _df_glm[_base_x_cols]
+        _X = _X.loc[:, _X.nunique() > 1]
+        if len(_X) < 2 or _X.shape[1] < 2:
+            _ax.set_title(f"{_modality.capitalize()}: insufficient varying data")
+            _ax.set_axis_off()
+            continue
+
+        _types = ["bin" if _col in binary_cols else "con" for _col in _X.columns]
+        for _col in _X.columns.intersection(binary_cols):
+            if not _X[_col].isin([0, 1]).all():
+                raise ValueError(f"{_modality}: {_col} must contain only 0 and 1.")
+
+        _result = _latentcor(_X.to_numpy(dtype=float), tps=_types, method="original")
+        _corr = pd.DataFrame(
+            np.asarray(_result["R"]),
+            index=_X.columns,
+            columns=_X.columns,
+        )
+        glm_predictor_corr[_modality] = _corr
+        sns.heatmap(
+            _corr,
+            ax=_ax,
+            annot=True,
+            fmt=".2f",
+            cmap="coolwarm",
+            center=0,
+            vmin=-1,
+            vmax=1,
+        )
+        _ax.set_title(f"{_modality.capitalize()} GLM predictor correlations")
+        _ax.tick_params(axis="y", rotation=0)
+        plt.setp(_ax.get_xticklabels(), rotation=45, ha="right")
+
+    _fig.tight_layout()
+    _fig.savefig(Path(save_folder_path, f"autodata_correlations_vars.svg"), dpi=300)
+    plt.show()
+    return
+
+
+@app.cell
+def _(
+    Path,
+    binary_cols,
+    continuous_cols,
+    count_cols,
+    df_clean,
+    np,
+    pd,
+    plt,
+    save_folder_path,
+    sns,
+):
+    from latentcor import latentcor as _latentcor
+
+    _df_copy = df_clean.copy()
+    _df_copy["correct_numeric"] = pd.to_numeric(
+        _df_copy["correct_numeric"], errors="coerce"
+    )
+    _x_cols = list(dict.fromkeys(continuous_cols + binary_cols + count_cols))
+    glm_predictor_corr_by_outcome = {"visual": {}, "auditory": {}}
+    _fig, _axes = plt.subplots(2, 2, figsize=(20, 16))
+
+    for _row, (_correct, _outcome) in enumerate([(1, "correct"), (0, "incorrect")]):
+        for _column, _modality in enumerate(["visual", "auditory"]):
+            _ax = _axes[_row, _column]
+            _title = f"{_modality.capitalize()} | {_outcome}"
+            _df_glm = _df_copy.loc[
+                _df_copy["stimulus_modality"].eq(_modality)
+                & _df_copy["correct_numeric"].eq(_correct),
+                ["subject"] + _x_cols,
+            ].copy()
+            _df_glm[_x_cols] = _df_glm[_x_cols].apply(pd.to_numeric, errors="coerce")
+            _df_glm = _df_glm.replace([np.inf, -np.inf], np.nan).dropna(
+                subset=["subject"] + _x_cols
+            )
+            _X = _df_glm[_x_cols]
+            _X = _X.loc[:, _X.nunique() > 1]
+            if len(_X) < 2 or _X.shape[1] < 2:
+                _ax.set_title(f"{_title}: insufficient varying data")
+                _ax.set_axis_off()
+                continue
+
+            _types = ["bin" if _col in binary_cols else "con" for _col in _X.columns]
+            for _col in _X.columns.intersection(binary_cols):
+                if not _X[_col].isin([0, 1]).all():
+                    raise ValueError(f"{_title}: {_col} must contain only 0 and 1.")
+
+            _result = _latentcor(_X.to_numpy(dtype=float), tps=_types, method="original")
+            _corr = pd.DataFrame(
+                np.asarray(_result["R"]), index=_X.columns, columns=_X.columns
+            )
+            glm_predictor_corr_by_outcome[_modality][_outcome] = _corr
+            sns.heatmap(
+                _corr,
+                ax=_ax,
+                annot=True,
+                fmt=".2f",
+                cmap="coolwarm",
+                center=0,
+                vmin=-1,
+                vmax=1,
+            )
+            _ax.set_title(f"{_title} (n={len(_X)} trials)")
+            _ax.tick_params(axis="y", rotation=0)
+            plt.setp(_ax.get_xticklabels(), rotation=45, ha="right")
+
+    _fig.tight_layout()
+    _fig.savefig(Path(save_folder_path, "autodata_correlations_vars_by_outcome.svg"), dpi=300)
+    plt.show()
+    return
+
+
+@app.cell
+def _(Path, df_clean, pd, plt, save_folder_path, sns):
+    _x_col = "roa_choice_numeric"
+    _y_col = "previous_same_choice_numeric"
+    _condition_col = "previous_correct_numeric"
+
+    _numeric = [_x_col, _y_col, _condition_col]
+    _df = df_clean[
+        ["subject", "stimulus_modality"] + _numeric
+    ].copy()
+
+    _df[_numeric] = _df[_numeric].apply(
+        pd.to_numeric, errors="coerce"
+    ).astype(float)
+    _df = _df.dropna(subset=["subject", "stimulus_modality"])
+    _df = _df.loc[_df[_numeric].isin([0, 1]).all(axis=1)]
+
+    # 每只鼠、每个条件一个均值
+    _mouse_means = (
+        _df.groupby(
+            ["subject", "stimulus_modality", _condition_col, _x_col],
+            observed=True,
+        )[_y_col]
+        .mean()
+        .reset_index()
+    )
+
+    _mouse_means["previous_outcome"] = _mouse_means[_condition_col].map({
+        1: "Previous correct",
+        0: "Previous incorrect",
+    })
+
+    _fig, _axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    for _ax, _modality in zip(_axes, ["visual", "auditory"]):
+        sns.lineplot(
+            data=_mouse_means.loc[
+                _mouse_means["stimulus_modality"].eq(_modality)
+            ],
+            x=_x_col,
+            y=_y_col,
+            hue="previous_outcome",
+            hue_order=["Previous correct", "Previous incorrect"],
+            palette={"Previous correct": "green", "Previous incorrect": "red"},
+            estimator="mean",
+            errorbar="se",
+            err_style="bars",
+            err_kws={"capsize": 4},
+            marker="o",
+            ax=_ax,
+        )
+
+        _ax.set_xticks([0, 1], ["Alternate (0)", "Repeat (1)"])
+        _ax.set(
+            title=_modality.capitalize(),
+            xlabel="roa_choice_numeric",
+            ylabel="P(repeat previous first choice)",
+            ylim=(-0.03, 1.03),
+        )
+        _ax.legend(title=None, frameon=False)
+        _ax.spines[["top", "right"]].set_visible(False)
+
+    _fig.tight_layout()
+    _fig.savefig(Path(save_folder_path, f"autodata_correlations_roa_previousSameChoice.svg"), dpi=300)
+    plt.show()
+    return
+
+
+@app.cell
+def _(mo):
+    choice_match_modality_select = mo.ui.dropdown(
+        options=["visual", "auditory"],
+        value="auditory",
+        label="Psychometric modality",
+    )
+    choice_match_modality_select
+    return (choice_match_modality_select,)
+
+
+@app.cell
+def _(
+    Path,
+    choice_match_modality_select,
+    df_test_selected_raw,
+    np,
+    pd,
+    plt,
+    save_folder_path,
+    utils_test,
+):
+    _modality = choice_match_modality_select.value
+    _stimulus_col = (
+        "visual_stimulus_ratio" if _modality == "visual" else "total_evidence_strength"
+    )
+    _binary = [
+        "first_choice_numeric", "previous_correct_numeric",
+        "roa_choice_numeric", "previous_same_choice_numeric",
+    ]
+    _df_psy = df_test_selected_raw.loc[
+        df_test_selected_raw["stimulus_modality"].eq(_modality),
+        [_stimulus_col] + _binary
+    ].copy()
+    _df_psy = _df_psy.apply(pd.to_numeric, errors="coerce").replace(
+        [np.inf, -np.inf], np.nan
+    ).dropna()
+    _df_psy = _df_psy.loc[_df_psy[_binary].isin([0, 1]).all(axis=1)].copy()
+    _df_psy["_choice_match"] = _df_psy["roa_choice_numeric"].eq(
+        _df_psy["previous_same_choice_numeric"]
+    )
+
+    _fig, _axes = plt.subplots(1, 2, figsize=(13, 5), sharey=True)
+    for _ax, _previous_correct, _title in zip(
+        _axes, [1, 0], ["Previous correct", "Previous incorrect"]
+    ):
+        _ax.set(title=_title, xlabel=_stimulus_col, ylabel="P(ChooseLeft)", ylim=(0, 1))
+        _ax.axhline(0.5, color="gray", linestyle="--", linewidth=1, alpha=0.5)
+        _ax.spines[["top", "right"]].set_visible(False)
+        _df_previous = _df_psy.loc[
+            _df_psy["previous_correct_numeric"].eq(_previous_correct)
+        ]
+        if _df_previous.empty:
+            _ax.text(0.5, 0.5, "No valid trials", ha="center", transform=_ax.transAxes)
+            continue
+
+        for _match, _name, _color in [
+            (True, "Same", "tab:blue"),
+            (False, "Different", "tab:orange"),
+        ]:
+            _df_group = _df_previous.loc[_df_previous["_choice_match"].eq(_match)]
+            if _df_group.empty:
+                continue
+            _label = f"{_name} (n={len(_df_group)})"
+            _can_fit = (
+                _df_group[_stimulus_col].nunique() > 1
+                and _df_group["first_choice_numeric"].nunique() > 1
+            )
+            if not _can_fit:
+                _label += " (points only)"
+            utils_test.psychometric_plot_glm(
+                _df_group,
+                x=_stimulus_col,
+                y="first_choice_numeric",
+                ax=_ax,
+                valueType="discrete" if _modality == "visual" else "continue",
+                bins=6,
+                log=_modality == "visual",
+                point_kwargs={"color": _color, "label": None if _can_fit else _label},
+                line_kwargs={
+                    "color": _color,
+                    "label": _label if _can_fit else None,
+                    "linestyle": "-" if _can_fit else "None",
+                },
+            )
+        _ax.legend(title="ROA vs previous same choice", frameon=False)
+
+    _fig.suptitle(f"{_modality.capitalize()} | choice-indicator agreement")
+    _fig.tight_layout()
+    _fig.savefig(Path(save_folder_path, f"autoData_psychometric_choice_match_by_previous_correct_{_modality}.svg"))
+    plt.show()
+    return
+
+
+@app.cell
+def _(continuous_cols, df_clean, features, pd, plt):
     _plot_features = [_col for _col in features if _col != "correct_numeric"]
 
     _fig, _axes = plt.subplots(2, 3, figsize=(15, 8))
 
     for _ax, col in zip(_axes.flat, _plot_features):
 
-        data = df[[col, "correct_numeric"]].dropna().copy()
+        data = df_clean[[col, "correct_numeric"]].dropna().copy()
 
         if col in continuous_cols:
             data["bin"] = pd.qcut(
@@ -1101,11 +1562,6 @@ def _(continuous_cols, df_test_selected_raw, features, pd, plt):
 def _(mo):
     mo.md(r"""
     ## Behavior-conditioned psychometric curves
-
-    $P(\mathrm{ChooseRight}\mid\mathrm{StimulusEvidence},\mathrm{BehaviorGroup})$
-
-    Continuous variables use quantile bins within each modality.
-    Binary and count variables are grouped by value.
     """)
     return
 
@@ -1145,7 +1601,7 @@ def _(
     behavior_psychometric_col_select,
     continuous_cols,
     count_cols,
-    df_test_selected_raw,
+    df_clean,
     np,
     pd,
     plt,
@@ -1155,14 +1611,13 @@ def _(
 ):
     _col = behavior_psychometric_col_select.value
     _n_bins = behavior_psychometric_bins_select.value
-    _df_behavior = df_test_selected_raw.copy()
     if _col == "central_pokes":
-        _df_behavior[_col] = (
-            pd.to_numeric(_df_behavior["fixation_breaks"], errors="coerce")
-            + pd.to_numeric(_df_behavior["eager_pokes"], errors="coerce")
+        df_clean[_col] = (
+            pd.to_numeric(df_clean["fixation_breaks"], errors="coerce")
+            + pd.to_numeric(df_clean["eager_pokes"], errors="coerce")
         )
-    _df_behavior[_col] = pd.to_numeric(
-        _df_behavior[_col], errors="coerce"
+    df_clean[_col] = pd.to_numeric(
+        df_clean[_col], errors="coerce"
     ).replace([np.inf, -np.inf], np.nan)
 
     # The existing choice encoding is left=1, right=0.
@@ -1182,8 +1637,8 @@ def _(
         _ax.axhline(0.5, linestyle="--", color="gray", linewidth=1, alpha=0.5)
         _ax.spines[["top", "right"]].set_visible(False)
 
-        _df_modality = _df_behavior.loc[
-            _df_behavior["stimulus_modality"].eq(_modality),
+        _df_modality = df_clean.loc[
+            df_clean["stimulus_modality"].eq(_modality),
             [_col, _stimulus_col, "first_choice_numeric"],
         ].copy()
         _df_modality = _df_modality.dropna()
@@ -1217,7 +1672,7 @@ def _(
             if not _can_fit:
                 _label += " (points only)"
 
-            utils_test.psychometric_plot_easy_logistic(
+            utils_test.psychometric_plot_glm(
                 _df_group,
                 x=_stimulus_col,
                 y="first_choice_numeric",
@@ -1242,6 +1697,114 @@ def _(
     _fig.suptitle(f"Behavior-conditioned psychometric curves | {_col}")
     _fig.tight_layout()
     _fig.savefig(Path(save_folder_path, f"autoData_conditioned_psychometric_curves_{_col}.svg"))
+    plt.show()
+    return
+
+
+@app.cell
+def _(Path, df_clean, features, np, pd, plt, save_folder_path, sns):
+    # eager pokes
+    _x_col = "eager_pokes"
+    _y_cols = [_col for _col in features if _col not in [_x_col, "correct_numeric"]]
+    _numeric = ["correct_numeric", _x_col] + _y_cols
+    _df_copy = df_clean.copy()
+    _df_copy[_numeric] = _df_copy[_numeric].apply(
+        pd.to_numeric, errors="coerce"
+    ).astype(float).replace([np.inf, -np.inf], np.nan)
+    _df_clean_incorrect = _df_copy.loc[
+        _df_copy["correct_numeric"].eq(0)
+        & _df_copy[_x_col].ge(0)
+        & _df_copy["stimulus_modality"].isin(["visual", "auditory"]),
+        ["subject", _x_col] + _y_cols,
+    ].dropna(subset=["subject", _x_col]).copy()
+
+    _groups = _df_clean_incorrect.groupby("subject", observed=True)[_y_cols]
+    _means = _groups.transform("mean")
+    _scales = _groups.transform("std", ddof=0).replace(0, 1)
+    _df_clean_incorrect[_y_cols] = (
+        _df_clean_incorrect[_y_cols] - _means
+    ).div(_scales)
+    _mouse_means = (
+        _df_clean_incorrect.groupby(
+            ["subject", _x_col], observed=True
+        )[_y_cols].mean().reset_index()
+    )
+
+    eager_pokes_mean_z = (
+        _mouse_means.groupby(_x_col, observed=True)[_y_cols].mean().sort_index()
+    ).astype(float)
+    _vlim = eager_pokes_mean_z.abs().max().max()
+    if not np.isfinite(_vlim) or _vlim == 0:
+        _vlim = 1.0
+
+    _fig, _ax = plt.subplots(figsize=(11, 7))
+    _ax.set_title("Visual + Auditory | incorrect trials")
+    if eager_pokes_mean_z.empty or not eager_pokes_mean_z.notna().any().any():
+        _ax.text(0.5, 0.5, "No valid incorrect trials", ha="center", transform=_ax.transAxes)
+        _ax.set_axis_off()
+    else:
+        sns.heatmap(
+            eager_pokes_mean_z.T,
+            ax=_ax,
+            annot=True,
+            fmt=".2f",
+            cmap="coolwarm",
+            center=0,
+            vmin=-_vlim,
+            vmax=_vlim,
+            xticklabels=[f"{v:g}" for v in eager_pokes_mean_z.index],
+            yticklabels=eager_pokes_mean_z.columns,
+            cbar_kws={"label": "Mean z-score across mice"},
+        )
+
+        _ax.set_xlabel("eager_pokes")
+        _ax.set_ylabel("Behavioral variables")
+        _ax.tick_params(axis="both", rotation=0)
+        plt.setp(_ax.get_xticklabels(), rotation=45, ha="right")
+
+    _fig.tight_layout()
+    _fig.savefig(Path(save_folder_path, "autoData_behavior_mean_z_vs_eager_pokes_combined_incorrect.svg"))
+    plt.show()
+
+    _curve_data = _mouse_means.melt(
+        id_vars=["subject", _x_col],
+        value_vars=_y_cols,
+        var_name="variable",
+        value_name="mean_z",
+    ).dropna(subset=["mean_z"])
+    _curve_fig, _curve_ax = plt.subplots(figsize=(11, 7))
+    _curve_ax.set(
+        title="Visual + Auditory | incorrect trials",
+        xlabel=_x_col,
+        ylabel="Mean z-score across mice",
+    )
+    if _curve_data.empty:
+        _curve_ax.text(0.5, 0.5, "No valid incorrect trials", ha="center", transform=_curve_ax.transAxes)
+        _curve_ax.set_axis_off()
+    else:
+        sns.lineplot(
+            data=_curve_data,
+            x=_x_col,
+            y="mean_z",
+            hue="variable",
+            hue_order=_y_cols,
+            palette="tab10",
+            estimator="mean",
+            errorbar="se",
+            err_style="bars",
+            err_kws={"capsize": 3},
+            marker="o",
+            ax=_curve_ax,
+        )
+        _curve_ax.set_xticks(eager_pokes_mean_z.index)
+        _curve_ax.axhline(0, color="gray", linestyle="--", linewidth=1, alpha=0.5)
+        _curve_ax.spines[["top", "right"]].set_visible(False)
+        _curve_ax.legend(
+            title="Behavioral variable", frameon=False,
+            bbox_to_anchor=(1.02, 1), loc="upper left",
+        )
+    _curve_fig.tight_layout()
+    _curve_fig.savefig(Path(save_folder_path, "autoData_behavior_mean_z_vs_eager_pokes_combined_incorrect_curves.svg"))
     plt.show()
     return
 

@@ -37,7 +37,6 @@ def _():
     import plot_test
     import utils_test
     import seaborn as sns
-    import scipy.stats as stats
 
     from lecilab_behavior_analysis import utils as utils
     utils.IDIBAPS_TV_PROJECTS = "/archive/training_village/"
@@ -398,7 +397,7 @@ def _(mo):
 def _(animals, mo):
     fit_mouse_select = mo.ui.multiselect(
         options=animals,
-        value=animals[:-1],
+        value=animals,
         label="Mice for fit",
     )
 
@@ -470,6 +469,7 @@ def _():
     count_cols = [
         "fixation_breaks",
         "eager_pokes",
+        "Port2In"
     ]
 
     features = continuous_cols + binary_cols + count_cols
@@ -1618,27 +1618,38 @@ def _(mo):
 
 
 @app.cell
-def _(df_test_selected_upd, plt, sns):
+def _(hM3Dq_mice, hM4Di_mice):
+    dcz_bout_cohorts = {"hM3Dq": hM3Dq_mice, "hM4Di": hM4Di_mice}
+    dcz_bout_palette = {"saline": "blue", "DCZ": "red"}
+    return dcz_bout_cohorts, dcz_bout_palette
 
-    _fig, _ax = plt.subplots(figsize=(7, 5))
-    _palette = {"saline": "blue", "DCZ": "red"}
-    sns.ecdfplot(
-        data=df_test_selected_upd,
-        x="inter_trial_interval",
-        hue="observation_group",
-        stat="proportion",
-        ax=_ax,
-        palette=_palette
-    )
 
-    _ax.set_xscale("log")
-    _ax.set_xlabel("Inter-trial interval (s)")
-    _ax.set_ylabel("Cumulative probability")
-    _ax.set_ylim(0, 1)
-    _ax.grid(alpha=0.2)
-
-    plt.tight_layout()
-    plt.show()
+@app.cell
+def _(dcz_bout_cohorts, dcz_bout_palette, df_test_selected_upd, plt, sns):
+    _fig, _axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
+    for _ax, (_group, _mice) in zip(_axes, dcz_bout_cohorts.items()):
+        _df = df_test_selected_upd.loc[
+            df_test_selected_upd["subject"].isin(_mice)
+            & df_test_selected_upd["inter_trial_interval"].gt(0)
+        ]
+        if not _df.empty:
+            sns.ecdfplot(
+                data=_df,
+                x="inter_trial_interval",
+                hue="observation_group",
+                hue_order=list(dcz_bout_palette),
+                palette=dcz_bout_palette,
+                ax=_ax,
+            )
+        else:
+            _ax.text(0.5, 0.5, "No data", ha="center", transform=_ax.transAxes)
+        _ax.set(
+            title=_group, xscale="log", xlabel="Inter-trial interval (s)",
+            ylabel="Cumulative probability", ylim=(0, 1),
+        )
+        _ax.grid(alpha=0.2)
+    _fig.tight_layout()
+    _fig
     return
 
 
@@ -1673,7 +1684,7 @@ def _(df_test_selected_upd, np, pd):
     _bg = work_bouts.groupby(_keys, observed=True)
 
     work_bouts["break_onset"] = (
-        ~work_bouts["engaged"]
+        work_bouts["engaged"].eq(False)
         & _bg["engaged"].shift().eq(True)
     )
 
@@ -1730,8 +1741,273 @@ def _(df_test_selected_upd, np, pd):
             "working_time_s": working["duration_s"].sum(),
         })
 
-    session_metrics = pd.DataFrame(_rows)
+    session_metrics = pd.DataFrame(_rows, columns=[
+        *_keys, "session_duration_s", "break_frequency", "break_duration",
+        "trials_per_bout", "bout_duration", "working_time_fraction",
+        "trial_initiation_rate", "n_break_onsets", "n_initiated_trials",
+        "working_time_s",
+    ])
     session_metrics
+    return session_metrics, work_bouts
+
+
+@app.cell
+def _(
+    dcz_bout_cohorts,
+    df_test_selected_upd,
+    metric_paired_dates,
+    pd,
+    plt,
+    work_bouts,
+):
+    _keys = ["subject", "year_month_day", "session", "observation_group"]
+    _aud = df_test_selected_upd.loc[
+        df_test_selected_upd["stimulus_modality"].eq("auditory")
+    ]
+    _dates = pd.to_datetime(_aud["year_month_day"], errors="coerce").dt.normalize()
+    _palettes = {"saline": ("steelblue", "limegreen"), "DCZ": ("firebrick", "gold")}
+    _fig, _axes = plt.subplots(2, 2, figsize=(11, 7))
+
+    for _axes_row, (_group, _mice) in zip(_axes, dcz_bout_cohorts.items()):
+        _pairs = metric_paired_dates.loc[metric_paired_dates["subject"].isin(_mice)]
+        for _pair in _pairs.sample(frac=1, random_state=0).itertuples(index=False):
+            _trials = {
+                _condition: _aud.loc[
+                    _aud["subject"].eq(_pair.subject)
+                    & _aud["observation_group"].eq(_condition)
+                    & _dates.eq(pd.Timestamp(getattr(_pair, f"{_condition}_date")).normalize())
+                ]
+                for _condition in _palettes
+            }
+            if all(not _df.empty for _df in _trials.values()):
+                break
+        else:
+            for _ax, _condition in zip(_axes_row, _palettes):
+                _ax.set_title(f"{_group} | {_condition}: no paired auditory sessions")
+                _ax.set_axis_off()
+            continue
+
+        for _ax, (_condition, _df) in zip(_axes_row, _trials.items()):
+            _session = _df[_keys].sort_values("session").iloc[[0]]
+            _df = _df.merge(_session, on=_keys)
+            _start = _df["TRIAL_START"].min()
+            _bouts = work_bouts.loc[work_bouts["engaged"].eq(True)].merge(_session, on=_keys)
+            for _bout in _bouts.itertuples(index=False):
+                _ax.axvspan(_bout.start_time - _start, _bout.end_time - _start,
+                            color="lightskyblue", alpha=0.2, linewidth=0)
+            for _engaged, _color in zip([True, False], _palettes[_condition]):
+                _points = _df.loc[_df["engaged"].eq(_engaged)]
+                _ax.scatter(_points["TRIAL_START"] - _start, _points["trial"],
+                            color=_color, s=5, label=f"Engaged: {_engaged}")
+            _date = _session["year_month_day"].iat[0]
+            _ax.set(title=f"{_group} | {_condition} | {_pair.subject} | {_date}",
+                    xlabel="Trial start time (s)", ylabel="Trial number", xlim=(0, None))
+            _ax.legend(frameon=False)
+    _fig.tight_layout()
+    _fig
+    return
+
+
+@app.cell
+def _(mo):
+    dcz_bout_metric_select = mo.ui.dropdown(
+        options={
+            "Bout duration (s)": "duration_s",
+            "Trials per bout": "n_trials",
+            "Break onset per bout": "break_onset",
+        },
+        value="Bout duration (s)",
+        label="Bout metric",
+        allow_select_none=False,
+    )
+    dcz_bout_metric_select
+    return (dcz_bout_metric_select,)
+
+
+@app.cell
+def _(
+    dcz_bout_cohorts,
+    dcz_bout_metric_select,
+    dcz_bout_palette,
+    mo,
+    plt,
+    sns,
+    work_bouts,
+):
+    _metric = dcz_bout_metric_select.value
+    _label = {"duration_s": "Bout duration (s)", "n_trials": "Trials per bout",
+              "break_onset": "Break onset per bout"}[_metric]
+    _figures = []
+    for _group, _mice in dcz_bout_cohorts.items():
+        _fig, _axes = plt.subplots(2, 2, figsize=(10, 7))
+        for _j, _engaged in enumerate([True, False]):
+            _df = work_bouts.loc[
+                work_bouts["subject"].isin(_mice) & work_bouts["engaged"].eq(_engaged)
+            ].dropna(subset=[_metric]).copy()
+            _df[_metric] = _df[_metric].astype(float)
+            _box_ax, _ecdf_ax = _axes[:, _j]
+            _title = "Working bouts" if _engaged else "Break bouts"
+            _box_ax.set_title(_title)
+            _ecdf_ax.set_title(f"{_title} (ECDF)")
+            if _df.empty:
+                for _ax in (_box_ax, _ecdf_ax):
+                    _ax.text(0.5, 0.5, "No data", ha="center", transform=_ax.transAxes)
+                continue
+            _order = list(dcz_bout_palette)
+            sns.boxplot(data=_df, x="observation_group", y=_metric,
+                        hue="observation_group", order=_order, hue_order=_order,
+                        palette=dcz_bout_palette, fill=False, dodge=False,
+                        legend=False, ax=_box_ax)
+            sns.ecdfplot(data=_df, x=_metric, hue="observation_group", hue_order=_order,
+                         palette=dcz_bout_palette, ax=_ecdf_ax)
+            if _metric != "break_onset" and _df[_metric].gt(0).all():
+                _ecdf_ax.set_xscale("log")
+            _box_ax.set(xlabel="", ylabel=_label)
+            _ecdf_ax.set(xlabel=_label, ylabel="Cumulative probability", ylim=(0, 1))
+            _ecdf_ax.grid(alpha=0.2)
+        _fig.suptitle(_group)
+        _fig.tight_layout()
+        plt.close(_fig)
+        _figures.append(_fig)
+    mo.vstack(_figures)
+    return
+
+
+@app.cell
+def _(session_metrics, work_bouts):
+    _keys = ["subject", "observation_group"]
+    dcz_bout_mouse_metrics = session_metrics.groupby(_keys, observed=True, as_index=False).agg(
+        n_sessions=("session", "size"),
+        observed_duration_s=("session_duration_s", "sum"),
+        n_break_onsets=("n_break_onsets", "sum"),
+        n_initiated_trials=("n_initiated_trials", "sum"),
+        working_time_s=("working_time_s", "sum"),
+    )
+    _complete = work_bouts.loc[work_bouts["complete"]]
+    _working = _complete.loc[_complete["engaged"].eq(True)].groupby(_keys, observed=True).agg(
+        trials_per_bout=("n_trials", "mean"), bout_duration=("duration_s", "mean"),
+    )
+    _breaks = (
+        _complete.loc[_complete["engaged"].eq(False)]
+        .groupby(_keys, observed=True)["duration_s"].mean().rename("break_duration")
+    )
+    dcz_bout_mouse_metrics = dcz_bout_mouse_metrics.join(_working, on=_keys).join(_breaks, on=_keys)
+    _duration_s = dcz_bout_mouse_metrics["observed_duration_s"].where(
+        dcz_bout_mouse_metrics["observed_duration_s"].gt(0)
+    )
+    dcz_bout_mouse_metrics["break_frequency"] = dcz_bout_mouse_metrics["n_break_onsets"] / (_duration_s / 3600)
+    dcz_bout_mouse_metrics["trial_initiation_rate"] = dcz_bout_mouse_metrics["n_initiated_trials"] / (_duration_s / 3600)
+    dcz_bout_mouse_metrics["working_time_fraction"] = dcz_bout_mouse_metrics["working_time_s"] / _duration_s
+    return (dcz_bout_mouse_metrics,)
+
+
+@app.cell
+def _(
+    behavior_utils,
+    dcz_bout_cohorts,
+    dcz_bout_mouse_metrics,
+    dcz_bout_palette,
+    metric_paired_dates,
+    mo,
+    np,
+    pd,
+    plot_test,
+    plt,
+    session_metrics,
+):
+    from scipy import stats as _stats
+
+    _metrics = {
+        "break_frequency": "Break onsets / observed hour",
+        "break_duration": "Mean break duration (s)",
+        "trials_per_bout": "Mean trials per working bout",
+        "bout_duration": "Mean working bout duration (s)",
+        "working_time_fraction": "Working time fraction",
+        "trial_initiation_rate": "Trials initiated / observed hour",
+    }
+    _conditions = list(dcz_bout_palette)
+    _sessions = session_metrics.assign(
+        year_month_day=pd.to_datetime(session_metrics["year_month_day"], errors="coerce").dt.normalize()
+    )
+    _daily = (
+        _sessions.replace([np.inf, -np.inf], np.nan)
+        .groupby(["subject", "year_month_day", "observation_group"], observed=True, as_index=False)
+        [list(_metrics)].mean()
+    )
+
+    def _plot_paired(_ax, _paired, _label, _detail, _p):
+        _ax.set(title=f"{_label}\n{_detail}", ylabel=_label)
+        _ax.set_xticks([1, 2], _conditions)
+        if _paired.empty:
+            _ax.text(0.5, 0.5, "No complete pairs", ha="center", transform=_ax.transAxes)
+            return
+        _values = [_paired[_condition].to_numpy(dtype=float) for _condition in _conditions]
+        _boxes = _ax.boxplot(_values, positions=[1, 2], patch_artist=True,
+                             showmeans=True, showfliers=False)
+        for _box, _condition in zip(_boxes["boxes"], _conditions):
+            _box.set(facecolor=dcz_bout_palette[_condition], alpha=0.2)
+        _ax.plot([1, 2], np.vstack(_values), color="gray", alpha=0.35, linewidth=1)
+        for _x, (_condition, _ys) in enumerate(zip(_conditions, _values), 1):
+            _ax.scatter(np.full(len(_ys), _x), _ys, color=dcz_bout_palette[_condition],
+                        edgecolor="black", linewidth=0.5, alpha=0.8, s=32, zorder=3)
+        _tag = plot_test.p_to_star(_p) if np.isfinite(_p) else "n/a"
+        plot_test.add_paired_significance_label(_ax, *_values, label=_tag, x0=1, x1=2)
+        _ax.grid(axis="y", alpha=0.3)
+
+    dcz_bout_date_pairs = {}
+    dcz_bout_mouse_pairs = {}
+    _test_rows = []
+    _views = []
+    for _group, _mice in dcz_bout_cohorts.items():
+        _dates = metric_paired_dates.loc[metric_paired_dates["subject"].isin(_mice)]
+        _pooled = dcz_bout_mouse_metrics.loc[dcz_bout_mouse_metrics["subject"].isin(_mice)]
+        for _level, _method in [("Date pairs", "ttest_rel"), ("Pooled bouts per mouse", "wilcoxon")]:
+            _fig, _axes = plt.subplots(2, 3, figsize=(13, 8))
+            for _ax, (_metric, _label) in zip(_axes.flat, _metrics.items()):
+                if _method == "ttest_rel":
+                    _paired = behavior_utils.add_metric_values_to_pairs(
+                        _daily, _dates, metric_col=_metric, drug_name="DCZ"
+                    )
+                    _mice_pairs = (
+                        _paired.groupby("subject", observed=True)[_conditions].mean()
+                        if not _paired.empty else pd.DataFrame(columns=_conditions)
+                    )
+                    _detail = f"{len(_paired)} date pairs, {len(_mice_pairs)} mice"
+                    dcz_bout_date_pairs[_group, _metric] = _paired
+                else:
+                    _mice_pairs = (
+                        _pooled.pivot(index="subject", columns="observation_group", values=_metric)
+                        .reindex(columns=_conditions).replace([np.inf, -np.inf], np.nan).dropna()
+                    )
+                    _paired = _mice_pairs
+                    _detail = f"{len(_mice_pairs)} paired mice"
+                    dcz_bout_mouse_pairs[_group, _metric] = _mice_pairs
+
+                _diff = _mice_pairs["DCZ"] - _mice_pairs["saline"]
+                _p, _note = np.nan, ""
+                if len(_diff) < 2:
+                    _note = "Fewer than 2 paired mice"
+                elif _diff.eq(0).all():
+                    _note = "All paired differences are zero"
+                elif _method == "wilcoxon":
+                    _p = _stats.wilcoxon(_diff).pvalue
+                elif _diff.std() == 0:
+                    _note = "Zero variance of paired differences"
+                else:
+                    _p = _stats.ttest_rel(_mice_pairs["DCZ"], _mice_pairs["saline"]).pvalue
+                _plot_paired(_ax, _paired, _label, _detail, _p)
+                _test_rows.append({
+                    "group": _group, "level": _level, "metric": _metric, "test": _method,
+                    "n_date_pairs": len(_paired) if _method == "ttest_rel" else pd.NA,
+                    "n_mice": len(_mice_pairs), "p_value": _p, "note": _note,
+                })
+            _fig.suptitle(f"{_group}: saline vs DCZ | {_level}")
+            _fig.tight_layout()
+            plt.close(_fig)
+            _views.append(_fig)
+
+    dcz_bout_test_results = pd.DataFrame(_test_rows)
+    mo.vstack([*_views, dcz_bout_test_results])
     return
 
 
@@ -2009,34 +2285,6 @@ def _(
         _ax.set_ylabel(f"P({_y} = 1)")
 
     psychometric_xy_fig
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # auto data roa choice
-    """)
-    return
-
-
-@app.cell
-def _(df_test_selected):
-    df_test_selected["choice_match"] = (
-        df_test_selected["previous_same_choice_numeric"]
-        .eq(df_test_selected["roa_choice_numeric"])
-        .fillna(False)
-        .astype(int)
-    )
-    return
-
-
-@app.cell
-def _(df_test_selected, np):
-    np.corrcoef(
-        df_test_selected["choice_match"].fillna(0),
-        df_test_selected["previous_correct_numeric"].fillna(0),
-    )
     return
 
 
