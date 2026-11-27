@@ -317,6 +317,7 @@ def _():
     count_cols = [
         "fixation_breaks",
         "eager_pokes",
+        'Port2In'
     ]
 
     features = continuous_cols + binary_cols + count_cols
@@ -519,7 +520,7 @@ def _(df_test_selected_raw, injection_info_df, pd):
     )
 
     trial_dates = pd.to_datetime(
-        df_test_selected["date"],
+        df_test_selected["year_month_day"],
         errors="coerce",
     ).dt.strftime("%Y-%m-%d")
     trial_mice = df_test_selected["subject"].astype(str)
@@ -534,7 +535,7 @@ def _(df_test_selected_raw, injection_info_df, pd):
 def _(behavior_utils, df_test_selected, dft, injection_info_df, pd):
     session_performance = df_test_selected.groupby(
         ["subject", "session"]
-    )["correct"].transform("mean")
+    )["correct_numeric"].transform("mean")
 
     is_saline = df_test_selected["observations"].str.contains(
         "saline",
@@ -643,11 +644,9 @@ def _(behavior_utils, df_test_selected, dft, injection_info_df, pd):
     )
     df_test_selected_upd["repeating_bias_session"] = (df_test_selected_upd["repeat_rate_session"] - 0.5)
 
-    df_test_selected_upd["session_duration"] = (
-        df_test_selected_upd["TRIAL_END"] - df_test_selected_upd.groupby(
+    df_test_selected_upd["session_duration"] = df_test_selected_upd.groupby(
             ["subject", "session"]
-        )["TRIAL_START"].transform("min")
-    )
+        )["trial_duration"].transform("sum")
 
     df_test_selected_upd = df_test_selected_upd[df_test_selected_upd["session_duration"] <= 2400].copy()
     return df_test_selected_upd, metric_paired_dates
@@ -674,11 +673,6 @@ app._unparsable_cell(
     """,
     name="_"
 )
-
-
-@app.cell
-def _():
-    return
 
 
 @app.cell(hide_code=True)
