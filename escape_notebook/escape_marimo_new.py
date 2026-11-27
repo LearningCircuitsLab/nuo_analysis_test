@@ -617,6 +617,15 @@ def _(build_behavior_window_dataframes, mouse_select):
     return ns_behav_df_dic_prebin, s_behav_df_dic_prebin
 
 
+@app.cell
+def _(np, s_behav_df_dic):
+    _len_sound_list = []
+    for _df in s_behav_df_dic:
+        _len_sound_list.append(len(s_behav_df_dic[_df]))
+    print("looming sound sessions average number:", np.mean(_len_sound_list))
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -1991,6 +2000,22 @@ def _(mouse_dates):
         }
 
     return (select_day,)
+
+
+@app.cell
+def _(np, s_session_df_dic_classified_prebin, select_day):
+    _dic_number_sound_session = {}
+
+    for _day in range(1, 5):
+        _s_selected = select_day(s_session_df_dic_classified_prebin, _day)
+        _dic_number_sound_session[_day] = [
+            len(_df) for _df in _s_selected.values()
+        ]
+
+    print("Looming: average sound trials per session by day:")
+    for _day, _counts in _dic_number_sound_session.items():
+        print("day", _day, ":", np.mean(_counts) if _counts else np.nan)
+    return
 
 
 @app.cell
