@@ -280,6 +280,8 @@ def _():
         "TRIAL_START",
         "TRIAL_END",
         "first_choice_numeric",
+        "difficulty",
+        "current_training_stage"
     ]
 
     continuous_cols = [

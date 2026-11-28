@@ -157,7 +157,7 @@ def _(animals, mo):
     )
 
     mouse_select
-    return (mouse_select,)
+    return
 
 
 @app.cell
@@ -172,32 +172,28 @@ def _(
     Path,
     animals,
     download_button,
-    mouse_select,
     pd,
     project,
     safe_rsync_cluster_data,
     utils,
 ):
-    mouse = mouse_select.value
-
-    local_path = Path(utils.get_outpath()) / project / "sessions" / mouse
+    local_path = Path(utils.get_outpath()) / project / "sessions" 
     local_path.mkdir(parents=True, exist_ok=True)
 
-    if download_button.value:
-        for _mouse in animals:
-            _local_path = Path(utils.get_outpath()) / project / "sessions" / _mouse
-            _local_path.mkdir(parents=True, exist_ok=True)
 
+    df_all = pd.DataFrame()
+    for _mouse in animals:
+        _local_path = Path(utils.get_outpath()) / project / "sessions" / _mouse
+        _local_path.mkdir(parents=True, exist_ok=True)
+        if download_button.value:
             safe_rsync_cluster_data(
                 project_name=project,
                 file_path="sessions/{}/{}.csv".format(_mouse, _mouse),
                 local_path=str(_local_path),
                 credentials=utils.get_idibaps_cluster_credentials(),
             )
-
-
-    df_all = pd.read_csv(local_path / Path(f"{mouse}.csv"), sep=";")
-    return df_all, mouse
+        df_all = pd.concat([df_all, pd.read_csv(_local_path / Path(f"{_mouse}.csv"), sep=";")], ignore_index=True)
+    return (df_all,)
 
 
 @app.cell
@@ -473,7 +469,7 @@ def _():
     ]
 
     features = continuous_cols + binary_cols + count_cols
-    return basic_cols, binary_cols, continuous_cols, count_cols, features
+    return basic_cols, features
 
 
 @app.cell
@@ -783,6 +779,11 @@ def _(
         on=["subject", "_pair_date", "observation_group"],
         how="inner",
     )
+
+    df_test_selected_upd["session_duration"] = df_test_selected_upd.groupby(
+            ["subject", "session"]
+        )["trial_duration"].transform("cumsum")
+    df_test_selected_upd = df_test_selected_upd[df_test_selected_upd["session_duration"] <= 2400].copy()
 
     # df_test_selected_upd = df_test_selected_upd[
     #     df_test_selected_upd['year_month_day'].isin(
@@ -1618,6 +1619,30 @@ def _(mo):
 
 
 @app.cell
+def _(mo):
+    work_bout_modality = mo.ui.dropdown(
+        options=["visual", "auditory", "both"],
+        value="visual",
+        label="Modality",
+        allow_select_none=False,
+    )
+    work_bout_modality
+    return (work_bout_modality,)
+
+
+@app.cell
+def _(df_test_selected_upd, work_bout_modality):
+    _selected_modality = work_bout_modality.value
+    dcz_bout_modalities = (
+        ("visual", "auditory") if _selected_modality == "both" else (_selected_modality,)
+    )
+    dcz_bout_trials = df_test_selected_upd.loc[
+        df_test_selected_upd["stimulus_modality"].isin(dcz_bout_modalities)
+    ]
+    return dcz_bout_modalities, dcz_bout_trials
+
+
+@app.cell
 def _(hM3Dq_mice, hM4Di_mice):
     dcz_bout_cohorts = {"hM3Dq": hM3Dq_mice, "hM4Di": hM4Di_mice}
     dcz_bout_palette = {"saline": "blue", "DCZ": "red"}
@@ -1625,12 +1650,19 @@ def _(hM3Dq_mice, hM4Di_mice):
 
 
 @app.cell
-def _(dcz_bout_cohorts, dcz_bout_palette, df_test_selected_upd, plt, sns):
+def _(
+    dcz_bout_cohorts,
+    dcz_bout_modalities,
+    dcz_bout_palette,
+    dcz_bout_trials,
+    plt,
+    sns,
+):
     _fig, _axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
     for _ax, (_group, _mice) in zip(_axes, dcz_bout_cohorts.items()):
-        _df = df_test_selected_upd.loc[
-            df_test_selected_upd["subject"].isin(_mice)
-            & df_test_selected_upd["inter_trial_interval"].gt(0)
+        _df = dcz_bout_trials.loc[
+            dcz_bout_trials["subject"].isin(_mice)
+            & dcz_bout_trials["inter_trial_interval"].gt(0)
         ]
         if not _df.empty:
             sns.ecdfplot(
@@ -1648,17 +1680,18 @@ def _(dcz_bout_cohorts, dcz_bout_palette, df_test_selected_upd, plt, sns):
             ylabel="Cumulative probability", ylim=(0, 1),
         )
         _ax.grid(alpha=0.2)
+    _fig.suptitle(f"Inter-trial intervals | {' + '.join(dcz_bout_modalities)}")
     _fig.tight_layout()
     _fig
     return
 
 
 @app.cell
-def _(df_test_selected_upd, np, pd):
+def _(dcz_bout_trials, np, pd):
     import ast
 
     _keys = ["subject", "year_month_day", "session", "observation_group"]
-    _df = df_test_selected_upd.sort_values(_keys + ["trial"]).copy()
+    _df = dcz_bout_trials.sort_values(_keys + ["trial"]).copy()
     _g = _df.groupby(_keys)
 
     _df["bout_id"] = (
@@ -1754,27 +1787,33 @@ def _(df_test_selected_upd, np, pd):
 @app.cell
 def _(
     dcz_bout_cohorts,
-    df_test_selected_upd,
+    dcz_bout_modalities,
+    dcz_bout_trials,
     metric_paired_dates,
     pd,
     plt,
     work_bouts,
 ):
     _keys = ["subject", "year_month_day", "session", "observation_group"]
-    _aud = df_test_selected_upd.loc[
-        df_test_selected_upd["stimulus_modality"].eq("auditory")
+    _rows = [
+        (_modality, _group, _mice)
+        for _modality in dcz_bout_modalities
+        for _group, _mice in dcz_bout_cohorts.items()
     ]
-    _dates = pd.to_datetime(_aud["year_month_day"], errors="coerce").dt.normalize()
     _palettes = {"saline": ("steelblue", "limegreen"), "DCZ": ("firebrick", "gold")}
-    _fig, _axes = plt.subplots(2, 2, figsize=(11, 7))
+    _fig, _axes = plt.subplots(len(_rows), 2, figsize=(11, 3.5 * len(_rows)), squeeze=False)
 
-    for _axes_row, (_group, _mice) in zip(_axes, dcz_bout_cohorts.items()):
+    for _axes_row, (_modality, _group, _mice) in zip(_axes, _rows):
+        _candidates = dcz_bout_trials.loc[
+            dcz_bout_trials["stimulus_modality"].eq(_modality)
+        ]
+        _dates = pd.to_datetime(_candidates["year_month_day"], errors="coerce").dt.normalize()
         _pairs = metric_paired_dates.loc[metric_paired_dates["subject"].isin(_mice)]
-        for _pair in _pairs.sample(frac=1, random_state=0).itertuples(index=False):
+        for _pair in _pairs.sample(frac=1, random_state=4).itertuples(index=False):
             _trials = {
-                _condition: _aud.loc[
-                    _aud["subject"].eq(_pair.subject)
-                    & _aud["observation_group"].eq(_condition)
+                _condition: _candidates.loc[
+                    _candidates["subject"].eq(_pair.subject)
+                    & _candidates["observation_group"].eq(_condition)
                     & _dates.eq(pd.Timestamp(getattr(_pair, f"{_condition}_date")).normalize())
                 ]
                 for _condition in _palettes
@@ -1783,7 +1822,7 @@ def _(
                 break
         else:
             for _ax, _condition in zip(_axes_row, _palettes):
-                _ax.set_title(f"{_group} | {_condition}: no paired auditory sessions")
+                _ax.set_title(f"{_group} | {_condition}: no paired {_modality} sessions")
                 _ax.set_axis_off()
             continue
 
@@ -1800,7 +1839,7 @@ def _(
                 _ax.scatter(_points["TRIAL_START"] - _start, _points["trial"],
                             color=_color, s=5, label=f"Engaged: {_engaged}")
             _date = _session["year_month_day"].iat[0]
-            _ax.set(title=f"{_group} | {_condition} | {_pair.subject} | {_date}",
+            _ax.set(title=f"{_group} | {_modality} | {_condition}\n{_pair.subject} | {_date}",
                     xlabel="Trial start time (s)", ylabel="Trial number", xlim=(0, None))
             _ax.legend(frameon=False)
     _fig.tight_layout()
@@ -1828,6 +1867,7 @@ def _(mo):
 def _(
     dcz_bout_cohorts,
     dcz_bout_metric_select,
+    dcz_bout_modalities,
     dcz_bout_palette,
     mo,
     plt,
@@ -1865,7 +1905,7 @@ def _(
             _box_ax.set(xlabel="", ylabel=_label)
             _ecdf_ax.set(xlabel=_label, ylabel="Cumulative probability", ylim=(0, 1))
             _ecdf_ax.grid(alpha=0.2)
-        _fig.suptitle(_group)
+        _fig.suptitle(f"{_group} | {' + '.join(dcz_bout_modalities)}")
         _fig.tight_layout()
         plt.close(_fig)
         _figures.append(_fig)
@@ -1905,6 +1945,7 @@ def _(session_metrics, work_bouts):
 def _(
     behavior_utils,
     dcz_bout_cohorts,
+    dcz_bout_modalities,
     dcz_bout_mouse_metrics,
     dcz_bout_palette,
     metric_paired_dates,
@@ -2001,7 +2042,7 @@ def _(
                     "n_date_pairs": len(_paired) if _method == "ttest_rel" else pd.NA,
                     "n_mice": len(_mice_pairs), "p_value": _p, "note": _note,
                 })
-            _fig.suptitle(f"{_group}: saline vs DCZ | {_level}")
+            _fig.suptitle(f"{_group}: saline vs DCZ | {_level} | {' + '.join(dcz_bout_modalities)}")
             _fig.tight_layout()
             plt.close(_fig)
             _views.append(_fig)
@@ -2188,104 +2229,6 @@ def _():
     noeffec_group = ['NUO005', 'NUO008']
     effec_group = ['NUO010', 'NUO012']
     return effec_group, noeffec_group
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## plot the psychometric curve for auto data with different variables
-    """)
-    return
-
-
-@app.cell
-def _(binary_cols, continuous_cols, count_cols, mo):
-    psyc_x_select = mo.ui.dropdown(
-        options=continuous_cols + binary_cols + count_cols,
-        value="reaction_time",
-        label="psychometric x-axis",
-    )
-    psyc_y_select = mo.ui.dropdown(
-        options=["first_choice_numeric", "correct_numeric", "previous_correct_numeric"] + binary_cols,
-        value="first_choice_numeric",
-        label="psychometric y-axis",
-    )
-    mo.hstack([psyc_x_select, psyc_y_select])
-    return psyc_x_select, psyc_y_select
-
-
-@app.cell
-def _(df_test_selected):
-    df_test_selected['eager_pokes'].max()
-    return
-
-
-@app.cell
-def _(
-    continuous_cols,
-    df_test_selected,
-    np,
-    pd,
-    plt,
-    psyc_x_select,
-    psyc_y_select,
-    utils_test,
-):
-    _x = psyc_x_select.value
-    _y = psyc_y_select.value
-    _value_type = "continue" if _x in continuous_cols else "discrete"
-    psychometric_xy_fig, _axes = plt.subplots(
-        1, 2, figsize=(12, 4.5), sharey=True, constrained_layout=True
-    )
-
-    for _ax, _modality in zip(_axes, ["visual", "auditory"]):
-        _ax.set_title(_modality.capitalize())
-        _ax.set_xlabel(_x)
-        _ax.set_ylabel(f"P({_y} = 1)")
-        _ax.set_ylim(0, 1)
-        _missing = [
-            _col for _col in [_x, _y, "stimulus_modality"]
-            if _col not in df_test_selected.columns
-        ]
-        if _missing:
-            _ax.text(
-                0.5, 0.5, "Missing columns:\n" + ", ".join(_missing),
-                ha="center", va="center", transform=_ax.transAxes,
-            )
-            continue
-
-        _df_plot = (
-            df_test_selected.loc[
-                df_test_selected["stimulus_modality"].eq(_modality),
-                list(dict.fromkeys([_x, _y])),
-            ]
-            .apply(pd.to_numeric, errors="coerce")
-            .replace([np.inf, -np.inf], np.nan)
-            .dropna()
-            .astype(float)
-        )
-        _df_plot = _df_plot.loc[_df_plot[_y].isin([0, 1])]
-        if _df_plot.empty:
-            _ax.text(
-                0.5, 0.5, "No valid trials", ha="center", va="center",
-                transform=_ax.transAxes,
-            )
-            continue
-
-        utils_test.psychometric_plot_easy_logistic(
-            _df_plot,
-            x=_x,
-            y=_y,
-            ax=_ax,
-            valueType=_value_type,
-            bins=6,
-            log=False,
-            easy=True,
-        )
-        _ax.set_ylabel(f"P({_y} = 1)")
-
-    psychometric_xy_fig
-    return
 
 
 @app.cell(hide_code=True)

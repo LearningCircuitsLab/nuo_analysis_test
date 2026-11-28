@@ -646,7 +646,7 @@ def _(behavior_utils, df_test_selected, dft, injection_info_df, pd):
 
     df_test_selected_upd["session_duration"] = df_test_selected_upd.groupby(
             ["subject", "session"]
-        )["trial_duration"].transform("sum")
+        )["trial_duration"].transform("cumsum")
 
     df_test_selected_upd = df_test_selected_upd[df_test_selected_upd["session_duration"] <= 2400].copy()
     return df_test_selected_upd, metric_paired_dates
