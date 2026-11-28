@@ -390,18 +390,44 @@ def _(
                 combined_results[output_name].append(df_mouse_result)
 
     _all_results = [df for frames in combined_results.values() for df in frames]
-    df_test_selected_raw = (
+    df_parameters_loaded = (
         pd.concat(_all_results, ignore_index=True)
         if _all_results
         else pd.DataFrame(columns=basic_cols + features + list(_stim_feature_columns.values()))
     )
 
-    # _dates = pd.to_datetime(df_test_selected_raw["year_month_day"], errors="coerce").dt.normalize()
+    # _dates = pd.to_datetime(df_parameters_loaded["year_month_day"], errors="coerce").dt.normalize()
 
     # _start_date = pd.to_datetime(date_select_start.value).normalize()
     # _end_date = pd.to_datetime(date_select_end.value).normalize()
 
-    # df_test_selected_raw = df_test_selected_raw[_dates.between(_start_date, _end_date, inclusive="both")].copy()
+    # df_parameters_loaded = df_parameters_loaded[_dates.between(_start_date, _end_date, inclusive="both")].copy()
+    return df_parameters_loaded, parameters_output_dir, stim_columns
+
+
+@app.cell
+def _(df_all, df_parameters_loaded, parameters_output_dir, pd, stim_columns):
+    _extra_cols = ["difficulty", "current_training_stage"]
+    df_test_selected_raw = df_parameters_loaded.drop(
+        columns=_extra_cols, errors="ignore"
+    ).merge(
+        df_all[["subject", "trial"] + _extra_cols],
+        on=["subject", "trial"],
+        how="left",
+        validate="one_to_one",
+    )
+
+    parameters_output_dir.mkdir(parents=True, exist_ok=True)
+    for _mouse, _df_mouse in df_test_selected_raw.groupby("subject", sort=False, observed=True):
+        _mouse_results = {
+            _output_name: _df_mouse.loc[
+                _df_mouse["stimulus_modality"].eq(_stim_name)
+            ].copy()
+            for _output_name, _stim_name in stim_columns.items()
+        }
+        _parameters_output_path = parameters_output_dir / f"{_mouse}_parameters_for_fit.pkl"
+        pd.to_pickle(_mouse_results, _parameters_output_path)
+        print(f"Saved parameters_for_fit data: {_parameters_output_path}")
     return (df_test_selected_raw,)
 
 
@@ -999,9 +1025,13 @@ def _(mo):
 
 
 @app.cell
-def _(df_test_selected_raw, utils_test):
-    df_clean = utils_test.remove_high_outliers(df_test_selected_raw, ["fixation_breaks", "eager_pokes"]).dropna(subset=["fixation_breaks", "eager_pokes"])
+def _(df_test_selected_raw, pd, utils_test):
+    df_clean = pd.DataFrame()
+    _session_accuracy = df_test_selected_raw.groupby(["subject", "session"])["correct_numeric"].transform("mean")
+    df_clean = df_test_selected_raw.loc[_session_accuracy > 0.7].reset_index(drop=True)
+    df_clean = utils_test.remove_high_outliers(df_clean, ["fixation_breaks", "eager_pokes"]).dropna(subset=["fixation_breaks", "eager_pokes"])
     df_clean = df_clean[df_clean['eager_pokes']>=0]
+    df_clean['roa_repeat_chocie_interaction'] = df_clean['roa_choice_numeric'] * df_clean['previous_same_choice_numeric']
     return (df_clean,)
 
 
@@ -1077,8 +1107,8 @@ def _(binary_cols, continuous_cols, count_cols, df_clean, mo, np, pd):
     _df_copy["visual_stimulus_ratio_abs"] = _df_copy["visual_stimulus_ratio"].abs()
     _df_copy["total_evidence_strength_abs"] = _df_copy["total_evidence_strength"].abs()
     _base_x_cols = [
-        _col for _col in continuous_cols + binary_cols + count_cols
-        if _col != "correct_numeric"
+        _col for _col in continuous_cols + binary_cols + count_cols + ['roa_repeat_chocie_interaction']
+        if _col not in ['correct_numeric', 'eager_pokes', "roa_choice_numeric"]
     ]
     correct_glm_results_by_mouse = {}
     _fit_rows = []
