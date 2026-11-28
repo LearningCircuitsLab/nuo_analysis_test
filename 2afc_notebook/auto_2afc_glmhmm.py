@@ -1976,6 +1976,140 @@ def _(df_test_aud_hard, np, pd, plt, sns):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## eager pokes
+    """)
+    return
+
+
+@app.cell
+def _(df_clean, plt, sns):
+    _df_incorrect = df_clean.loc[
+        df_clean["correct_numeric"].eq(0)
+    ].dropna(
+        subset=["subject", "stimulus_modality", "difficulty", "eager_pokes"]
+    ).copy()
+
+    _df_incorrect["_weight"] = 1 / (
+        _df_incorrect.groupby(
+            ["stimulus_modality", "difficulty", "subject"],
+            observed=True,
+        )["eager_pokes"].transform("size")
+    )
+
+    # 两张图使用相同的分箱范围和颜色顺序
+    _binrange = (
+        _df_incorrect["eager_pokes"].min(),
+        _df_incorrect["eager_pokes"].max(),
+    )
+    _difficulty_order = _df_incorrect["difficulty"].unique().tolist()
+
+    _fig, _axes = plt.subplots(
+        1, 2, figsize=(14, 4.5), dpi=150,
+        sharex=True, sharey=True,
+    )
+
+    for _ax, _modality in zip(_axes, ["visual", "auditory"]):
+        _df_modality = _df_incorrect.loc[
+            _df_incorrect["stimulus_modality"].eq(_modality)
+        ]
+
+        if not _df_modality.empty:
+            sns.histplot(
+                data=_df_modality,
+                x="eager_pokes",
+                hue="difficulty",
+                hue_order=_difficulty_order,
+                weights="_weight",
+                stat="density",
+                common_norm=False,
+                common_bins=True,
+                binrange=_binrange,
+                discrete=True,
+                kde=True,
+                kde_kws={"bw_adjust": 5, "cut": 0},
+                line_kws={"linewidth": 2.2},
+                palette="colorblind",
+                alpha=0.2,
+                ax=_ax,
+            )
+
+        _ax.set(title=_modality.capitalize(), xlabel="Eager pokes")
+        sns.despine(ax=_ax)
+
+    _axes[0].set_ylabel("Mouse-balanced probability density")
+    _axes[1].set_ylabel("")
+    _fig.suptitle("Distribution of eager pokes on incorrect trials")
+    _fig.tight_layout()
+    plt.show()
+    return
+
+
+@app.cell
+def _(df_clean, plt, sns):
+    _df_correct = df_clean.loc[
+        df_clean["correct_numeric"].eq(1)
+    ].dropna(
+        subset=["subject", "stimulus_modality", "difficulty", "eager_pokes"]
+    ).copy()
+
+    _df_correct["_weight"] = 1 / (
+        _df_correct.groupby(
+            ["stimulus_modality", "difficulty", "subject"],
+            observed=True,
+        )["eager_pokes"].transform("size")
+    )
+
+    # 两张图使用相同的分箱范围和颜色顺序
+    _binrange = (
+        _df_correct["eager_pokes"].min(),
+        _df_correct["eager_pokes"].max(),
+    )
+    _difficulty_order = _df_correct["difficulty"].unique().tolist()
+
+    _fig, _axes = plt.subplots(
+        1, 2, figsize=(14, 4.5), dpi=150,
+        sharex=True, sharey=True,
+    )
+
+    for _ax, _modality in zip(_axes, ["visual", "auditory"]):
+        _df_modality = _df_correct.loc[
+            _df_correct["stimulus_modality"].eq(_modality)
+        ]
+
+        if not _df_modality.empty:
+            sns.histplot(
+                data=_df_modality,
+                x="eager_pokes",
+                hue="difficulty",
+                hue_order=_difficulty_order,
+                weights="_weight",
+                stat="density",
+                common_norm=False,
+                common_bins=True,
+                binrange=_binrange,
+                discrete=True,
+                kde=True,
+                kde_kws={"bw_adjust": 5, "cut": 0},
+                line_kws={"linewidth": 2.2},
+                palette="colorblind",
+                alpha=0.2,
+                ax=_ax,
+            )
+
+        _ax.set(title=_modality.capitalize(), xlabel="Eager pokes")
+        sns.despine(ax=_ax)
+
+    _axes[0].set_ylabel("Mouse-balanced probability density")
+    _axes[1].set_ylabel("")
+    _fig.suptitle("Distribution of eager pokes on correct trials")
+    _fig.tight_layout()
+    plt.show()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## stimulus correlation to see antibias
     """)
     return
